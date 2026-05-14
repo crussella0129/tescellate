@@ -110,24 +110,113 @@ pub trait Lattice {
 }
 ```
 
+### 3.2 Two families of tiling: regular and irregular
+
+Tescellate exposes two top-level tessellation **families**, each with its own creation UI and runtime properties. Both implement the `Lattice` trait, so the rest of the system (DAG, formulas, persistence) is family-agnostic.
+
+#### Regular tilings — uniform, parameterized
+
+"Regular" here is the colloquial sense: every cell uses the same shape, or a fixed *combination* of shapes that repeats vertex-by-vertex. Mathematically these are the **11 Archimedean tilings** (3 regular + 8 semi-regular). A regular tiling is fully described by its **vertex configuration** — the cyclic list of polygons meeting at each vertex:
+
+| Notation | Meaning | Tiling |
+|---|---|---|
+| `4.4.4.4` | four squares at every vertex | Square grid |
+| `6.6.6` | three hexagons | Hex grid |
+| `3.3.3.3.3.3` | six triangles | Triangle grid |
+| `4.8.8` | a square and two octagons | Octagon + square |
+| `3.6.3.6` | triangle, hex, triangle, hex | Trihexagonal |
+| `3.4.6.4` | triangle, square, hexagon, square | Rhombitrihexagonal |
+| `3.12.12` | triangle and two dodecagons | Truncated hex |
+| ... | (eleven total) | |
+
+The creation UI is a **polygon configurator**:
+- Pick polygon types (3, 4, 6, 8, 12 sides — the only regular polygons that tile)
+- Compose them around a vertex (drag-into-circle UI) — the configurator validates that interior angles sum to 360°
+- Or pick a preset from a gallery of the 11 tilings
+- Or input the vertex-configuration string directly (`4.8.8`)
+
+Adjacent secondary modes:
+- **Side-count knob**: lock to one polygon family, slide between 3/4/6 sides to switch between triangle, square, hex.
+- **Construction-line drawing**: free-draw straight lines and let the system snap to the nearest valid Archimedean tiling. Useful for exploration.
+
+Internally a regular tiling is `LatticeSpec::Regular(vertex_config: VertexConfig)`. The compiled `Lattice` impl is selected from a registry of the 11 hand-tuned implementations; rare custom-but-still-Archimedean cases use a generic Archimedean lattice that walks the wallpaper-group orbit.
+
+#### Irregular tilings — non-uniform, cell-by-cell
+
+"Irregular" means every cell can be a different shape. There is no global vertex configuration; each cell carries its own geometry. Two creation modes:
+
+- **Random / seeded** — the user provides a seed-point distribution (uniformly random, Poisson disk, or imported points) over a bounded region; the system computes a Voronoi tessellation. Each cell's identity is its seed point. Addresses look like `V<seed-hash>` or `V(x,y)`. Stable across re-renders because the seed list is part of the workbook.
+- **Drawn / validated** — the user draws a candidate cell shape (polygon). The system **validates tileability** and reports one of:
+  - ✅ Tiles (with a translation/rotation rule preview).
+  - ✏️ Doesn't tile but the *closest tileable adjustment* is shown (snap-suggest), with the perturbation magnitude in the UI. User accepts the suggestion or rejects it.
+  - ❌ No tileable shape nearby (e.g., regular heptagon). UI explains why (interior-angle constraint, etc.).
+
+The tileability check is deep math — practical scope for v1:
+- **Convex polygons**: any triangle and any quadrilateral tile. Convex hexagons tile only in the three Reinhardt families. Convex pentagons: exactly 15 known families. Convex 7+: never. We hard-code these cases.
+- **Concave polygons**: undecidable in general; we ship heuristics that catch the common cases (rep-tiles, polyomino-style shapes on a sub-grid). False negatives ("we couldn't verify") are acceptable; false positives ("we said it tiles but it doesn't") are not.
+- **Aperiodic / substitution tilings** (Penrose, "hat" tile, etc.): out of scope until well after Phase 6. Reserved as a separate exploratory phase.
+
+Internally an irregular tiling is `LatticeSpec::Irregular(IrregularSpec)`. The compiled `Lattice` impl precomputes geometry into a spatial index (R-tree / kd-tree on bounding boxes) so `cell_at` and `cells_in_viewport` stay fast — there is no per-pixel formula evaluation.
+
+#### `LatticeSpec` — the on-disk shape
+
+```rust
+pub enum LatticeSpec {
+    Regular(VertexConfig),
+    Irregular(IrregularSpec),
+}
+
+pub struct VertexConfig {
+    /// Cyclic list of polygon side-counts around one vertex, e.g. [4,8,8].
+    pub polygons: SmallVec<[u8; 6]>,
+    /// Edge length in lattice units.
+    pub edge_length: f32,
+    /// Global rotation of the tiling in radians.
+    pub orientation: f32,
+}
+
+pub enum IrregularSpec {
+    Voronoi {
+        seeds: Vec<Point2>,
+        bounds: Rect,
+        seed_source: SeedSource, // Random{seed}, PoissonDisk{r, seed}, Imported{name}
+    },
+    Drawn {
+        prototype: Vec<Point2>,   // the validated polygon
+        rule: TilingRule,         // translation + rotation lattice that lays it out
+        bounds: Rect,
+    },
+}
+```
+
+`LatticeSpec` is stored in `Sheet.lattice`; it's what the workbook file persists. The runtime `Lattice` impl is built from the spec on sheet load and cached.
+
+#### Performance contract (why this isn't "formula-on-every-mouse-move")
+
+A natural worry with "formula-based tilings" is that every `cell_at(p)` would run user code at 120 Hz. The `LatticeSpec` design avoids this: specs are **data**, not formulas. The compiler turns a spec into native Rust code (regular cases) or a precomputed spatial index (irregular cases). Per-mouse-move work stays O(log n) with no interpreter on the hot path.
+
+Where a formula language *does* meet the geometry layer is in **range queries inside formulas**: `NEIGHBORS(C5)` or `RADIUS(C5, 3)` ask the lattice for its topology, but those are bounded operations called from the formula engine, not the renderer.
+
 Implementations land in `tescellate-tess`:
 
-| Tiling | Coord scheme | Neighbors | Address syntax | Phase |
+| `LatticeSpec` | Coord | Neighbors | Address | Phase |
 |---|---|---|---|---|
-| Square | `(col: i32, row: i32)` | 4 (or 8 with diag) | `A1`, `AB42` (Excel-compatible) | 1 |
-| Hex (pointy-top) | Axial `(q, r)` | 6 | `H(q,r)` or `Hq,r` (configurable) | 2 |
-| Hex (flat-top) | Axial `(q, r)` rotated | 6 | same | 2 |
-| Triangle | `(x, y, ▲/▼)` | 3 | `T(x,y,▲)` | 3 |
-| Parallelogram (rhombic 60°) | `(u, v)` | 4 (edge) / 6 (vertex) | `P(u,v)` | 3 |
-| Truncated square (4.8.8: oct+sq) | composite | 4 oct, 4 sq | `O(...)` / `S(...)` | 4 |
-| Trihexagonal (3.6.3.6) | composite | mixed | dual-coord | 4 |
-| Arbitrary Archimedean / user-defined | wallpaper-group generator | varies | user-defined | 6+ |
+| `Regular(4.4.4.4)` — square | `(col, row)` | 4 (or 8 with diag) | `A1`, `AB42` | 1 |
+| `Regular(6.6.6)` — hex pointy | Axial `(q, r)` | 6 | `H(q,r)` | 2 |
+| `Regular(6.6.6)` — hex flat | Axial `(q, r)` rotated | 6 | `H(q,r)` | 2 |
+| `Regular(3.3.3.3.3.3)` — tri | `(x, y, ▲/▼)` | 3 | `T(x,y,▲)` | 3 |
+| `Regular(parallelogram)` | `(u, v)` | 4 (edge) | `P(u,v)` | 3 |
+| `Regular(4.8.8)` — oct+square | composite | 4 / 4 | `O(i,j)` / `S(i,j)` | 4 |
+| `Regular(3.6.3.6)` — trihex | composite | mixed | dual-coord | 4 |
+| Generic `Regular(*)` Archimedean | wallpaper-group | varies | configured | 6 |
+| `Irregular::Voronoi` | seed-hash | varies | `V<id>` | 6 |
+| `Irregular::Drawn` | prototype index `(i,j,rot)` | per-prototype | configured | 7 |
 
-### 3.2 Address syntax & cross-tessellation references
+### 3.3 Address syntax & cross-tessellation references
 
 A workbook can hold multiple sheets, each with its own lattice. A reference is `Sheet!Address` where `Address` is parsed by the destination sheet's lattice. Cross-sheet refs across different lattices are allowed but range arithmetic (`A1:B5` style) is only defined within a single lattice.
 
-### 3.3 Ranges
+### 3.4 Ranges
 
 For squares, a range is a rectangle. For other lattices, "range" needs explicit semantics:
 
@@ -137,7 +226,7 @@ For squares, a range is a rectangle. For other lattices, "range" needs explicit 
 
 Each `Lattice` implementation owns its `Region` types. The formula layer sees `Range` as an opaque iterable of `CellRef`.
 
-### 3.4 Geometry library
+### 3.5 Geometry library
 
 Pure Rust, no graphics dependencies in `tescellate-tess` — it returns vertex lists and the renderer in the frontend draws. This keeps the core embeddable in non-GUI contexts (CLI, server, tests).
 
@@ -464,9 +553,28 @@ Each phase ends in something demonstrable. Phases are not calendar-bound.
 - Move IPC transport from stdio to Unix socket / named pipe.
 - Begin CRDT layer over the cell store; Phase 5.1 ships read-only shared sessions, 5.2 ships co-editing.
 
-### Phase 6+ — Open tessellations + plugin API
-- User-defined wallpaper-group tilings.
-- Public plugin API for new lattices and new formula engines (e.g., a community Julia engine, a SQL engine, a Lean tactic engine).
+### Phase 6 — Regular tilings: the Archimedean configurator
+- Generic `Regular(*)` lattice driven by a `VertexConfig` (vertex-configuration string like `4.8.8`).
+- Polygon-configurator UI: pick polygons, drag-into-vertex, see preview, validate interior-angle sum.
+- Construction-line drawing mode: free-draw lines, snap to the nearest valid Archimedean tiling.
+- Gallery of all 11 Archimedean tilings as one-click presets.
+- **Test**: build a `4.8.8` sheet from the configurator UI and run a flood-fill formula across it.
+
+### Phase 7 — Irregular tilings: Voronoi
+- `Irregular::Voronoi` lattice with a configurable seed distribution (random / Poisson disk / imported points).
+- Precomputed spatial index for fast `cell_at` and `cells_in_viewport`.
+- Address syntax for seed-hashed cells; stable across file reload.
+- **Test**: GIS-style sheet — drop seed points, color by formula over cell area.
+
+### Phase 8 — Irregular tilings: draw-and-validate
+- Drawing surface for a candidate cell shape.
+- Tileability validator: hard-coded coverage of the convex cases (triangles, quads, the 15 pentagon families, the three convex-hexagon families) + a heuristic concave checker.
+- "Closest tileable adjustment" suggestion: minimal-perturbation snap.
+- **Test**: draw an L-shaped tromino; system verifies it tiles and lays out a sheet.
+
+### Phase 9+ — Aperiodic + plugin API
+- Aperiodic tilings via substitution and matching rules (Penrose, "hat", etc.) — exploratory.
+- Public plugin API for new `LatticeSpec` variants and new formula engines (community Julia engine, SQL engine, Lean tactic engine, etc.).
 - Charts / pivots.
 
 ---
@@ -479,6 +587,8 @@ Each phase ends in something demonstrable. Phases are not calendar-bound.
 - **"Range" semantics across lattices.** Particularly thorny for triangles. We may end up with multiple `Range` types and per-lattice function dispatch.
 - **Address-syntax bikeshedding.** We'll prototype one syntax per lattice and iterate; the parser is owned by the lattice so changing it is local.
 - **Tauri's renderer differences (system webview).** Some Canvas/WebGL features behave differently across Edge/WebKit/WebKitGTK; we'll watch for this when porting.
+- **Tileability decision in irregular-drawn mode.** Provably hard for arbitrary shapes. Mitigation: ship hard-coded coverage for the well-classified convex cases first, treat the heuristic concave checker as best-effort with explicit "couldn't verify" output, and reserve aperiodic for a later exploratory phase.
+- **Voronoi cell stability across edits.** Adding/removing seeds reshuffles neighbors of nearby cells, which is a recompute storm. Mitigation: track cell identity by seed-point hash (not by region), so unchanged seeds keep stable IDs and only directly-affected cells are dirty.
 
 ---
 
