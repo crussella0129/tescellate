@@ -23,10 +23,10 @@ pub enum EvalError {
 }
 
 /// Opaque per-engine compiled artifact. Each engine owns its own variant.
-/// In Phase 0 we keep this stubbed; Phase 1 wires up `ExcelLite::Bytecode`.
+/// Engines gated behind Cargo features add their variants under `cfg`.
 #[derive(Debug, Clone)]
 pub enum CompiledFormula {
-    Stub,
+    ExcelLite(excellite::Expr),
 }
 
 /// Context exposed to formulas at evaluation time. Phase 1 expands this
