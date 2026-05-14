@@ -30,6 +30,13 @@ export function App() {
     void refresh();
   }, [refresh]);
 
+  // Re-snapshot after File→Open / File→New.
+  useEffect(() => {
+    return window.tescellate.onWorkbookOpened(() => {
+      void refresh();
+    });
+  }, [refresh]);
+
   const selectedAddress = useMemo(
     () => (selection ? toAddress(selection) : null),
     [selection],

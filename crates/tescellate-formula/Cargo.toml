@@ -21,4 +21,5 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 tescellate-core = { workspace = true }
 tescellate-tess = { workspace = true }
+tescellate-store = { workspace = true }
 hashbrown = { workspace = true }

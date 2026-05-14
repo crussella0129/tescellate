@@ -56,6 +56,89 @@ impl WorkbookEngine {
         self.workbook.id
     }
 
+    /// Persist the workbook to a `.tscl` zip at `path`. The DAG itself
+    /// isn't stored — it can be reconstructed from cell sources on load.
+    pub fn save(&self, path: &std::path::Path) -> Result<(), SetCellError> {
+        let file = std::fs::File::create(path).map_err(|e| SetCellError::Io(e.to_string()))?;
+        tescellate_store::save(&self.workbook, file).map_err(|e| SetCellError::Io(e.to_string()))
+    }
+
+    /// Load a workbook from a `.tscl` file. Rebuilds the in-memory DAG by
+    /// re-parsing every cell's source; trusts the persisted values so we
+    /// don't have to re-evaluate just to display them.
+    pub fn open(&mut self, path: &std::path::Path) -> Result<(), SetCellError> {
+        let file = std::fs::File::open(path).map_err(|e| SetCellError::Io(e.to_string()))?;
+        let workbook = tescellate_store::load(file).map_err(|e| SetCellError::Io(e.to_string()))?;
+        self.workbook = workbook;
+        self.dag = Dag::new();
+        self.compiled.clear();
+        self.rebuild_dag()?;
+        Ok(())
+    }
+
+    fn rebuild_dag(&mut self) -> Result<(), SetCellError> {
+        // Snapshot the (sheet, addr, source) tuples we need to re-parse so
+        // we can mutate self.dag / self.compiled without aliasing the
+        // workbook. Iterate by sheet to keep the lattice handle local.
+        let entries: Vec<(SheetId, String, String, EngineKind)> = self
+            .workbook
+            .sheets
+            .values()
+            .flat_map(|sheet| {
+                let default_engine = self.workbook.default_engine;
+                sheet.cells.iter().filter_map(move |(addr, cell)| {
+                    let src = cell.source.clone()?;
+                    let engine = cell.engine.unwrap_or(default_engine);
+                    Some((sheet.id, addr.clone(), src, engine))
+                })
+            })
+            .collect();
+
+        for (sheet_id, addr, source, engine_kind) in entries {
+            let lattice = self.square_lattice_for(sheet_id)?;
+            let engine = self
+                .engines
+                .get(&engine_kind)
+                .ok_or(SetCellError::NoEngine(engine_kind))?;
+            let compiled = match engine.parse(&source) {
+                Ok(c) => c,
+                Err(_) => continue, // skip cells with stale parse errors; they keep their saved value
+            };
+            let refs = engine.refs(&compiled);
+            let cref = CellRef::new(sheet_id, addr.clone());
+
+            let mut deps = Vec::new();
+            for (start, end) in &refs {
+                if let Some(end) = end {
+                    let a = match lattice.parse_address(start) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+                    let b = match lattice.parse_address(end) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+                    for c in square_range(a, b) {
+                        deps.push(CellRef::new(sheet_id, lattice.address(c)));
+                    }
+                } else {
+                    let c = match lattice.parse_address(start) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+                    deps.push(CellRef::new(sheet_id, lattice.address(c)));
+                }
+            }
+            // Cycles in saved data shouldn't have been possible at save time,
+            // but be defensive: skip cells that would introduce one.
+            if self.dag.set_deps(&cref, deps).is_err() {
+                continue;
+            }
+            self.compiled.insert(cref, compiled);
+        }
+        Ok(())
+    }
+
     pub fn add_sheet(&mut self, name: impl Into<String>, lattice: LatticeKind) -> SheetId {
         let id = SheetId(self.workbook.sheets.len() as u32 + 1);
         let sheet = Sheet {
@@ -365,6 +448,8 @@ pub enum SetCellError {
     Parse(String),
     #[error("lattice {0:?} not yet supported in Phase 1")]
     UnsupportedLattice(LatticeKind),
+    #[error("io: {0}")]
+    Io(String),
 }
 
 #[cfg(test)]
@@ -451,5 +536,38 @@ mod tests {
         eng.set_cell(sid, "B2", Some("=2")).unwrap();
         let snap = eng.snapshot_range(sid, "A1", "C3").unwrap();
         assert_eq!(snap.len(), 2);
+    }
+
+    #[test]
+    fn save_and_open_preserves_dependencies() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("=10")).unwrap();
+        eng.set_cell(sid, "A2", Some("=A1*2")).unwrap();
+
+        let tmp = std::env::temp_dir().join(format!(
+            "tescellate-test-{}-{}.tscl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        eng.save(&tmp).unwrap();
+
+        let mut other = WorkbookEngine::new();
+        other.open(&tmp).unwrap();
+        std::fs::remove_file(&tmp).ok();
+
+        // Saved value comes back as-is...
+        assert_eq!(
+            other.get_cell(sid, "A2").unwrap().value,
+            CellValue::Number(20.0)
+        );
+        // ...and the DAG was rebuilt, so an upstream edit propagates.
+        other.set_cell(sid, "A1", Some("=100")).unwrap();
+        assert_eq!(
+            other.get_cell(sid, "A2").unwrap().value,
+            CellValue::Number(200.0)
+        );
     }
 }

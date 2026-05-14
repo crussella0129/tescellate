@@ -13,3 +13,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tescellate-core = { workspace = true }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tescellate-tess = { workspace = true }
+hashbrown = { workspace = true }

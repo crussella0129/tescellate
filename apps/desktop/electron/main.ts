@@ -11,7 +11,7 @@
  * swap the transport (stdio → socket) without touching the UI.
  */
 
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, type MenuItemConstructorOptions } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -21,6 +21,7 @@ const __dirname = dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let core: ChildProcessWithoutNullStreams | null = null;
+let currentPath: string | null = null;
 
 // LSP-style framing state.
 let rxBuffer = Buffer.alloc(0);
@@ -127,9 +128,114 @@ ipcMain.handle('core:request', async (_evt, payload: { method: string; params: u
   return sendCoreRequest(payload.method, payload.params);
 });
 
+function updateTitle() {
+  if (!mainWindow) return;
+  const name = currentPath ? currentPath.replace(/^.*[\\/]/, '') : 'untitled';
+  mainWindow.setTitle(`${name} — Tescellate`);
+}
+
+async function openWorkbook() {
+  if (!mainWindow) return;
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open workbook',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Tescellate workbook', extensions: ['tscl'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (r.canceled || r.filePaths.length === 0) return;
+  const path = r.filePaths[0];
+  const resp = (await sendCoreRequest('workbook.open', { path })) as {
+    error?: { message: string };
+  };
+  if (resp.error) {
+    await dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      message: 'Could not open workbook',
+      detail: resp.error.message,
+    });
+    return;
+  }
+  currentPath = path;
+  updateTitle();
+  mainWindow.webContents.send('workbook:opened', { path });
+}
+
+async function saveWorkbook(saveAs: boolean) {
+  if (!mainWindow) return;
+  let path = currentPath;
+  if (saveAs || !path) {
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save workbook',
+      defaultPath: path ?? 'workbook.tscl',
+      filters: [{ name: 'Tescellate workbook', extensions: ['tscl'] }],
+    });
+    if (r.canceled || !r.filePath) return;
+    path = r.filePath;
+  }
+  const resp = (await sendCoreRequest('workbook.save', { path })) as {
+    error?: { message: string };
+  };
+  if (resp.error) {
+    await dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      message: 'Could not save workbook',
+      detail: resp.error.message,
+    });
+    return;
+  }
+  currentPath = path;
+  updateTitle();
+}
+
+function buildMenu() {
+  const isMac = process.platform === 'darwin';
+  const fileSubmenu: MenuItemConstructorOptions[] = [
+    {
+      label: 'New',
+      accelerator: 'CmdOrCtrl+N',
+      click: async () => {
+        await sendCoreRequest('workbook.new', {});
+        currentPath = null;
+        updateTitle();
+        mainWindow?.webContents.send('workbook:opened', { path: null });
+      },
+    },
+    {
+      label: 'Open…',
+      accelerator: 'CmdOrCtrl+O',
+      click: () => void openWorkbook(),
+    },
+    { type: 'separator' },
+    {
+      label: 'Save',
+      accelerator: 'CmdOrCtrl+S',
+      click: () => void saveWorkbook(false),
+    },
+    {
+      label: 'Save As…',
+      accelerator: 'CmdOrCtrl+Shift+S',
+      click: () => void saveWorkbook(true),
+    },
+    { type: 'separator' },
+    { role: isMac ? 'close' : 'quit' },
+  ];
+  const template: MenuItemConstructorOptions[] = [
+    ...(isMac ? [{ role: 'appMenu' as const }] : []),
+    { label: 'File', submenu: fileSubmenu },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(() => {
   startCore();
   createWindow();
+  buildMenu();
+  updateTitle();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

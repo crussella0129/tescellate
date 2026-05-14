@@ -72,6 +72,34 @@ fn dispatch(engine: &mut WorkbookEngine, req: Request) -> Response {
             },
             Err(e) => Response::err(id, -32602, e),
         },
+        "workbook.save" => match decode::<PathParams>(&req.params) {
+            Ok(p) => match engine.save(std::path::Path::new(&p.path)) {
+                Ok(()) => Response::ok(id, json!({"ok": true, "path": p.path})),
+                Err(e) => Response::err(id, -32000, e.to_string()),
+            },
+            Err(e) => Response::err(id, -32602, e),
+        },
+        "workbook.open" => match decode::<PathParams>(&req.params) {
+            Ok(p) => match engine.open(std::path::Path::new(&p.path)) {
+                Ok(()) => {
+                    // Surface a snapshot of the workbook structure so the
+                    // renderer can rebuild its UI in one round trip.
+                    let sheets: Vec<_> = engine
+                        .workbook
+                        .sheet_order
+                        .iter()
+                        .filter_map(|sid| {
+                            engine.workbook.sheets.get(sid).map(
+                                |s| json!({"id": s.id.0, "name": s.name, "lattice": s.lattice}),
+                            )
+                        })
+                        .collect();
+                    Response::ok(id, json!({"ok": true, "path": p.path, "sheets": sheets}))
+                }
+                Err(e) => Response::err(id, -32000, e.to_string()),
+            },
+            Err(e) => Response::err(id, -32602, e),
+        },
         other => Response::err(id, -32601, format!("method not found: {other}")),
     }
 }
@@ -106,4 +134,9 @@ struct RangeSnapshotParams {
     sheet: u32,
     start: String,
     end: String,
+}
+
+#[derive(Deserialize)]
+struct PathParams {
+    path: String,
 }
