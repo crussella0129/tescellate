@@ -149,8 +149,12 @@ dependencies = [
 name = "tescellate-cli"
 version = "0.0.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tescellate-core",
+ "tescellate-formula",
  "tescellate-ipc",
+ "tescellate-tess",
 ]
 
 [[package]]

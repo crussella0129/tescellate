@@ -13,7 +13,11 @@ fn ping_round_trip() {
 
     let reader = Cursor::new(input);
     let mut output: Vec<u8> = Vec::new();
-    tescellate_ipc::serve(reader, &mut output).expect("serve loop");
+    tescellate_ipc::serve(reader, &mut output, |req| {
+        let id = req.id.unwrap_or(serde_json::Value::Null);
+        tescellate_ipc::Response::ok(id, serde_json::json!({"ok": true, "echo": req.params}))
+    })
+    .expect("serve loop");
 
     // Parse the response frame back out.
     let mut cursor = Cursor::new(&output);

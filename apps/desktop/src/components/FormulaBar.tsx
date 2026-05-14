@@ -1,10 +1,15 @@
+import { useEffect, useRef, useState } from 'react';
 import type { EngineKind } from '../types';
 
 interface Props {
   engine: EngineKind;
   onEngineChange: (e: EngineKind) => void;
-  value: string;
-  onChange: (v: string) => void;
+  /** Canonical address of the selected cell, e.g. "A1". */
+  address: string | null;
+  /** Current source (formula text) of the selected cell, if any. */
+  source: string;
+  /** Called when the user commits the edit (Enter / blur). */
+  onCommit: (src: string) => void;
 }
 
 const ENGINE_LABELS: Record<EngineKind, string> = {
@@ -14,9 +19,24 @@ const ENGINE_LABELS: Record<EngineKind, string> = {
   rust_native: 'rs (native)',
 };
 
-export function FormulaBar({ engine, onEngineChange, value, onChange }: Props) {
+export function FormulaBar({ engine, onEngineChange, address, source, onCommit }: Props) {
+  const [draft, setDraft] = useState(source);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // When the selected cell changes upstream, replace the draft.
+  useEffect(() => {
+    setDraft(source);
+  }, [source, address]);
+
+  const commit = () => {
+    if (draft !== source) {
+      onCommit(draft);
+    }
+  };
+
   return (
     <div className="formula-bar">
+      <span className="cell-label">{address ?? '—'}</span>
       <select
         className="engine-chip"
         value={engine}
@@ -30,11 +50,22 @@ export function FormulaBar({ engine, onEngineChange, value, onChange }: Props) {
         ))}
       </select>
       <input
+        ref={inputRef}
         className="formula-input"
         spellCheck={false}
         placeholder="Enter formula, e.g. =SUM(A1:A10)"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            commit();
+            e.currentTarget.blur();
+          } else if (e.key === 'Escape') {
+            setDraft(source);
+            e.currentTarget.blur();
+          }
+        }}
       />
     </div>
   );

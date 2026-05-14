@@ -1,12 +1,26 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import type { CellSnapshot } from '../ipc';
+import { formatValue } from '../ipc';
+import { toAddress, type Coord } from '../address';
+
+interface Props {
+  cellSize: number;
+  snapshots: Map<string, CellSnapshot>;
+  selection: Coord | null;
+  onSelect: (c: Coord) => void;
+}
 
 /**
- * Placeholder grid canvas. Phase 0 just draws a static demo grid so the
- * window has something visible; Phase 1 replaces this with the real
- * lattice-driven renderer (see PLAN.md §8.2).
+ * Phase 1 square-grid renderer. Canvas 2D, no virtualization yet —
+ * Phase 4 introduces WebGL + viewport culling.
  */
-export function GridCanvas() {
+export function GridCanvas({ cellSize, snapshots, selection, onSelect }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rowHeader = 28; // px, top labels
+  const colHeader = 48; // px, left labels
+
+  // Memoize a quick lookup by serialized address.
+  const snapMap = useMemo(() => snapshots, [snapshots]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -23,33 +37,117 @@ export function GridCanvas() {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      ctx.fillStyle = '#23262b';
+      ctx.fillStyle = '#1b1d20';
       ctx.fillRect(0, 0, w, h);
 
-      const cell = 48;
-      ctx.strokeStyle = '#33373d';
+      const cols = Math.ceil((w - colHeader) / cellSize) + 1;
+      const rows = Math.ceil((h - rowHeader) / cellSize) + 1;
+
+      // Selection highlight (drawn under the grid lines).
+      if (selection) {
+        const sx = colHeader + selection.col * cellSize;
+        const sy = rowHeader + selection.row * cellSize;
+        if (sx >= colHeader && sy >= rowHeader && sx < w && sy < h) {
+          ctx.fillStyle = '#1f4068';
+          ctx.fillRect(sx, sy, cellSize, cellSize);
+        }
+      }
+
+      // Grid lines.
+      ctx.strokeStyle = '#2a2e34';
       ctx.lineWidth = 1;
       ctx.beginPath();
-      for (let x = 0; x < w; x += cell) {
-        ctx.moveTo(x + 0.5, 0);
-        ctx.lineTo(x + 0.5, h);
+      for (let c = 0; c <= cols; c += 1) {
+        const x = colHeader + c * cellSize + 0.5;
+        ctx.moveTo(x, rowHeader);
+        ctx.lineTo(x, h);
       }
-      for (let y = 0; y < h; y += cell) {
-        ctx.moveTo(0, y + 0.5);
-        ctx.lineTo(w, y + 0.5);
+      for (let r = 0; r <= rows; r += 1) {
+        const y = rowHeader + r * cellSize + 0.5;
+        ctx.moveTo(colHeader, y);
+        ctx.lineTo(w, y);
       }
       ctx.stroke();
 
+      // Header backgrounds.
+      ctx.fillStyle = '#14171a';
+      ctx.fillRect(0, 0, w, rowHeader);
+      ctx.fillRect(0, 0, colHeader, h);
+
+      // Header text.
       ctx.fillStyle = '#7a8593';
-      ctx.font = '12px system-ui, sans-serif';
-      ctx.fillText('Phase 0 placeholder — real lattice renderer lands in Phase 1', 12, 24);
+      ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (let c = 0; c < cols; c += 1) {
+        const label = toAddress({ col: c, row: 0 }).replace(/[0-9]+$/, '');
+        const x = colHeader + c * cellSize + cellSize / 2;
+        ctx.fillText(label, x, rowHeader / 2);
+      }
+      ctx.textAlign = 'right';
+      for (let r = 0; r < rows; r += 1) {
+        const y = rowHeader + r * cellSize + cellSize / 2;
+        ctx.fillText(`${r + 1}`, colHeader - 8, y);
+      }
+
+      // Cell values.
+      ctx.fillStyle = '#e7e9ec';
+      ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      for (let r = 0; r < rows; r += 1) {
+        for (let c = 0; c < cols; c += 1) {
+          const addr = toAddress({ col: c, row: r });
+          const snap = snapMap.get(addr);
+          if (!snap) continue;
+          const text = formatValue(snap.value);
+          if (!text) continue;
+          // Right-align numbers, left-align everything else (Excel convention).
+          const isNumber = snap.value.kind === 'number' || snap.value.kind === 'integer';
+          ctx.textAlign = isNumber ? 'right' : 'left';
+          ctx.fillStyle =
+            snap.value.kind === 'error' ? '#ff6b6b' : '#e7e9ec';
+          const x = isNumber
+            ? colHeader + (c + 1) * cellSize - 6
+            : colHeader + c * cellSize + 6;
+          const y = rowHeader + r * cellSize + cellSize / 2;
+          // Clip to cell bounds.
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(
+            colHeader + c * cellSize + 1,
+            rowHeader + r * cellSize + 1,
+            cellSize - 2,
+            cellSize - 2,
+          );
+          ctx.clip();
+          ctx.fillText(text, x, y);
+          ctx.restore();
+        }
+      }
     };
 
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(canvas);
     return () => ro.disconnect();
-  }, []);
+  }, [cellSize, snapMap, selection]);
 
-  return <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />;
+  const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    if (x < colHeader || y < rowHeader) return;
+    const col = Math.floor((x - colHeader) / cellSize);
+    const row = Math.floor((y - rowHeader) / cellSize);
+    onSelect({ col, row });
+  };
+
+  return (
+    <canvas
+      ref={canvasRef}
+      onClick={onClick}
+      style={{ width: '100%', height: '100%', display: 'block', cursor: 'cell' }}
+    />
+  );
 }
