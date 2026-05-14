@@ -8,11 +8,13 @@ use tescellate_tess::LatticeKind;
 
 pub mod cell;
 pub mod dag;
+pub mod extent;
 pub mod reference;
 pub mod value;
 
 pub use cell::{Cell, CellError, EngineKind};
 pub use dag::{Dag, DagError};
+pub use extent::{BoundedExtent, SheetExtent};
 pub use reference::CellRef;
 pub use value::{Array, CellValue, ShapeError};
 
@@ -44,8 +46,13 @@ pub struct Sheet {
     pub id: SheetId,
     pub name: String,
     pub lattice: LatticeKind,
-    // Cells indexed by serialized coord for now; Phase 1 will introduce a
-    // lattice-typed coord enum so this can be strongly typed.
+    /// Bounded vs unbounded. Unbounded is the default — sparse storage means
+    /// "infinite" costs nothing extra in RAM. Bounded sheets reject
+    /// out-of-bounds addresses at write time.
+    #[serde(default)]
+    pub extent: SheetExtent,
+    // Cells indexed by canonical address. Lattice-typed coord enum is a
+    // Phase 2+ refactor.
     pub cells: hashbrown::HashMap<String, Cell>,
 }
 
@@ -72,6 +79,7 @@ mod tests {
                         id: SheetId(1),
                         name: "Sheet1".into(),
                         lattice: LatticeKind::Square,
+                        extent: SheetExtent::Unbounded,
                         cells: hashbrown::HashMap::new(),
                     },
                 );

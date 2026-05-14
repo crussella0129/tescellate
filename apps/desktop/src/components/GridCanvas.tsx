@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import type { CellSnapshot } from '../ipc';
 import { formatValue } from '../ipc';
 import { toAddress, type Coord } from '../address';
@@ -6,7 +6,14 @@ import { toAddress, type Coord } from '../address';
 interface Props {
   cellSize: number;
   snapshots: Map<string, CellSnapshot>;
-  selection: Coord | null;
+  /** The cell whose formula is being edited; ringed in solid colour. */
+  activeCell: Coord | null;
+  /** The latest-clicked cell. Equals activeCell when not editing; can
+   * differ during edit-mode while picking refs. */
+  cursorCell: Coord | null;
+  /** When true, the active-cell ring is drawn with a "marching ants"
+   * style and clicks add references instead of moving the active cell. */
+  editing: boolean;
   onSelect: (c: Coord) => void;
 }
 
@@ -14,13 +21,17 @@ interface Props {
  * Phase 1 square-grid renderer. Canvas 2D, no virtualization yet —
  * Phase 4 introduces WebGL + viewport culling.
  */
-export function GridCanvas({ cellSize, snapshots, selection, onSelect }: Props) {
+export function GridCanvas({
+  cellSize,
+  snapshots,
+  activeCell,
+  cursorCell,
+  editing,
+  onSelect,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rowHeader = 28; // px, top labels
-  const colHeader = 48; // px, left labels
-
-  // Memoize a quick lookup by serialized address.
-  const snapMap = useMemo(() => snapshots, [snapshots]);
+  const rowHeader = 28;
+  const colHeader = 48;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -43,10 +54,12 @@ export function GridCanvas({ cellSize, snapshots, selection, onSelect }: Props) 
       const cols = Math.ceil((w - colHeader) / cellSize) + 1;
       const rows = Math.ceil((h - rowHeader) / cellSize) + 1;
 
-      // Selection highlight (drawn under the grid lines).
-      if (selection) {
-        const sx = colHeader + selection.col * cellSize;
-        const sy = rowHeader + selection.row * cellSize;
+      // Cursor highlight (filled). Drawn under grid lines and the active
+      // ring so the ring stays visible on top.
+      const cursor = cursorCell;
+      if (cursor) {
+        const sx = colHeader + cursor.col * cellSize;
+        const sy = rowHeader + cursor.row * cellSize;
         if (sx >= colHeader && sy >= rowHeader && sx < w && sy < h) {
           ctx.fillStyle = '#1f4068';
           ctx.fillRect(sx, sy, cellSize, cellSize);
@@ -91,22 +104,17 @@ export function GridCanvas({ cellSize, snapshots, selection, onSelect }: Props) 
       }
 
       // Cell values.
-      ctx.fillStyle = '#e7e9ec';
       ctx.font = '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-      ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
       for (let r = 0; r < rows; r += 1) {
         for (let c = 0; c < cols; c += 1) {
           const addr = toAddress({ col: c, row: r });
-          const snap = snapMap.get(addr);
+          const snap = snapshots.get(addr);
           if (!snap) continue;
           const text = formatValue(snap.value);
           if (!text) continue;
-          // Right-align numbers, left-align everything else (Excel convention).
           const isNumber = snap.value.kind === 'number' || snap.value.kind === 'integer';
           ctx.textAlign = isNumber ? 'right' : 'left';
-          // Spilled cells are styled muted so the user can see they're
-          // derived. Errors stay red.
           ctx.fillStyle =
             snap.value.kind === 'error'
               ? '#ff6b6b'
@@ -117,7 +125,6 @@ export function GridCanvas({ cellSize, snapshots, selection, onSelect }: Props) 
             ? colHeader + (c + 1) * cellSize - 6
             : colHeader + c * cellSize + 6;
           const y = rowHeader + r * cellSize + cellSize / 2;
-          // Clip to cell bounds.
           ctx.save();
           ctx.beginPath();
           ctx.rect(
@@ -131,13 +138,27 @@ export function GridCanvas({ cellSize, snapshots, selection, onSelect }: Props) 
           ctx.restore();
         }
       }
+
+      // Active-cell ring. Solid when not editing; dashed (marching ants)
+      // while editing to signal "this is where Enter will commit".
+      if (activeCell) {
+        const ax = colHeader + activeCell.col * cellSize;
+        const ay = rowHeader + activeCell.row * cellSize;
+        if (ax >= colHeader && ay >= rowHeader && ax < w && ay < h) {
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = editing ? '#4a90e2' : '#88b5f5';
+          ctx.setLineDash(editing ? [4, 3] : []);
+          ctx.strokeRect(ax + 1, ay + 1, cellSize - 2, cellSize - 2);
+          ctx.setLineDash([]);
+        }
+      }
     };
 
     draw();
     const ro = new ResizeObserver(draw);
     ro.observe(canvas);
     return () => ro.disconnect();
-  }, [cellSize, snapMap, selection]);
+  }, [cellSize, snapshots, activeCell, cursorCell, editing]);
 
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();

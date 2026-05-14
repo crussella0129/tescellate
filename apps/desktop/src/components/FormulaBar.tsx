@@ -1,18 +1,23 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef } from 'react';
 import type { EngineKind } from '../types';
 
-interface Props {
+export interface FormulaBarProps {
   engine: EngineKind;
   onEngineChange: (e: EngineKind) => void;
-  /** Canonical address of the selected cell, e.g. "A1". */
+  /** Canonical address of the active (editable) cell, e.g. "A1". */
   address: string | null;
-  /** Current source (formula text) of the selected cell, if any. */
-  source: string;
-  /** If the selected cell is a spill target, this is its source cell's
-   * address. The bar surfaces a chip pointing at it. */
+  /** Draft text the user is editing. Controlled by the parent so cell-clicks
+   * can insert refs at the caret position. */
+  draft: string;
+  onDraftChange: (s: string) => void;
+  /** Fired the first time the user interacts with the input. */
+  onFocus: () => void;
+  /** Fired on Enter (true) / blur (true) — parent commits. */
+  onCommit: () => void;
+  /** Fired on Escape — parent reverts. */
+  onCancel: () => void;
+  /** If the active cell is a spill target, this is its source cell's address. */
   spilledFrom: string | null;
-  /** Called when the user commits the edit (Enter / blur). */
-  onCommit: (src: string) => void;
 }
 
 const ENGINE_LABELS: Record<EngineKind, string> = {
@@ -22,28 +27,20 @@ const ENGINE_LABELS: Record<EngineKind, string> = {
   rust_native: 'rs (native)',
 };
 
-export function FormulaBar({
-  engine,
-  onEngineChange,
-  address,
-  source,
-  spilledFrom,
-  onCommit,
-}: Props) {
-  const [draft, setDraft] = useState(source);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // When the selected cell changes upstream, replace the draft.
-  useEffect(() => {
-    setDraft(source);
-  }, [source, address]);
-
-  const commit = () => {
-    if (draft !== source) {
-      onCommit(draft);
-    }
-  };
-
+export const FormulaBar = forwardRef<HTMLInputElement, FormulaBarProps>(function FormulaBar(
+  {
+    engine,
+    onEngineChange,
+    address,
+    draft,
+    onDraftChange,
+    onFocus,
+    onCommit,
+    onCancel,
+    spilledFrom,
+  },
+  ref,
+) {
   return (
     <div className="formula-bar">
       <span className="cell-label">{address ?? '—'}</span>
@@ -65,23 +62,26 @@ export function FormulaBar({
         ))}
       </select>
       <input
-        ref={inputRef}
+        ref={ref}
         className="formula-input"
         spellCheck={false}
-        placeholder="Enter formula, e.g. =SUM(A1:A10)"
+        placeholder="Enter a formula or value (= prefix optional)"
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
+        onChange={(e) => onDraftChange(e.target.value)}
+        onFocus={onFocus}
+        onBlur={onCommit}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
-            commit();
+            e.preventDefault();
+            onCommit();
             e.currentTarget.blur();
           } else if (e.key === 'Escape') {
-            setDraft(source);
+            e.preventDefault();
+            onCancel();
             e.currentTarget.blur();
           }
         }}
       />
     </div>
   );
-}
+});
