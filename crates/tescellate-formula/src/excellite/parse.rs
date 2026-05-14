@@ -93,6 +93,18 @@ impl Parser {
 
     fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
         let mut lhs = self.parse_prefix()?;
+
+        // Apply-suffix loop: any expression followed by `(...)` is a call.
+        // This is what lets `Y(Fact)(5)` and `f(7)` (with `f` LET-bound)
+        // parse — the postfix is left-associative, so each `(args)` wraps
+        // the running lhs in another `Apply`.
+        while matches!(self.peek().map(|t| &t.value), Some(Token::LParen)) {
+            self.bump(); // (
+            let args = self.parse_call_args()?;
+            self.expect(Token::RParen, "expected `)` to close call")?;
+            lhs = Expr::Apply(Box::new(lhs), args);
+        }
+
         while let Some(tok) = self.peek() {
             let Some((bp, assoc, op)) = binding_power(&tok.value) else {
                 break;
@@ -109,6 +121,33 @@ impl Parser {
             lhs = Expr::Binary(op, Box::new(lhs), Box::new(rhs));
         }
         Ok(lhs)
+    }
+
+    /// Parse a comma-separated argument list. Consumes commas; the caller
+    /// is responsible for the surrounding `(` and `)`. Used by both the
+    /// `Ident(...)` Call path and the apply-suffix path so both forms
+    /// allow the same argument syntax.
+    fn parse_call_args(&mut self) -> Result<Vec<Expr>, ParseError> {
+        let mut args = Vec::new();
+        if matches!(self.peek().map(|t| &t.value), Some(Token::RParen)) {
+            return Ok(args);
+        }
+        loop {
+            args.push(self.parse_expr(0)?);
+            match self.peek().map(|t| t.value.clone()) {
+                Some(Token::Comma) => {
+                    self.bump();
+                }
+                Some(Token::RParen) => break,
+                other => {
+                    return Err(ParseError {
+                        message: format!("expected `,` or `)` in argument list, got {other:?}"),
+                        pos: self.peek().map(|t| t.start).unwrap_or(0),
+                    });
+                }
+            }
+        }
+        Ok(args)
     }
 
     fn parse_prefix(&mut self) -> Result<Expr, ParseError> {
@@ -156,29 +195,18 @@ impl Parser {
                 }
                 let name = name.clone();
                 self.bump();
-                self.expect(Token::LParen, "expected `(` after function name")?;
-                let mut args = Vec::new();
-                if !matches!(self.peek().map(|t| &t.value), Some(Token::RParen)) {
-                    loop {
-                        args.push(self.parse_expr(0)?);
-                        match self.peek().map(|t| t.value.clone()) {
-                            Some(Token::Comma) => {
-                                self.bump();
-                            }
-                            Some(Token::RParen) => break,
-                            other => {
-                                return Err(ParseError {
-                                    message: format!(
-                                        "expected `,` or `)` in argument list, got {other:?}"
-                                    ),
-                                    pos: self.peek().map(|t| t.start).unwrap_or(tok.start),
-                                });
-                            }
-                        }
-                    }
+                // If followed by `(`, this is a function call (or a user
+                // lambda apply via the eval-time Call→Var fallback). If
+                // not, it's a bare identifier — emit `Var` and let the
+                // evaluator resolve it through the lexical environment.
+                if matches!(self.peek().map(|t| &t.value), Some(Token::LParen)) {
+                    self.bump(); // (
+                    let args = self.parse_call_args()?;
+                    self.expect(Token::RParen, "expected `)` to close call")?;
+                    Ok(Expr::Call(name, args))
+                } else {
+                    Ok(Expr::Var(name))
                 }
-                self.expect(Token::RParen, "expected `)` to close call")?;
-                Ok(Expr::Call(name, args))
             }
             Token::CellRef(addr) => {
                 self.bump();

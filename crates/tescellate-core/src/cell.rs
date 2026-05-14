@@ -33,6 +33,11 @@ pub enum CellError {
     Timeout,
     /// Spill region collides with a non-empty cell. See PLAN.md §6.2.2.
     Spill,
+    /// A previously-stored `Function` value (a lambda) was loaded from
+    /// disk. Lambdas don't fully round-trip through `.tscl`; this is the
+    /// placeholder until `engine::rebuild_dag` re-evaluates the cell's
+    /// source and produces a live `CellValue::Function` again.
+    StaleFunction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,7 +1,12 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { CellSnapshot } from '../ipc';
 import { formatValue } from '../ipc';
 import { toAddress, type Coord } from '../address';
+
+export interface SelectionRange {
+  anchor: Coord;
+  focus: Coord;
+}
 
 interface Props {
   cellSize: number;
@@ -13,6 +18,11 @@ interface Props {
    * clicked to insert as a reference. Rendered as a dimmer filled
    * highlight separate from the active ring. `null` outside editing. */
   pickPreview: Coord | null;
+  /** Multi-cell rectangular selection. Set by click-and-drag (or by
+   * a single click, which is a 1×1 range that we render as if it were a
+   * scalar). The anchor is where the drag started; the focus is where
+   * it ended. */
+  selectionRange: SelectionRange | null;
   /** When true, the active-cell ring is drawn dashed ("marching ants")
    * and clicks add references instead of moving the active cell. */
   editing: boolean;
@@ -21,6 +31,9 @@ interface Props {
    * next keystroke is captured by the grid, not by document.body. */
   focusTick: number;
   onSelect: (c: Coord) => void;
+  /** Called when a drag selects a rectangular region. `anchor === focus`
+   * means a single-cell drag (treated like a click by the parent). */
+  onRangeSelect: (range: SelectionRange) => void;
   /** A printable key was pressed while a cell was selected — start editing
    * with that character as the initial draft. */
   onStartEditWith: (initial: string) => void;
@@ -41,9 +54,11 @@ export function GridCanvas({
   snapshots,
   activeCell,
   pickPreview,
+  selectionRange,
   editing,
   focusTick,
   onSelect,
+  onRangeSelect,
   onStartEditWith,
   onStartEdit,
   onClear,
@@ -53,18 +68,62 @@ export function GridCanvas({
   const rowHeader = 28;
   const colHeader = 48;
 
-  // Claim focus on mount AND whenever `focusTick` bumps. The parent bumps
-  // it after the wizard closes or after a formula commit so the next
-  // keystroke goes to the grid (cursor navigation, type-to-edit) rather
-  // than being swallowed by document.body.
+  // Drag-tracking state. A drag starts on mousedown over a cell; we attach
+  // window-level mousemove/mouseup listeners so the user can drag past the
+  // window edge without losing tracking. `lastDragCoord` lets us skip
+  // re-emitting onRangeSelect on every pixel when the user's mouse stays
+  // within one cell.
+  const dragAnchorRef = useRef<Coord | null>(null);
+  const lastDragCoordRef = useRef<Coord | null>(null);
+
+  // Claim focus on mount AND whenever `focusTick` bumps.
   useEffect(() => {
-    // requestAnimationFrame so we focus after any in-flight blur/focus
-    // events from the formula bar have settled.
     const id = requestAnimationFrame(() => {
       canvasRef.current?.focus();
     });
     return () => cancelAnimationFrame(id);
   }, [focusTick]);
+
+  const cellAtClientPos = useCallback(
+    (clientX: number, clientY: number): Coord | null => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      if (x < colHeader || y < rowHeader) return null;
+      return {
+        col: Math.floor((x - colHeader) / cellSize),
+        row: Math.floor((y - rowHeader) / cellSize),
+      };
+    },
+    [cellSize, colHeader, rowHeader],
+  );
+
+  // Window-level drag listeners. Kept always-attached so we never miss a
+  // mouseup outside the canvas — but they're cheap no-ops when no drag
+  // is in flight.
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragAnchorRef.current) return;
+      const focus = cellAtClientPos(e.clientX, e.clientY);
+      if (!focus) return;
+      const prev = lastDragCoordRef.current;
+      if (prev && prev.col === focus.col && prev.row === focus.row) return;
+      lastDragCoordRef.current = focus;
+      onRangeSelect({ anchor: dragAnchorRef.current, focus });
+    };
+    const onMouseUp = () => {
+      dragAnchorRef.current = null;
+      lastDragCoordRef.current = null;
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [cellAtClientPos, onRangeSelect]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -87,17 +146,28 @@ export function GridCanvas({
       const cols = Math.ceil((w - colHeader) / cellSize) + 1;
       const rows = Math.ceil((h - rowHeader) / cellSize) + 1;
 
-      // One helper used by everything that draws at a cell — guarantees
-      // the fill, the ring, and the pick preview all use the exact same
-      // pixel positioning. Math.floor for crisp 1px alignment regardless
-      // of the device pixel ratio.
       const cellRect = (c: Coord) => ({
         x: Math.floor(colHeader + c.col * cellSize),
         y: Math.floor(rowHeader + c.row * cellSize),
       });
 
-      // Filled highlight on the active cell (the spreadsheet's true cursor).
-      if (activeCell) {
+      // Rectangular hull for the multi-cell selection range. When the
+      // range collapses to its anchor (anchor === focus), this is the
+      // same as the single-cell highlight that activeCell paints.
+      if (selectionRange) {
+        const c0 = Math.min(selectionRange.anchor.col, selectionRange.focus.col);
+        const c1 = Math.max(selectionRange.anchor.col, selectionRange.focus.col);
+        const r0 = Math.min(selectionRange.anchor.row, selectionRange.focus.row);
+        const r1 = Math.max(selectionRange.anchor.row, selectionRange.focus.row);
+        const { x, y } = cellRect({ col: c0, row: r0 });
+        const wd = (c1 - c0 + 1) * cellSize;
+        const hd = (r1 - r0 + 1) * cellSize;
+        if (x + wd > colHeader && y + hd > rowHeader) {
+          ctx.fillStyle = '#1f4068';
+          ctx.fillRect(x, y, wd, hd);
+        }
+      } else if (activeCell) {
+        // Single-cell highlight when no range is active.
         const { x, y } = cellRect(activeCell);
         if (x >= colHeader && y >= rowHeader && x < w && y < h) {
           ctx.fillStyle = '#1f4068';
@@ -106,8 +176,7 @@ export function GridCanvas({
       }
 
       // Pick-preview highlight on the most-recently-picked cell during
-      // edit-mode ref insertion. Drawn dimmer so the active-cell stays
-      // visually dominant.
+      // edit-mode ref insertion.
       if (editing && pickPreview) {
         const { x, y } = cellRect(pickPreview);
         if (x >= colHeader && y >= rowHeader && x < w && y < h) {
@@ -163,7 +232,8 @@ export function GridCanvas({
           if (!snap) continue;
           const text = formatValue(snap.value);
           if (!text) continue;
-          const isNumber = snap.value.kind === 'number' || snap.value.kind === 'integer';
+          const isNumber =
+            snap.value.kind === 'number' || snap.value.kind === 'integer';
           ctx.textAlign = isNumber ? 'right' : 'left';
           ctx.fillStyle =
             snap.value.kind === 'error'
@@ -206,28 +276,25 @@ export function GridCanvas({
     const ro = new ResizeObserver(draw);
     ro.observe(canvas);
     return () => ro.disconnect();
-  }, [cellSize, snapshots, activeCell, pickPreview, editing]);
+  }, [cellSize, snapshots, activeCell, pickPreview, selectionRange, editing]);
 
-  const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    if (x < colHeader || y < rowHeader) return;
-    const col = Math.floor((x - colHeader) / cellSize);
-    const row = Math.floor((y - rowHeader) / cellSize);
-    onSelect({ col, row });
-    // Reclaim focus so subsequent keystrokes start editing on this cell.
+  const onMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0) return; // primary mouse button only
+    const coord = cellAtClientPos(e.clientX, e.clientY);
+    if (!coord) return;
+    dragAnchorRef.current = coord;
+    lastDragCoordRef.current = coord;
+    // Single-click semantics fire immediately; the range path takes over
+    // only if the user actually drags off this cell.
+    onSelect(coord);
     if (!editing) {
       e.currentTarget.focus();
     }
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
-    // Modifier-bearing chords are reserved for menu shortcuts (Ctrl+S etc.).
     if (e.ctrlKey || e.metaKey || e.altKey) return;
 
-    // Typing-to-edit: any printable single-character key starts a fresh
-    // edit on the active cell with that character as the initial draft.
     if (e.key.length === 1) {
       onStartEditWith(e.key);
       e.preventDefault();
@@ -271,7 +338,7 @@ export function GridCanvas({
     <canvas
       ref={canvasRef}
       tabIndex={0}
-      onClick={onClick}
+      onMouseDown={onMouseDown}
       onKeyDown={onKeyDown}
       style={{
         width: '100%',

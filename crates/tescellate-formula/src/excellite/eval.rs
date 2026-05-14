@@ -52,7 +52,49 @@ pub fn eval(expr: &Expr, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
             }))
         }
         Expr::Binary(op, lhs, rhs) => eval_binary(*op, lhs, rhs, ctx),
-        Expr::Call(name, args) => standard().call(name, args, ctx),
+        Expr::Call(name, args) => {
+            // Registry lookup first; if the name isn't a registered
+            // FuncImpl, fall back to looking it up as a lexical variable
+            // — if that's a Function, treat as Apply. This is what makes
+            // `f(5)` work whether `f` is `SUM` or a LET-bound lambda.
+            match standard().call(name, args, ctx) {
+                Err(EvalError::UnknownFn(_)) => match ctx.var(name) {
+                    Some(CellValue::Function(_)) => {
+                        let callee = Expr::Var(name.clone());
+                        eval(&Expr::Apply(Box::new(callee), args.clone()), ctx)
+                    }
+                    _ => Err(EvalError::UnknownFn(name.clone())),
+                },
+                other => other,
+            }
+        }
+        Expr::Var(name) => ctx
+            .var(name)
+            .ok_or_else(|| EvalError::Ref(format!("unbound: {name}"))),
+        Expr::Apply(callee, args) => {
+            let value = eval(callee, ctx)?;
+            let func = match &value {
+                CellValue::Function(arc) => arc.clone(),
+                _ => {
+                    return Err(EvalError::Value(format!("not a function: {value:?}")));
+                }
+            };
+            let evaluated: Vec<CellValue> = args
+                .iter()
+                .map(|a| eval(a, ctx))
+                .collect::<Result<_, _>>()?;
+            // Downcast via the CarbideFn::as_any() escape hatch. The
+            // concrete Lambda type lives in `excellite::lambda` and is
+            // the only producer of `CellValue::Function` for now.
+            let any = func.as_any();
+            if let Some(lambda) = any.downcast_ref::<crate::excellite::lambda::Lambda>() {
+                lambda.call(evaluated, ctx)
+            } else {
+                Err(EvalError::Value(
+                    "cannot apply this function value here".into(),
+                ))
+            }
+        }
     }
 }
 
@@ -135,6 +177,15 @@ pub fn collect_refs(expr: &Expr, out: &mut Vec<(String, Option<String>)>) {
                 }
             }
         }
+        Expr::Apply(callee, args) => {
+            collect_refs(callee, out);
+            for a in args {
+                collect_refs(a, out);
+            }
+        }
+        // Var carries a lexical-environment lookup, not a cell reference.
+        // Lambda parameter names and LET-bound names live here.
+        Expr::Var(_) => {}
         _ => {}
     }
 }

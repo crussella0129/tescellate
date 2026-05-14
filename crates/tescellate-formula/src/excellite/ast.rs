@@ -18,6 +18,17 @@ pub enum Expr {
     /// Array literal: `[a, b, c]` is `Array(vec![vec![a, b, c]])`,
     /// `[[a,b],[c,d]]` is `Array(vec![vec![a,b], vec![c,d]])`. See PLAN.md §6.2.1.
     Array(Vec<Vec<Expr>>),
+    /// Bare identifier — looked up in the lexical environment at eval time.
+    /// Emitted by the parser whenever an `Ident` token is *not* followed
+    /// by `LParen`. Used for LET-bound names and LAMBDA parameters.
+    Var(String),
+    /// Application: evaluate `callee` to a `CellValue::Function`, then call
+    /// it with the evaluated `args`. The apply-suffix loop in the parser
+    /// emits this whenever any expression is followed by `(...)`. Distinct
+    /// from `Call(name, args)` so the existing short-circuiting `FuncImpl`s
+    /// (IF / AND / OR / IFS / SWITCH / LET / LAMBDA / LETREC) keep their
+    /// unevaluated-args contract.
+    Apply(Box<Expr>, Vec<Expr>),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),
