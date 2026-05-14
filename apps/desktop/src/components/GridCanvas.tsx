@@ -6,13 +6,15 @@ import { toAddress, type Coord } from '../address';
 interface Props {
   cellSize: number;
   snapshots: Map<string, CellSnapshot>;
-  /** The cell whose formula is being edited; ringed in solid colour. */
+  /** The true spreadsheet cursor — what Enter commits to and what the
+   * filled highlight + ring mark when *not* editing. */
   activeCell: Coord | null;
-  /** The latest-clicked cell. Equals activeCell when not editing; can
-   * differ during edit-mode while picking refs. */
-  cursorCell: Coord | null;
-  /** When true, the active-cell ring is drawn with a "marching ants"
-   * style and clicks add references instead of moving the active cell. */
+  /** Only set during edit-mode cell-picking — the cell most recently
+   * clicked to insert as a reference. Rendered as a dimmer filled
+   * highlight separate from the active ring. `null` outside editing. */
+  pickPreview: Coord | null;
+  /** When true, the active-cell ring is drawn dashed ("marching ants")
+   * and clicks add references instead of moving the active cell. */
   editing: boolean;
   /** Bumping this value asks the canvas to claim keyboard focus. App uses
    * it after wizard-close / formula commit / formula cancel so the user's
@@ -38,7 +40,7 @@ export function GridCanvas({
   cellSize,
   snapshots,
   activeCell,
-  cursorCell,
+  pickPreview,
   editing,
   focusTick,
   onSelect,
@@ -85,13 +87,32 @@ export function GridCanvas({
       const cols = Math.ceil((w - colHeader) / cellSize) + 1;
       const rows = Math.ceil((h - rowHeader) / cellSize) + 1;
 
-      // Cursor highlight (filled).
-      if (cursorCell) {
-        const sx = colHeader + cursorCell.col * cellSize;
-        const sy = rowHeader + cursorCell.row * cellSize;
-        if (sx >= colHeader && sy >= rowHeader && sx < w && sy < h) {
+      // One helper used by everything that draws at a cell — guarantees
+      // the fill, the ring, and the pick preview all use the exact same
+      // pixel positioning. Math.floor for crisp 1px alignment regardless
+      // of the device pixel ratio.
+      const cellRect = (c: Coord) => ({
+        x: Math.floor(colHeader + c.col * cellSize),
+        y: Math.floor(rowHeader + c.row * cellSize),
+      });
+
+      // Filled highlight on the active cell (the spreadsheet's true cursor).
+      if (activeCell) {
+        const { x, y } = cellRect(activeCell);
+        if (x >= colHeader && y >= rowHeader && x < w && y < h) {
           ctx.fillStyle = '#1f4068';
-          ctx.fillRect(sx, sy, cellSize, cellSize);
+          ctx.fillRect(x, y, cellSize, cellSize);
+        }
+      }
+
+      // Pick-preview highlight on the most-recently-picked cell during
+      // edit-mode ref insertion. Drawn dimmer so the active-cell stays
+      // visually dominant.
+      if (editing && pickPreview) {
+        const { x, y } = cellRect(pickPreview);
+        if (x >= colHeader && y >= rowHeader && x < w && y < h) {
+          ctx.fillStyle = '#2a4d7a';
+          ctx.fillRect(x, y, cellSize, cellSize);
         }
       }
 
@@ -168,15 +189,14 @@ export function GridCanvas({
         }
       }
 
-      // Active-cell ring.
+      // Active-cell ring — drawn last so it sits on top of values.
       if (activeCell) {
-        const ax = colHeader + activeCell.col * cellSize;
-        const ay = rowHeader + activeCell.row * cellSize;
-        if (ax >= colHeader && ay >= rowHeader && ax < w && ay < h) {
+        const { x, y } = cellRect(activeCell);
+        if (x >= colHeader && y >= rowHeader && x < w && y < h) {
           ctx.lineWidth = 2;
           ctx.strokeStyle = editing ? '#4a90e2' : '#88b5f5';
           ctx.setLineDash(editing ? [4, 3] : []);
-          ctx.strokeRect(ax + 1, ay + 1, cellSize - 2, cellSize - 2);
+          ctx.strokeRect(x + 1, y + 1, cellSize - 2, cellSize - 2);
           ctx.setLineDash([]);
         }
       }
@@ -186,7 +206,7 @@ export function GridCanvas({
     const ro = new ResizeObserver(draw);
     ro.observe(canvas);
     return () => ro.disconnect();
-  }, [cellSize, snapshots, activeCell, cursorCell, editing]);
+  }, [cellSize, snapshots, activeCell, pickPreview, editing]);
 
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();

@@ -14,8 +14,15 @@ export function App() {
   const [sheet, setSheet] = useState<SheetInfo | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
 
+  // `activeCell` is the spreadsheet's true cursor — what Enter commits to,
+  // what the grid's solid ring marks. During edit-mode cell-picking,
+  // `pickPreview` tracks the most-recently-clicked cell for the dimmer
+  // filled highlight; outside editing, the highlight is the active cell.
+  // Keeping these conceptually distinct means a future bug can't drift the
+  // two out of sync when they should be identical (which is what was
+  // happening before — cursor highlight visibly trailing the active ring).
   const [activeCell, setActiveCell] = useState<Coord | null>({ col: 0, row: 0 });
-  const [cursorCell, setCursorCell] = useState<Coord | null>({ col: 0, row: 0 });
+  const [pickPreview, setPickPreview] = useState<Coord | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [snapshots, setSnapshots] = useState<Map<string, CellSnapshot>>(new Map());
@@ -105,11 +112,14 @@ export function App() {
 
   const onSelect = useCallback(
     (coord: Coord) => {
-      setCursorCell(coord);
       if (!editing) {
         setActiveCell(coord);
+        setPickPreview(null);
         return;
       }
+      // Editing: cell click inserts the address as a reference and lights
+      // up the clicked cell as a pick preview.
+      setPickPreview(coord);
       const ref = toAddress(coord);
       const input = inputRef.current;
       if (!input) {
@@ -170,17 +180,18 @@ export function App() {
   }, [sheetId, activeAddress, refreshSnapshot]);
 
   const onMove = useCallback((dCol: number, dRow: number) => {
-    const step = (c: Coord | null): Coord =>
+    setActiveCell((c) =>
       c
         ? { col: Math.max(0, c.col + dCol), row: Math.max(0, c.row + dRow) }
-        : { col: 0, row: 0 };
-    setActiveCell(step);
-    setCursorCell(step);
+        : { col: 0, row: 0 },
+    );
+    setPickPreview(null);
   }, []);
 
   const onCommit = useCallback(async () => {
     if (!editing) return;
     setEditing(false);
+    setPickPreview(null);
     bumpGridFocus();
     if (sheetId == null || !activeAddress) return;
     if (draft === baselineSource) return;
@@ -206,6 +217,7 @@ export function App() {
 
   const onCancel = useCallback(() => {
     setEditing(false);
+    setPickPreview(null);
     setDraft(baselineSource);
     bumpGridFocus();
   }, [baselineSource, bumpGridFocus]);
@@ -243,7 +255,7 @@ export function App() {
             cellSize={CELL_SIZE}
             snapshots={snapshots}
             activeCell={activeCell}
-            cursorCell={cursorCell}
+            pickPreview={pickPreview}
             editing={editing}
             focusTick={gridFocusTick}
             onSelect={onSelect}
