@@ -13,6 +13,7 @@
 pub mod ast;
 pub mod eval;
 pub mod funcs;
+pub mod lambda;
 pub mod lex;
 pub mod parse;
 

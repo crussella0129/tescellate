@@ -325,6 +325,167 @@ pub fn countif(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError>
     Ok(CellValue::Integer(n as i64))
 }
 
+// --- Higher-order helpers -------------------------------------------------
+//
+// Each takes a lambda (a `CellValue::Function` wrapping `Lambda`) and
+// invokes it per element / row / column / coordinate. Downcasts via
+// `CarbideFn::as_any()` to the concrete `Lambda` type; on miss, returns
+// `EvalError::Value("<NAME>: expected a lambda")` so a future engine that
+// produces a different callable variant gets a clear error instead of a
+// silent skip.
+
+use crate::excellite::lambda::Lambda;
+
+/// Evaluate `arg` and require the result to be a Carbide lambda.
+fn eval_lambda(
+    name: &str,
+    arg: &Expr,
+    ctx: &dyn EvalCtx,
+) -> Result<std::sync::Arc<dyn tescellate_core::CarbideFn>, EvalError> {
+    match eval(arg, ctx)? {
+        CellValue::Function(arc) => Ok(arc),
+        other => Err(EvalError::Value(format!(
+            "{name}: expected a lambda, got {other:?}"
+        ))),
+    }
+}
+
+fn as_lambda<'a>(
+    name: &str,
+    arc: &'a std::sync::Arc<dyn tescellate_core::CarbideFn>,
+) -> Result<&'a Lambda, EvalError> {
+    arc.as_any()
+        .downcast_ref::<Lambda>()
+        .ok_or_else(|| EvalError::Value(format!("{name}: function value is not a Carbide lambda")))
+}
+
+/// `MAP(array, [..arrays], lambda)` — apply `lambda(a, b, ...)` to each
+/// element-tuple across N input arrays of identical shape. Output is an
+/// array of the same shape as inputs.
+pub fn map_fn(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    if args.len() < 2 {
+        return Err(EvalError::BadArity {
+            name: "MAP".into(),
+            want: ">=2".into(),
+            got: args.len(),
+        });
+    }
+    let lambda_arc = eval_lambda("MAP", &args[args.len() - 1], ctx)?;
+    let lambda = as_lambda("MAP", &lambda_arc)?;
+
+    let arrays: Vec<Array> = args[..args.len() - 1]
+        .iter()
+        .map(|a| to_array(a, ctx))
+        .collect::<Result<_, _>>()?;
+    let (rows, cols) = arrays[0].shape();
+    for a in &arrays[1..] {
+        if a.shape() != (rows, cols) {
+            return Err(EvalError::Value(format!(
+                "MAP: input arrays differ in shape ({:?} vs {:?})",
+                arrays[0].shape(),
+                a.shape()
+            )));
+        }
+    }
+    let mut data = Vec::with_capacity(rows * cols);
+    for r in 0..rows {
+        for c in 0..cols {
+            let call_args: Vec<CellValue> = arrays
+                .iter()
+                .map(|a| a.get(r, c).cloned().unwrap_or(CellValue::Empty))
+                .collect();
+            data.push(lambda.call(call_args, ctx)?);
+        }
+    }
+    Ok(CellValue::Array(Box::new(Array::new(rows, cols, data))))
+}
+
+/// `REDUCE(initial, array, lambda)` — left fold; `lambda(acc, x) -> acc'`.
+pub fn reduce_fn(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("REDUCE", args, 3)?;
+    let mut acc = eval(&args[0], ctx)?;
+    let values = flatten(&args[1], ctx)?;
+    let lambda_arc = eval_lambda("REDUCE", &args[2], ctx)?;
+    let lambda = as_lambda("REDUCE", &lambda_arc)?;
+    for v in values {
+        acc = lambda.call(vec![acc, v], ctx)?;
+    }
+    Ok(acc)
+}
+
+/// `SCAN(initial, array, lambda)` — left fold keeping intermediates.
+/// Initial is NOT included in the output (matches Excel).
+pub fn scan_fn(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("SCAN", args, 3)?;
+    let mut acc = eval(&args[0], ctx)?;
+    let values = flatten(&args[1], ctx)?;
+    let lambda_arc = eval_lambda("SCAN", &args[2], ctx)?;
+    let lambda = as_lambda("SCAN", &lambda_arc)?;
+    let mut out = Vec::with_capacity(values.len());
+    for v in values {
+        acc = lambda.call(vec![acc.clone(), v], ctx)?;
+        out.push(acc.clone());
+    }
+    Ok(CellValue::Array(Box::new(Array::col(out))))
+}
+
+/// `BYROW(array, lambda)` — apply `lambda(row_as_1xN_array)` per row.
+/// Returns a single-column array of results.
+pub fn byrow_fn(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("BYROW", args, 2)?;
+    let arr = to_array(&args[0], ctx)?;
+    let lambda_arc = eval_lambda("BYROW", &args[1], ctx)?;
+    let lambda = as_lambda("BYROW", &lambda_arc)?;
+    let mut out = Vec::with_capacity(arr.rows);
+    for r in 0..arr.rows {
+        let row_data: Vec<CellValue> = (0..arr.cols)
+            .map(|c| arr.get(r, c).cloned().unwrap_or(CellValue::Empty))
+            .collect();
+        let row_arr = CellValue::Array(Box::new(Array::row(row_data)));
+        out.push(lambda.call(vec![row_arr], ctx)?);
+    }
+    Ok(CellValue::Array(Box::new(Array::col(out))))
+}
+
+/// `BYCOL(array, lambda)` — apply `lambda(col_as_Mx1_array)` per column.
+/// Returns a single-row array of results.
+pub fn bycol_fn(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("BYCOL", args, 2)?;
+    let arr = to_array(&args[0], ctx)?;
+    let lambda_arc = eval_lambda("BYCOL", &args[1], ctx)?;
+    let lambda = as_lambda("BYCOL", &lambda_arc)?;
+    let mut out = Vec::with_capacity(arr.cols);
+    for c in 0..arr.cols {
+        let col_data: Vec<CellValue> = (0..arr.rows)
+            .map(|r| arr.get(r, c).cloned().unwrap_or(CellValue::Empty))
+            .collect();
+        let col_arr = CellValue::Array(Box::new(Array::col(col_data)));
+        out.push(lambda.call(vec![col_arr], ctx)?);
+    }
+    Ok(CellValue::Array(Box::new(Array::row(out))))
+}
+
+/// `MAKEARRAY(rows, cols, lambda)` — build an `rows×cols` array by calling
+/// `lambda(r, c)` with 1-indexed coordinates (Excel convention).
+pub fn makearray_fn(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("MAKEARRAY", args, 3)?;
+    let rows = to_int(&eval(&args[0], ctx)?)?.max(0) as usize;
+    let cols = to_int(&eval(&args[1], ctx)?)?.max(0) as usize;
+    let lambda_arc = eval_lambda("MAKEARRAY", &args[2], ctx)?;
+    let lambda = as_lambda("MAKEARRAY", &lambda_arc)?;
+    let mut data = Vec::with_capacity(rows * cols);
+    for r in 0..rows {
+        for c in 0..cols {
+            let call_args = vec![
+                CellValue::Number((r + 1) as f64),
+                CellValue::Number((c + 1) as f64),
+            ];
+            data.push(lambda.call(call_args, ctx)?);
+        }
+    }
+    Ok(CellValue::Array(Box::new(Array::new(rows, cols, data))))
+}
+
 pub fn register(r: &mut FunctionRegistry) {
     r.add("UNIQUE", unique);
     r.add("COUNTUNIQUE", countunique);
@@ -341,4 +502,10 @@ pub fn register(r: &mut FunctionRegistry) {
     r.add("SETSYMDIFF", setsymdiff);
     r.add("IN", in_fn);
     r.add("COUNTIF", countif);
+    r.add("MAP", map_fn);
+    r.add("REDUCE", reduce_fn);
+    r.add("SCAN", scan_fn);
+    r.add("BYROW", byrow_fn);
+    r.add("BYCOL", bycol_fn);
+    r.add("MAKEARRAY", makearray_fn);
 }

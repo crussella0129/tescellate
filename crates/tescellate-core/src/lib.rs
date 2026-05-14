@@ -8,15 +8,17 @@ use tescellate_tess::LatticeKind;
 
 pub mod cell;
 pub mod dag;
+pub mod env;
 pub mod extent;
 pub mod reference;
 pub mod value;
 
 pub use cell::{Cell, CellError, EngineKind};
 pub use dag::{Dag, DagError};
+pub use env::Env;
 pub use extent::{BoundedExtent, SheetExtent};
 pub use reference::CellRef;
-pub use value::{Array, CellValue, ShapeError};
+pub use value::{Array, CarbideFn, CellValue, ShapeError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WorkbookId(pub u64);

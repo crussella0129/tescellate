@@ -29,6 +29,9 @@ pub fn to_number(v: &CellValue) -> Result<f64, EvalError> {
         CellValue::Array(_) | CellValue::Pending => {
             Err(EvalError::Value("array/pending in scalar context".into()))
         }
+        CellValue::Function(_) => Err(EvalError::Value(
+            "function value in scalar context (use APPLY or pass to MAP/REDUCE)".into(),
+        )),
     }
 }
 
@@ -63,6 +66,7 @@ pub fn stringify(v: &CellValue) -> String {
         CellValue::Error(e) => format!("{e:?}"),
         CellValue::Array(_) => "{array}".into(),
         CellValue::Pending => "...".into(),
+        CellValue::Function(f) => f.debug_label(),
     }
 }
 

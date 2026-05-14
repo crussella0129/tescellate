@@ -15,9 +15,11 @@ use tescellate_core::CellValue;
 pub mod aggregate;
 pub mod coerce;
 pub mod dynarray;
+pub mod lambda_funcs;
 pub mod logical;
 pub mod lookup;
 pub mod math;
+pub mod stats;
 pub mod text;
 
 pub type FuncImpl = fn(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError>;
@@ -65,9 +67,11 @@ pub fn standard() -> &'static FunctionRegistry {
         let mut r = FunctionRegistry::new();
         aggregate::register(&mut r);
         dynarray::register(&mut r);
+        lambda_funcs::register(&mut r);
         logical::register(&mut r);
         lookup::register(&mut r);
         math::register(&mut r);
+        stats::register(&mut r);
         text::register(&mut r);
         r
     })
