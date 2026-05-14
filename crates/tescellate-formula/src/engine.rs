@@ -214,27 +214,36 @@ impl WorkbookEngine {
         let canonical = lattice.address(coord);
         let cref = CellRef::new(sheet, canonical.clone());
 
-        // Parse and collect deps.
-        let (compiled, dep_addrs) = match source {
+        // Excel/Sheets convention: input starting with `=` is a formula;
+        // anything else is a literal value. Without this branch every cell
+        // input is parsed as a formula and arbitrary text raises a parse
+        // error — turning the spreadsheet into a graphing calculator.
+        let (compiled, dep_addrs, literal_value) = match source {
             Some(src) if !src.trim().is_empty() => {
-                let engine_kind = self
-                    .workbook
-                    .sheets
-                    .get(&sheet)
-                    .and_then(|s| s.cells.get(&canonical))
-                    .and_then(|c| c.engine)
-                    .unwrap_or(self.workbook.default_engine);
-                let engine = self
-                    .engines
-                    .get(&engine_kind)
-                    .ok_or(SetCellError::NoEngine(engine_kind))?;
-                let compiled = engine
-                    .parse(src)
-                    .map_err(|e| SetCellError::Parse(e.to_string()))?;
-                let refs = engine.refs(&compiled);
-                (Some(compiled), refs)
+                if src.trim_start().starts_with('=') {
+                    let engine_kind = self
+                        .workbook
+                        .sheets
+                        .get(&sheet)
+                        .and_then(|s| s.cells.get(&canonical))
+                        .and_then(|c| c.engine)
+                        .unwrap_or(self.workbook.default_engine);
+                    let engine = self
+                        .engines
+                        .get(&engine_kind)
+                        .ok_or(SetCellError::NoEngine(engine_kind))?;
+                    let compiled = engine
+                        .parse(src)
+                        .map_err(|e| SetCellError::Parse(e.to_string()))?;
+                    let refs = engine.refs(&compiled);
+                    (Some(compiled), refs, None)
+                } else {
+                    // Plain text / number / boolean — store the parsed value
+                    // directly, no formula, no deps.
+                    (None, Vec::new(), Some(parse_literal(src)))
+                }
             }
-            _ => (None, Vec::new()),
+            _ => (None, Vec::new(), None),
         };
 
         // Resolve dep addresses through the lattice to canonical CellRefs.
@@ -281,13 +290,15 @@ impl WorkbookEngine {
         } else {
             self.compiled.remove(&cref);
         }
+        // Pre-seed the value with the literal if there is one. For formulas
+        // this stays Empty until `recompute` runs below and overwrites it.
         self.store_cell(
             sheet,
             &canonical,
             Cell {
                 source: source.filter(|s| !s.trim().is_empty()).map(String::from),
                 engine: None,
-                value: CellValue::Empty,
+                value: literal_value.unwrap_or(CellValue::Empty),
             },
         );
 
@@ -562,6 +573,30 @@ impl EvalCtx for SheetEvalView<'_> {
     }
 }
 
+/// Parse a literal cell input (anything not starting with `=`) into a
+/// concrete `CellValue`. Mirrors Excel/Sheets: numeric strings become
+/// numbers, `TRUE`/`FALSE` become booleans, everything else is text.
+/// The user's original source string is stored separately, so what they
+/// typed is what they see when they click the cell again.
+fn parse_literal(src: &str) -> CellValue {
+    let trimmed = src.trim();
+    if trimmed.is_empty() {
+        return CellValue::Empty;
+    }
+    if trimmed.eq_ignore_ascii_case("TRUE") {
+        return CellValue::Bool(true);
+    }
+    if trimmed.eq_ignore_ascii_case("FALSE") {
+        return CellValue::Bool(false);
+    }
+    if let Ok(n) = trimmed.parse::<f64>() {
+        if n.is_finite() {
+            return CellValue::Number(n);
+        }
+    }
+    CellValue::Text(src.to_string())
+}
+
 fn square_range(a: SquareCoord, b: SquareCoord) -> Vec<SquareCoord> {
     let (c0, c1) = (a.col.min(b.col), a.col.max(b.col));
     let (r0, r1) = (a.row.min(b.row), a.row.max(b.row));
@@ -791,5 +826,59 @@ mod tests {
                 assert_eq!(snap.spilled_from.as_deref(), Some("A1"));
             }
         }
+    }
+
+    #[test]
+    fn literal_text_value() {
+        let (mut eng, sid) = new_sheet();
+        // Anything not starting with `=` is a literal. Plain text used to
+        // raise a parse error because the engine tried to parse "hello" as
+        // a formula; now it's stored as a Text value.
+        eng.set_cell(sid, "A1", Some("hello world")).unwrap();
+        let c = eng.get_cell(sid, "A1").unwrap();
+        assert_eq!(c.value, CellValue::Text("hello world".into()));
+        assert_eq!(c.source.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn literal_numbers_and_booleans() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("42")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A1").unwrap().value,
+            CellValue::Number(42.0)
+        );
+        eng.set_cell(sid, "A2", Some("3.5")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A2").unwrap().value,
+            CellValue::Number(3.5)
+        );
+        eng.set_cell(sid, "A3", Some("TRUE")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A3").unwrap().value,
+            CellValue::Bool(true)
+        );
+        eng.set_cell(sid, "A4", Some("false")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A4").unwrap().value,
+            CellValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn literal_then_formula_dependency() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("10")).unwrap(); // literal number
+        eng.set_cell(sid, "A2", Some("=A1*2")).unwrap(); // formula
+        assert_eq!(
+            eng.get_cell(sid, "A2").unwrap().value,
+            CellValue::Number(20.0)
+        );
+        // Editing the literal flows through the DAG.
+        eng.set_cell(sid, "A1", Some("100")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A2").unwrap().value,
+            CellValue::Number(200.0)
+        );
     }
 }
