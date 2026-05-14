@@ -113,12 +113,15 @@ function createWindow() {
       preload: join(__dirname, '..', 'preload', 'preload.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      // ESM preload requires sandbox: false. contextIsolation:true is
+      // the load-bearing security boundary either way.
+      sandbox: false,
     },
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
+    mainWindow.webContents.openDevTools({ mode: 'right' });
   } else {
     mainWindow.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
   }
