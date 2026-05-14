@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FormulaBar } from './components/FormulaBar';
-import { GridCanvas } from './components/GridCanvas';
+import { GridCanvas, type SelectionRange } from './components/GridCanvas';
 import { WizardModal } from './components/WizardModal';
 import type { EngineKind } from './types';
 import { ipc, type CellSnapshot, type SheetInfo } from './ipc';
@@ -8,6 +8,14 @@ import { toAddress, type Coord } from './address';
 
 const CELL_SIZE = 96;
 const SNAPSHOT_RANGE = { start: 'A1', end: 'Z100' };
+
+/** When the user drags out a range during edit-mode, the bar already
+ * has the anchor's address (inserted by the initial click). We strip that
+ * trailing address-or-range and substitute the full range. Pattern: an
+ * optional `[A-Z]+[0-9]+(:[A-Z]+[0-9]+)?` at the very end of `text`. */
+function stripTrailingRefOrRange(text: string, _anchor: string, _focus: string): string {
+  return text.replace(/[A-Z]+[0-9]+(:[A-Z]+[0-9]+)?$/, '');
+}
 
 export function App() {
   const [engine, setEngine] = useState<EngineKind>('excel_lite');
@@ -23,6 +31,10 @@ export function App() {
   // happening before — cursor highlight visibly trailing the active ring).
   const [activeCell, setActiveCell] = useState<Coord | null>({ col: 0, row: 0 });
   const [pickPreview, setPickPreview] = useState<Coord | null>(null);
+  // Multi-cell rectangular selection from click-and-drag. When set, the
+  // grid paints a filled hull and `activeCell` stays at the anchor (so
+  // Enter commits to the anchor, like Excel/Sheets).
+  const [selectionRange, setSelectionRange] = useState<SelectionRange | null>(null);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
   const [snapshots, setSnapshots] = useState<Map<string, CellSnapshot>>(new Map());
@@ -110,8 +122,34 @@ export function App() {
     });
   }, [refreshWorkbookInfo, refreshSnapshot]);
 
+  /** Splice `text` into the formula bar at the current caret. Used by
+   * both single-cell ref insertion and range insertion. */
+  const insertIntoDraft = useCallback(
+    (text: string) => {
+      const input = inputRef.current;
+      if (!input) {
+        setDraft((d) => d + text);
+        return;
+      }
+      const start = input.selectionStart ?? draft.length;
+      const end = input.selectionEnd ?? draft.length;
+      const next = draft.slice(0, start) + text + draft.slice(end);
+      setDraft(next);
+      requestAnimationFrame(() => {
+        input.focus();
+        const pos = start + text.length;
+        input.setSelectionRange(pos, pos);
+      });
+    },
+    [draft],
+  );
+
   const onSelect = useCallback(
     (coord: Coord) => {
+      // Single-click resets any prior range and treats this as a 1×1
+      // selection. If the user actually drags, `onRangeSelect` will
+      // overwrite this with the rectangular hull.
+      setSelectionRange({ anchor: coord, focus: coord });
       if (!editing) {
         setActiveCell(coord);
         setPickPreview(null);
@@ -120,19 +158,49 @@ export function App() {
       // Editing: cell click inserts the address as a reference and lights
       // up the clicked cell as a pick preview.
       setPickPreview(coord);
-      const ref = toAddress(coord);
+      insertIntoDraft(toAddress(coord));
+    },
+    [editing, insertIntoDraft],
+  );
+
+  /** Click-and-drag selected a rectangular region of the grid. When
+   * editing, insert an `<anchor>:<focus>` range at the bar caret —
+   * overwriting whatever the single-click `onSelect` just inserted, so
+   * the bar ends up with the range token instead of just the anchor. */
+  const onRangeSelect = useCallback(
+    (range: SelectionRange) => {
+      setSelectionRange(range);
+      if (!editing) return;
+      // Replace the just-inserted anchor address with the full range.
+      // We track the last-inserted text length: anchor's address.
+      const anchorAddr = toAddress(range.anchor);
+      const focusAddr = toAddress(range.focus);
+      // Build the canonical `A1:B5` form with start = top-left, end = bottom-right.
+      const c0 = Math.min(range.anchor.col, range.focus.col);
+      const c1 = Math.max(range.anchor.col, range.focus.col);
+      const r0 = Math.min(range.anchor.row, range.focus.row);
+      const r1 = Math.max(range.anchor.row, range.focus.row);
+      const rangeText = `${toAddress({ col: c0, row: r0 })}:${toAddress({ col: c1, row: r1 })}`;
+      // Rewrite the trailing anchor (or previous range) at the bar caret
+      // into the new range. We achieve this by scanning back from the
+      // caret for an `A1`-or-`A1:B5` token and replacing it.
       const input = inputRef.current;
       if (!input) {
-        setDraft((d) => d + ref);
+        setDraft((d) => {
+          const stripped = stripTrailingRefOrRange(d, anchorAddr, focusAddr);
+          return stripped + rangeText;
+        });
         return;
       }
-      const start = input.selectionStart ?? draft.length;
-      const end = input.selectionEnd ?? draft.length;
-      const next = draft.slice(0, start) + ref + draft.slice(end);
+      const caret = input.selectionStart ?? draft.length;
+      const before = draft.slice(0, caret);
+      const after = draft.slice(caret);
+      const newBefore = stripTrailingRefOrRange(before, anchorAddr, focusAddr);
+      const next = newBefore + rangeText + after;
       setDraft(next);
       requestAnimationFrame(() => {
         input.focus();
-        const pos = start + ref.length;
+        const pos = newBefore.length + rangeText.length;
         input.setSelectionRange(pos, pos);
       });
     },
@@ -186,6 +254,8 @@ export function App() {
         : { col: 0, row: 0 },
     );
     setPickPreview(null);
+    // Arrow keys collapse any multi-cell selection — Excel/Sheets style.
+    setSelectionRange(null);
   }, []);
 
   const onCommit = useCallback(async () => {
@@ -256,9 +326,11 @@ export function App() {
             snapshots={snapshots}
             activeCell={activeCell}
             pickPreview={pickPreview}
+            selectionRange={selectionRange}
             editing={editing}
             focusTick={gridFocusTick}
             onSelect={onSelect}
+            onRangeSelect={onRangeSelect}
             onStartEditWith={onStartEditWith}
             onStartEdit={onStartEdit}
             onClear={onClear}
