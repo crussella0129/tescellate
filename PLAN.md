@@ -341,9 +341,66 @@ pub trait FormulaEngine: Send + Sync {
 ### 6.2 Engine implementations
 
 **Excel-lite** (`tescellate-formula::excellite`)
-- Hand-written Pratt parser → AST → bytecode.
-- Supported in v0: arithmetic, comparison, boolean ops, references, ranges, ~60 functions (SUM, AVERAGE, IF, AND/OR/NOT, COUNT, INDEX, MATCH, VLOOKUP-equivalent for the active lattice, TEXT, CONCAT, NOW, TODAY, the trig family, basic stats).
-- Functions are looked up in a registry that can be extended per-lattice (e.g., `NEIGHBORS(cell)` returns a range of edge-neighbors — generic over tessellation).
+- Hand-written Pratt parser → AST → tree-walking evaluator.
+- Long-term goal: **feature parity with Excel, Google Sheets, and OpenOffice Calc** — hundreds of functions across math/trig, statistics, logical, text, date/time, lookup, dynamic-array, financial, information, and database categories. Built incrementally; the architecture below makes adding a function a 10-line change rather than a redesign.
+
+Built and growing across phases:
+
+| Category | Phase 1 | Phase 1.5 | Later |
+|---|---|---|---|
+| Math | `+ - * / ^`, ABS | ROUND, MOD, POWER, SQRT, EXP, LN, LOG | trig family, INT, TRUNC, SIGN, RANDARRAY |
+| Logical | IF, AND, OR, NOT | IFERROR, IFNA, IFS, SWITCH | XOR, ISBLANK/NUMBER/TEXT/ERROR |
+| Aggregates | SUM, AVERAGE, COUNT, MIN, MAX | | STDEV, VAR, MEDIAN, MODE, PERCENTILE, RANK |
+| Text | & (concat) | LEFT, RIGHT, MID, LEN, UPPER, LOWER, PROPER, TRIM, SUBSTITUTE, FIND, SEARCH, REPLACE, TEXTJOIN, TEXTSPLIT, CONCAT | TEXTBEFORE, TEXTAFTER, REGEX*, NUMBERVALUE |
+| Lookup | | VLOOKUP, INDEX, MATCH | XLOOKUP, HLOOKUP, OFFSET, INDIRECT, ROW, COLUMN, FILTER (filter is dyn-array) |
+| Dyn arrays | | UNIQUE, SORT, FILTER, SEQUENCE, TAKE, DROP | SORTBY, CHOOSEROWS, CHOOSECOLS, VSTACK, HSTACK, TOROW, TOCOL, WRAPROWS, EXPAND |
+| Date/time | | | NOW, TODAY, DATE, TIME, YEAR/MONTH/DAY, HOUR/MINUTE/SECOND, WEEKDAY, NETWORKDAYS, EDATE |
+| Financial | | | PMT, PV, FV, NPV, IRR, RATE |
+
+### 6.2.1 Arrays, array literals, and spill
+
+Arrays are first-class. There are three array-related shapes in the language:
+
+1. **`CellValue::Array`** — a value that carries `(rows, cols, data: Vec<CellValue>)`. The lingua franca for everything array-shaped: function results, range reads, literal arrays.
+
+2. **Range references (`A1:B5`)** — references to a rectangular block of cells. Evaluated to an `Array` value when used in a position that expects one.
+
+3. **Array literals** — written `[…]` in source:
+   - `[1, 2, 3]` — 1×3 row of numbers.
+   - `[A1, B3, C5]` — 1×3 row, but elements are cell references that resolve to those cells' current values. This is the **"cell-list array"** — the analogue of `A1:B5` for *non-rectangular* selections, which the irregular tilings (Phase 7+) need.
+   - `[[1,2,3],[4,5,6]]` — 2×3 array. Each inner `[…]` is a row.
+   - Inner elements can be any expression: literals, refs, ranges, calls. `[SUM(A1:A5), B1, "hello"]` is fine.
+   - Ragged arrays (`[[1,2],[3,4,5]]`) are a parse error.
+
+Function call sites that take ranges (`SUM(A1:A10)`) accept array literals interchangeably (`SUM([1,2,3])`, `SUM([A1, B3, C5])`).
+
+### 6.2.2 Spill (dynamic arrays)
+
+When a formula evaluates to an `Array` of size > 1×1, it **spills** into adjacent cells, matching modern Excel and Sheets behaviour:
+
+- The source cell stores the formula and the full `Array` value.
+- Cells `(source.col + Δc, source.row + Δr)` for the array's shape are *spill targets*. They render the array's element at that offset and carry a `spilled_from` marker pointing at the source.
+- Spill targets are **virtual** — they don't live in `Sheet.cells`. The renderer materializes them from the source's array value at snapshot time, so the source cell stays the single source of truth and the on-disk format doesn't need to know about spill.
+- **Collision rule**: if any non-empty cell sits inside the would-be spill region, the source cell's value becomes `CellValue::Error(CellError::Spill)` and *nothing* spills. The collision auto-resolves when the user clears the blocking cell.
+- **Editing a spilled cell**: writing a new source into a spill target breaks the spill — the new edit takes precedence and the old source flips to `#SPILL!`. Excel does the same; saves us a footgun-avoidance branch.
+- **DAG**: spill targets don't appear in the DAG. A formula `=B3` that reads a spilled cell registers a dependency on `B3`'s coordinate; recompute walks through the source cell because `B3`'s value comes from it via `snapshot`.
+
+### 6.2.3 Function registry
+
+Functions live in `excellite::funcs::<category>` modules:
+
+```rust
+// excellite/funcs/text.rs
+pub fn left(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> { … }
+pub fn right(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> { … }
+pub fn register(r: &mut FunctionRegistry) {
+    r.add("LEFT", left);
+    r.add("RIGHT", right);
+    // …
+}
+```
+
+A single `FunctionRegistry` per engine holds the lookup table. The Excel-lite engine constructs one at startup from `funcs::math::register`, `funcs::text::register`, etc. Per-lattice extensions (`NEIGHBORS(cell)`, `RADIUS(cell, n)`) plug into the same registry from `tescellate-tess`.
 
 **Python** (`tescellate-formula::python`)
 - One embedded CPython 3.12+ interpreter per core process, via PyO3.
