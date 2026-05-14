@@ -1,0 +1,17 @@
+[package]
+name = "tescellate-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless driver for the Tescellate core. Spawned by Electron; also usable standalone for tests and scripting."
+
+[[bin]]
+name = "tescellate-core"
+path = "src/main.rs"
+
+[dependencies]
+tescellate-core = { workspace = true }
+tescellate-ipc = { workspace = true }

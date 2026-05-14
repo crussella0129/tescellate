@@ -1,0 +1,38 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tescellate-core",
+    "crates/tescellate-tess",
+    "crates/tescellate-formula",
+    "crates/tescellate-ipc",
+    "crates/tescellate-store",
+    "crates/tescellate-cli",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["crussella0129"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/crussella0129/tescellate"
+readme = "README.md"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+smallvec = { version = "1", features = ["serde"] }
+hashbrown = { version = "0.14", features = ["serde"] }
+glam = { version = "0.27", features = ["serde"] }
+
+# Internal crates referenced by path so the workspace is self-contained.
+tescellate-core = { path = "crates/tescellate-core" }
+tescellate-tess = { path = "crates/tescellate-tess" }
+tescellate-formula = { path = "crates/tescellate-formula" }
+tescellate-ipc = { path = "crates/tescellate-ipc" }
+tescellate-store = { path = "crates/tescellate-store" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

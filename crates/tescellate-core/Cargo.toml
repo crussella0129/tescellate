@@ -1,0 +1,17 @@
+[package]
+name = "tescellate-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Workbook / sheet / cell types and DAG evaluation engine for Tescellate."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+smallvec = { workspace = true }
+hashbrown = { workspace = true }
+tescellate-tess = { workspace = true }

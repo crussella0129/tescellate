@@ -1,0 +1,144 @@
+/**
+ * Electron main process.
+ *
+ * Owns:
+ *  - the browser window
+ *  - the lifecycle of the Rust core subprocess (`tescellate-core` binary)
+ *  - JSON-RPC frame multiplexing between renderer and core
+ *
+ * The renderer never speaks to the core directly; everything goes through
+ * IPC channels here. This keeps the renderer free of Node APIs and lets us
+ * swap the transport (stdio → socket) without touching the UI.
+ */
+
+import { app, BrowserWindow, ipcMain } from 'electron';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+let mainWindow: BrowserWindow | null = null;
+let core: ChildProcessWithoutNullStreams | null = null;
+
+// LSP-style framing state.
+let rxBuffer = Buffer.alloc(0);
+let rxExpectedLength: number | null = null;
+
+// Map JSON-RPC ids to renderer reply channels.
+let nextRequestId = 1;
+const pending = new Map<number, (msg: unknown) => void>();
+
+function locateCoreBinary(): string {
+  // In dev we expect `cargo build` to have produced the debug binary.
+  // In a packaged app it will be alongside the resources; that path is
+  // resolved in Phase 1+ when we wire up electron-builder.
+  const isDev = !app.isPackaged;
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  if (isDev) {
+    return resolve(__dirname, '..', '..', '..', '..', 'target', 'debug', `tescellate-core${ext}`);
+  }
+  return resolve(process.resourcesPath, 'core', `tescellate-core${ext}`);
+}
+
+function startCore() {
+  const bin = locateCoreBinary();
+  core = spawn(bin, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+  core.stdout.on('data', onCoreData);
+  core.stderr.on('data', (chunk: Buffer) => {
+    // Surface stderr to the dev console; in Phase 1 we'll add structured logging.
+    console.error('[core]', chunk.toString('utf8').trimEnd());
+  });
+  core.on('exit', (code) => {
+    console.error(`[core] exited with code ${code}`);
+    core = null;
+  });
+}
+
+function onCoreData(chunk: Buffer) {
+  rxBuffer = Buffer.concat([rxBuffer, chunk]);
+  while (true) {
+    if (rxExpectedLength === null) {
+      const headerEnd = rxBuffer.indexOf('\r\n\r\n');
+      if (headerEnd < 0) return;
+      const header = rxBuffer.slice(0, headerEnd).toString('utf8');
+      const match = /Content-Length:\s*(\d+)/i.exec(header);
+      if (!match) {
+        // Malformed; drop the malformed header bytes and continue.
+        rxBuffer = rxBuffer.slice(headerEnd + 4);
+        continue;
+      }
+      rxExpectedLength = parseInt(match[1], 10);
+      rxBuffer = rxBuffer.slice(headerEnd + 4);
+    }
+    if (rxBuffer.length < rxExpectedLength) return;
+    const body = rxBuffer.slice(0, rxExpectedLength);
+    rxBuffer = rxBuffer.slice(rxExpectedLength);
+    rxExpectedLength = null;
+    try {
+      const msg = JSON.parse(body.toString('utf8'));
+      const id = typeof msg?.id === 'number' ? msg.id : null;
+      if (id !== null && pending.has(id)) {
+        pending.get(id)!(msg);
+        pending.delete(id);
+      } else if (mainWindow) {
+        // Server-initiated notification — forward to renderer.
+        mainWindow.webContents.send('core:notification', msg);
+      }
+    } catch (e) {
+      console.error('[core] failed to parse frame:', e);
+    }
+  }
+}
+
+function sendCoreRequest(method: string, params: unknown): Promise<unknown> {
+  if (!core) throw new Error('core process not running');
+  const id = nextRequestId++;
+  const body = JSON.stringify({ jsonrpc: '2.0', id, method, params });
+  const frame = `Content-Length: ${Buffer.byteLength(body, 'utf8')}\r\n\r\n${body}`;
+  return new Promise((resolveResp) => {
+    pending.set(id, (msg) => resolveResp(msg));
+    core!.stdin.write(frame, 'utf8');
+  });
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    webPreferences: {
+      preload: join(__dirname, '..', 'preload', 'preload.mjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  if (process.env.ELECTRON_RENDERER_URL) {
+    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
+  } else {
+    mainWindow.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
+  }
+}
+
+ipcMain.handle('core:request', async (_evt, payload: { method: string; params: unknown }) => {
+  return sendCoreRequest(payload.method, payload.params);
+});
+
+app.whenReady().then(() => {
+  startCore();
+  createWindow();
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (core) {
+    core.kill();
+    core = null;
+  }
+  if (process.platform !== 'darwin') app.quit();
+});
