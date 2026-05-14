@@ -105,8 +105,14 @@ export function GridCanvas({ cellSize, snapshots, selection, onSelect }: Props) 
           // Right-align numbers, left-align everything else (Excel convention).
           const isNumber = snap.value.kind === 'number' || snap.value.kind === 'integer';
           ctx.textAlign = isNumber ? 'right' : 'left';
+          // Spilled cells are styled muted so the user can see they're
+          // derived. Errors stay red.
           ctx.fillStyle =
-            snap.value.kind === 'error' ? '#ff6b6b' : '#e7e9ec';
+            snap.value.kind === 'error'
+              ? '#ff6b6b'
+              : snap.spilled_from
+                ? '#9da7b3'
+                : '#e7e9ec';
           const x = isNumber
             ? colHeader + (c + 1) * cellSize - 6
             : colHeader + c * cellSize + 6;

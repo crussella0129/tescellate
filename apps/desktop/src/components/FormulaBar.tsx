@@ -8,6 +8,9 @@ interface Props {
   address: string | null;
   /** Current source (formula text) of the selected cell, if any. */
   source: string;
+  /** If the selected cell is a spill target, this is its source cell's
+   * address. The bar surfaces a chip pointing at it. */
+  spilledFrom: string | null;
   /** Called when the user commits the edit (Enter / blur). */
   onCommit: (src: string) => void;
 }
@@ -19,7 +22,14 @@ const ENGINE_LABELS: Record<EngineKind, string> = {
   rust_native: 'rs (native)',
 };
 
-export function FormulaBar({ engine, onEngineChange, address, source, onCommit }: Props) {
+export function FormulaBar({
+  engine,
+  onEngineChange,
+  address,
+  source,
+  spilledFrom,
+  onCommit,
+}: Props) {
   const [draft, setDraft] = useState(source);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -37,6 +47,11 @@ export function FormulaBar({ engine, onEngineChange, address, source, onCommit }
   return (
     <div className="formula-bar">
       <span className="cell-label">{address ?? '—'}</span>
+      {spilledFrom && (
+        <span className="spill-tag" title={`Spilled from ${spilledFrom}`}>
+          ↺ {spilledFrom}
+        </span>
+      )}
       <select
         className="engine-chip"
         value={engine}

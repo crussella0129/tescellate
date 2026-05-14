@@ -45,6 +45,18 @@ body {
   font-size: 12px;
 }
 
+.spill-tag {
+  display: inline-flex;
+  align-items: center;
+  background: #1f3a5f;
+  color: #88b5f5;
+  border: 1px solid #2a4d7a;
+  border-radius: 4px;
+  padding: 0 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
 .engine-chip {
   background: #2a2e34;
   color: #e7e9ec;

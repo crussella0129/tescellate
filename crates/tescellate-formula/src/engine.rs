@@ -29,6 +29,11 @@ pub struct CellSnapshot {
     pub address: String,
     pub source: Option<String>,
     pub value: CellValue,
+    /// When set, this snapshot is for a virtual cell painted by another
+    /// cell's spilled array. The renderer styles it differently and the
+    /// formula bar shows the source cell's formula. PLAN.md §6.2.2.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub spilled_from: Option<String>,
 }
 
 impl Default for WorkbookEngine {
@@ -267,16 +272,36 @@ impl WorkbookEngine {
         let lattice = self.square_lattice_for(sheet).ok()?;
         let coord = lattice.parse_address(addr).ok()?;
         let canonical = lattice.address(coord);
-        let cell = self.workbook.sheets.get(&sheet)?.cells.get(&canonical)?;
-        Some(CellSnapshot {
-            address: canonical,
-            source: cell.source.clone(),
-            value: cell.value.clone(),
-        })
+        let spill = self.compute_spill_for(sheet);
+        // Source cell?
+        if let Some(cell) = self.workbook.sheets.get(&sheet)?.cells.get(&canonical) {
+            let value = if spill.collisions.contains(&canonical) {
+                CellValue::Error(CellError::Spill)
+            } else {
+                cell.value.clone()
+            };
+            return Some(CellSnapshot {
+                address: canonical,
+                source: cell.source.clone(),
+                value,
+                spilled_from: None,
+            });
+        }
+        // Virtual spill cell?
+        if let Some(virt) = spill.virtual_cells.get(&canonical) {
+            return Some(CellSnapshot {
+                address: canonical,
+                source: None,
+                value: virt.value.clone(),
+                spilled_from: Some(virt.source.clone()),
+            });
+        }
+        None
     }
 
-    /// Bulk snapshot every populated cell whose canonical address falls in
-    /// the rectangular range `start..=end` (square-lattice semantics).
+    /// Bulk snapshot the requested range. Emits stored cells, the source
+    /// cells' #SPILL! state when they collide, and the virtual spilled
+    /// cells whose source happens to paint into the range.
     pub fn snapshot_range(
         &self,
         sheet: SheetId,
@@ -295,18 +320,103 @@ impl WorkbookEngine {
             .sheets
             .get(&sheet)
             .ok_or(SetCellError::NoSheet(sheet))?;
+        let spill = self.compute_spill_for(sheet);
         let mut out = Vec::new();
         for c in square_range(a, b) {
             let addr = lattice.address(c);
             if let Some(cell) = sheet_ref.cells.get(&addr) {
+                let value = if spill.collisions.contains(&addr) {
+                    CellValue::Error(CellError::Spill)
+                } else {
+                    cell.value.clone()
+                };
                 out.push(CellSnapshot {
                     address: addr,
                     source: cell.source.clone(),
-                    value: cell.value.clone(),
+                    value,
+                    spilled_from: None,
+                });
+            } else if let Some(virt) = spill.virtual_cells.get(&addr) {
+                out.push(CellSnapshot {
+                    address: addr,
+                    source: None,
+                    value: virt.value.clone(),
+                    spilled_from: Some(virt.source.clone()),
                 });
             }
         }
         Ok(out)
+    }
+
+    /// Walk every cell on the sheet whose value is an Array of size > 1×1
+    /// and project it into the spill map: each non-source target becomes a
+    /// virtual cell, or — if the target is occupied — the source flips to
+    /// `#SPILL!` and no virtual cells are emitted.
+    fn compute_spill_for(&self, sheet: SheetId) -> SpillMap {
+        let mut out = SpillMap::default();
+        let lattice = match self.square_lattice_for(sheet) {
+            Ok(l) => l,
+            Err(_) => return out,
+        };
+        let sheet_ref = match self.workbook.sheets.get(&sheet) {
+            Some(s) => s,
+            None => return out,
+        };
+        for (addr, cell) in &sheet_ref.cells {
+            let arr = match &cell.value {
+                CellValue::Array(arr) if !arr.is_scalar() && !arr.is_empty() => arr,
+                _ => continue,
+            };
+            let src_coord = match lattice.parse_address(addr) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            // Collect (offset, target_addr) pairs; check collisions.
+            let mut targets = Vec::with_capacity(arr.len());
+            let mut collision = false;
+            for r in 0..arr.rows {
+                for c in 0..arr.cols {
+                    if r == 0 && c == 0 {
+                        continue;
+                    }
+                    let target = SquareCoord {
+                        col: src_coord.col + c as i32,
+                        row: src_coord.row + r as i32,
+                    };
+                    let target_addr = lattice.address(target);
+                    // Collision: target is already a stored cell with a source
+                    // (a stored cell with no source — i.e. just a value left
+                    // over from clearing a formula — is treated as empty for
+                    // spill purposes).
+                    if let Some(existing) = sheet_ref.cells.get(&target_addr) {
+                        if existing.source.is_some() {
+                            collision = true;
+                            break;
+                        }
+                    }
+                    let value = arr.get(r, c).cloned().unwrap_or(CellValue::Empty);
+                    targets.push((target_addr, value));
+                }
+                if collision {
+                    break;
+                }
+            }
+            if collision {
+                out.collisions.insert(addr.clone());
+            } else {
+                for (taddr, value) in targets {
+                    out.virtual_cells.insert(
+                        taddr,
+                        VirtualCell {
+                            value,
+                            source: addr.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        out
     }
 
     fn store_cell(&mut self, sheet: SheetId, addr: &str, cell: Cell) {
@@ -420,6 +530,19 @@ fn square_range(a: SquareCoord, b: SquareCoord) -> Vec<SquareCoord> {
         }
     }
     out
+}
+
+#[derive(Default)]
+struct SpillMap {
+    /// Address → virtual cell painted by a source's array.
+    virtual_cells: HashMap<String, VirtualCell>,
+    /// Source addresses whose spill region collides with an occupied cell.
+    collisions: std::collections::HashSet<String>,
+}
+
+struct VirtualCell {
+    value: CellValue,
+    source: String,
 }
 
 fn empty_workbook() -> Workbook {
@@ -569,5 +692,60 @@ mod tests {
             other.get_cell(sid, "A2").unwrap().value,
             CellValue::Number(200.0)
         );
+    }
+
+    #[test]
+    fn array_formula_spills_into_neighbours() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("=SEQUENCE(3)")).unwrap();
+        // Source cell holds the array value...
+        let snap_a1 = eng.get_cell(sid, "A1").unwrap();
+        assert!(matches!(snap_a1.value, CellValue::Array(_)));
+        assert!(snap_a1.spilled_from.is_none());
+        // ...and A2/A3 are virtual spill targets.
+        let snap_a2 = eng.get_cell(sid, "A2").unwrap();
+        assert_eq!(snap_a2.value, CellValue::Number(2.0));
+        assert_eq!(snap_a2.spilled_from.as_deref(), Some("A1"));
+        let snap_a3 = eng.get_cell(sid, "A3").unwrap();
+        assert_eq!(snap_a3.value, CellValue::Number(3.0));
+        assert_eq!(snap_a3.spilled_from.as_deref(), Some("A1"));
+        // A4 (outside the spill) is still nothing.
+        assert!(eng.get_cell(sid, "A4").is_none());
+    }
+
+    #[test]
+    fn spill_collision_marks_source_with_spill_error() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A3", Some("=999")).unwrap(); // blocker
+        eng.set_cell(sid, "A1", Some("=SEQUENCE(5)")).unwrap();
+        let snap = eng.get_cell(sid, "A1").unwrap();
+        assert_eq!(snap.value, CellValue::Error(CellError::Spill));
+        // A2 doesn't exist as a virtual cell once collision is detected.
+        assert!(eng.get_cell(sid, "A2").is_none());
+        // The blocker is still itself.
+        assert_eq!(
+            eng.get_cell(sid, "A3").unwrap().value,
+            CellValue::Number(999.0)
+        );
+    }
+
+    #[test]
+    fn spill_2d_paints_a_rectangle() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("=[[1,2],[3,4]]")).unwrap();
+        let snap = eng.snapshot_range(sid, "A1", "B2").unwrap();
+        let map: hashbrown::HashMap<_, _> =
+            snap.into_iter().map(|s| (s.address.clone(), s)).collect();
+        assert!(matches!(map["A1"].value, CellValue::Array(_)));
+        assert_eq!(map["A2"].value, CellValue::Number(3.0));
+        assert_eq!(map["B1"].value, CellValue::Number(2.0));
+        assert_eq!(map["B2"].value, CellValue::Number(4.0));
+        for (addr, snap) in &map {
+            if addr == "A1" {
+                assert!(snap.spilled_from.is_none());
+            } else {
+                assert_eq!(snap.spilled_from.as_deref(), Some("A1"));
+            }
+        }
     }
 }

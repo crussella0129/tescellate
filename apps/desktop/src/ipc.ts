@@ -9,6 +9,7 @@ export type CellValue =
   | { kind: 'integer'; value: number }
   | { kind: 'bool'; value: boolean }
   | { kind: 'text'; value: string }
+  | { kind: 'array'; value: { rows: number; cols: number; data: CellValue[] } }
   | { kind: 'error'; value: { code: string; detail?: string } }
   | { kind: 'pending' };
 
@@ -16,6 +17,8 @@ export interface CellSnapshot {
   address: string;
   source: string | null;
   value: CellValue;
+  /** When set, this cell is a virtual spill target painted by `spilled_from`. */
+  spilled_from?: string | null;
 }
 
 interface RpcResponse<T> {
@@ -58,6 +61,13 @@ export function formatValue(v: CellValue): string {
       return v.value ? 'TRUE' : 'FALSE';
     case 'text':
       return v.value;
+    case 'array': {
+      // Show the top-left scalar inline; the rest will appear via spill
+      // expansion in adjacent cells. If somehow we get an array in a
+      // non-source spot, show a placeholder.
+      const head = v.value.data[0];
+      return head ? formatValue(head) : '{array}';
+    }
     case 'error':
       return errorLabel(v.value.code);
     case 'pending':
@@ -83,6 +93,8 @@ function errorLabel(code: string): string {
       return '#COMPILE!';
     case 'timeout':
       return '#TIMEOUT!';
+    case 'spill':
+      return '#SPILL!';
     default:
       return `#${code.toUpperCase()}!`;
   }

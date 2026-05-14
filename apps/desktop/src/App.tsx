@@ -42,10 +42,21 @@ export function App() {
     [selection],
   );
 
-  const selectedSource = useMemo(() => {
-    if (!selectedAddress) return '';
-    return snapshots.get(selectedAddress)?.source ?? '';
+  const selectedSnapshot = useMemo(() => {
+    if (!selectedAddress) return null;
+    return snapshots.get(selectedAddress) ?? null;
   }, [snapshots, selectedAddress]);
+
+  const selectedSource = useMemo(() => {
+    if (!selectedSnapshot) return '';
+    if (selectedSnapshot.spilled_from) {
+      // Show the source cell's formula so the user can see what produced
+      // this value. Editing the bar will write the spilled cell's address
+      // (breaking the spill, which mirrors Excel behaviour).
+      return snapshots.get(selectedSnapshot.spilled_from)?.source ?? '';
+    }
+    return selectedSnapshot.source ?? '';
+  }, [selectedSnapshot, snapshots]);
 
   const onCommit = useCallback(
     async (src: string) => {
@@ -82,6 +93,7 @@ export function App() {
         onEngineChange={setEngine}
         address={selectedAddress}
         source={selectedSource}
+        spilledFrom={selectedSnapshot?.spilled_from ?? null}
         onCommit={onCommit}
       />
       <div style={{ flex: 1, position: 'relative' }}>
