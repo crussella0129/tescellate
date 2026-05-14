@@ -881,4 +881,320 @@ mod tests {
             CellValue::Number(200.0)
         );
     }
+
+    // ------------------------------------------------------------------
+    // Carbide template recreation — end-to-end tests that mirror the
+    // Google Sheets template the user shared, asserting our engine
+    // reproduces each row's output exactly.
+    //
+    // Sheet URL:
+    //   https://docs.google.com/spreadsheets/d/1fOlZ3YK-Fk7w4OU3tagHfohqSGkAPGL3CrboVoFcnZA
+    // ------------------------------------------------------------------
+
+    /// Operation 1: "Make A Commonly Delimited String".
+    /// Inputs Red, Orange, Yellow, Green, Blue, Purple → joined with "~".
+    #[test]
+    fn carbide_op1_join_delimited_string() {
+        let (mut eng, sid) = new_sheet();
+        for (i, color) in ["Red", "Orange", "Yellow", "Green", "Blue", "Purple"]
+            .into_iter()
+            .enumerate()
+        {
+            let addr = format!("{}1", (b'A' + i as u8) as char);
+            eng.set_cell(sid, &addr, Some(color)).unwrap();
+        }
+        eng.set_cell(sid, "G1", Some(r#"=JOIN("~", A1:F1)"#))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "G1").unwrap().value,
+            CellValue::Text("Red~Orange~Yellow~Green~Blue~Purple".into())
+        );
+    }
+
+    /// Operation 2: "Split a Commonly Delimited String".
+    /// The result is a 1×6 array that spills into B3..G3.
+    #[test]
+    fn carbide_op2_split_delimited_string() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A3", Some("Red~Orange~Yellow~Green~Blue~Purple"))
+            .unwrap();
+        eng.set_cell(sid, "B3", Some(r#"=SPLIT("~", A3)"#)).unwrap();
+        // B3 holds the array; C3..G3 are virtual spill cells.
+        let snap = eng.snapshot_range(sid, "B3", "G3").unwrap();
+        let map: hashbrown::HashMap<_, _> =
+            snap.into_iter().map(|s| (s.address.clone(), s)).collect();
+        assert!(matches!(map["B3"].value, CellValue::Array(_)));
+        assert_eq!(map["C3"].value, CellValue::Text("Orange".into()));
+        assert_eq!(map["D3"].value, CellValue::Text("Yellow".into()));
+        assert_eq!(map["E3"].value, CellValue::Text("Green".into()));
+        assert_eq!(map["F3"].value, CellValue::Text("Blue".into()));
+        assert_eq!(map["G3"].value, CellValue::Text("Purple".into()));
+        for addr in ["C3", "D3", "E3", "F3", "G3"] {
+            assert_eq!(map[addr].spilled_from.as_deref(), Some("B3"));
+        }
+    }
+
+    /// Operation 3: "Identify All Unique Items Within An Array Of Commonly
+    /// Delimited Strings". Stack the strings into one big delimited string,
+    /// split, dedupe, rejoin.
+    #[test]
+    fn carbide_op3_unique_across_array_of_delimited_strings() {
+        let (mut eng, sid) = new_sheet();
+        let inputs = [
+            ("A5", "Red~Orange~Yellow"),
+            ("B5", "Yellow~Green~Blue"),
+            ("A6", "Green~Blue~Purple"),
+            ("B6", "Green~Blue~Red"),
+            ("A7", "Yellow~Blue~Yellow"),
+            ("B7", "Yellow~Green~Purple"),
+            ("A8", "Purple~Orange~Red"),
+            ("B8", "Green~Green~Blue"),
+        ];
+        for (addr, s) in inputs {
+            eng.set_cell(sid, addr, Some(s)).unwrap();
+        }
+        eng.set_cell(
+            sid,
+            "D5",
+            Some(r#"=JOIN("~", UNIQUE(SPLIT("~", JOIN("~", A5:B8))))"#),
+        )
+        .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "D5").unwrap().value,
+            CellValue::Text("Red~Orange~Yellow~Green~Blue~Purple".into())
+        );
+    }
+
+    /// Operation 4: "Compare Two Commonly Delimited Strings, Give Uniques
+    /// Of 2nd (String Forward Difference Operator)" — set difference.
+    #[test]
+    fn carbide_op4_forward_difference_of_delimited_strings() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A10", Some("Red~Orange~Yellow~Green~Blue"))
+            .unwrap();
+        eng.set_cell(sid, "A11", Some("Red~Orange~Yellow~Green~Blue~Purple"))
+            .unwrap();
+        eng.set_cell(
+            sid,
+            "A12",
+            Some(r#"=JOIN("~", SETDIFF(SPLIT("~", A11), SPLIT("~", A10)))"#),
+        )
+        .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A12").unwrap().value,
+            CellValue::Text("Purple".into())
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Edge-case gamut — make sure each operation handles boundary
+    // conditions gracefully or documents the failure.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn join_skips_nothing_includes_empties() {
+        // JOIN doesn't filter empties — empty cells become empty segments.
+        // Use TEXTJOIN with ignore_empty=TRUE if you want them skipped.
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("a")).unwrap();
+        // B1 left empty
+        eng.set_cell(sid, "C1", Some("c")).unwrap();
+        eng.set_cell(sid, "D1", Some(r#"=JOIN("~", A1:C1)"#))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "D1").unwrap().value,
+            CellValue::Text("a~~c".into())
+        );
+        // TEXTJOIN with TRUE skips them.
+        eng.set_cell(sid, "D2", Some(r#"=TEXTJOIN("~", TRUE, A1:C1)"#))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "D2").unwrap().value,
+            CellValue::Text("a~c".into())
+        );
+    }
+
+    #[test]
+    fn split_handles_empty_text_and_single_element() {
+        let (mut eng, sid) = new_sheet();
+        // Empty string → array with one empty piece.
+        eng.set_cell(sid, "A1", Some(r#"=SPLIT(",", "")"#)).unwrap();
+        if let CellValue::Array(arr) = eng.get_cell(sid, "A1").unwrap().value {
+            assert_eq!(arr.cols, 1);
+            assert_eq!(arr.data[0], CellValue::Text("".into()));
+        } else {
+            panic!("expected array");
+        }
+        // No delimiter present in input → 1-element array containing the input.
+        eng.set_cell(sid, "A2", Some(r#"=SPLIT(",", "abc")"#))
+            .unwrap();
+        if let CellValue::Array(arr) = eng.get_cell(sid, "A2").unwrap().value {
+            assert_eq!(arr.data, vec![CellValue::Text("abc".into())]);
+        } else {
+            panic!("expected array");
+        }
+    }
+
+    #[test]
+    fn split_multichar_delimiter() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some(r#"=SPLIT(", ", "a, b, c")"#))
+            .unwrap();
+        if let CellValue::Array(arr) = eng.get_cell(sid, "A1").unwrap().value {
+            assert_eq!(arr.cols, 3);
+            assert_eq!(arr.data[0], CellValue::Text("a".into()));
+            assert_eq!(arr.data[1], CellValue::Text("b".into()));
+            assert_eq!(arr.data[2], CellValue::Text("c".into()));
+        } else {
+            panic!("expected array");
+        }
+    }
+
+    #[test]
+    fn unique_preserves_first_seen_order() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(
+            sid,
+            "A1",
+            Some(r#"=JOIN(",", UNIQUE(["c", "a", "b", "a", "c", "d"]))"#),
+        )
+        .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A1").unwrap().value,
+            CellValue::Text("c,a,b,d".into())
+        );
+    }
+
+    #[test]
+    fn set_operations_basic() {
+        let (mut eng, sid) = new_sheet();
+        // SETUNION
+        eng.set_cell(
+            sid,
+            "A1",
+            Some(r#"=JOIN(",", SETUNION([1, 2, 3], [2, 3, 4]))"#),
+        )
+        .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A1").unwrap().value,
+            CellValue::Text("1,2,3,4".into())
+        );
+        // SETDIFF
+        eng.set_cell(
+            sid,
+            "A2",
+            Some(r#"=JOIN(",", SETDIFF([1, 2, 3, 4], [2, 4]))"#),
+        )
+        .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A2").unwrap().value,
+            CellValue::Text("1,3".into())
+        );
+        // SETINTERSECT
+        eng.set_cell(
+            sid,
+            "A3",
+            Some(r#"=JOIN(",", SETINTERSECT([1, 2, 3], [2, 3, 4]))"#),
+        )
+        .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A3").unwrap().value,
+            CellValue::Text("2,3".into())
+        );
+        // SETSYMDIFF
+        eng.set_cell(
+            sid,
+            "A4",
+            Some(r#"=JOIN(",", SETSYMDIFF([1, 2, 3], [2, 3, 4]))"#),
+        )
+        .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A4").unwrap().value,
+            CellValue::Text("1,4".into())
+        );
+    }
+
+    #[test]
+    fn set_operations_empty_inputs() {
+        let (mut eng, sid) = new_sheet();
+        // Empty 1st arg ⇒ empty result.
+        eng.set_cell(sid, "A1", Some(r#"=JOIN(",", SETDIFF([], [1, 2]))"#))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A1").unwrap().value,
+            CellValue::Text("".into())
+        );
+        // Empty 2nd arg ⇒ all of 1st, deduped.
+        eng.set_cell(sid, "A2", Some(r#"=JOIN(",", SETDIFF([1, 2, 2, 3], []))"#))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A2").unwrap().value,
+            CellValue::Text("1,2,3".into())
+        );
+    }
+
+    #[test]
+    fn in_predicate() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some(r#"=IN("b", ["a", "b", "c"])"#))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A1").unwrap().value,
+            CellValue::Bool(true)
+        );
+        eng.set_cell(sid, "A2", Some(r#"=IN("z", ["a", "b", "c"])"#))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A2").unwrap().value,
+            CellValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn countif_equality() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("apple")).unwrap();
+        eng.set_cell(sid, "A2", Some("banana")).unwrap();
+        eng.set_cell(sid, "A3", Some("apple")).unwrap();
+        eng.set_cell(sid, "A4", Some("cherry")).unwrap();
+        eng.set_cell(sid, "B1", Some(r#"=COUNTIF(A1:A4, "apple")"#))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "B1").unwrap().value,
+            CellValue::Integer(2)
+        );
+    }
+
+    #[test]
+    fn join_split_round_trip_preserves_data() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("alpha|beta|gamma|delta"))
+            .unwrap();
+        // SPLIT then JOIN gives back the original.
+        eng.set_cell(sid, "A2", Some(r#"=JOIN("|", SPLIT("|", A1))"#))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A2").unwrap().value,
+            CellValue::Text("alpha|beta|gamma|delta".into())
+        );
+    }
+
+    #[test]
+    fn nested_dynamic_array_chain() {
+        // SORT(UNIQUE(SPLIT(...))) — nested array-returning functions
+        // should compose without spill confusion at intermediate steps.
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("banana,apple,cherry,apple,banana"))
+            .unwrap();
+        eng.set_cell(
+            sid,
+            "B1",
+            Some(r#"=JOIN(",", SORT(UNIQUE(SPLIT(",", A1))))"#),
+        )
+        .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "B1").unwrap().value,
+            CellValue::Text("apple,banana,cherry".into())
+        );
+    }
 }

@@ -216,6 +216,115 @@ fn drop_indices(len: usize, n: i64) -> (usize, usize) {
     }
 }
 
+// --- Set operations -------------------------------------------------------
+
+/// Helper: dedupe-in-place using `compare` for value equality.
+fn push_unique(out: &mut Vec<CellValue>, v: CellValue) {
+    if !out
+        .iter()
+        .any(|x| compare(x, &v) == std::cmp::Ordering::Equal)
+    {
+        out.push(v);
+    }
+}
+
+fn contains(haystack: &[CellValue], needle: &CellValue) -> bool {
+    haystack
+        .iter()
+        .any(|x| compare(x, needle) == std::cmp::Ordering::Equal)
+}
+
+/// SETUNION(a, b, ...) — distinct values across every argument, in first-seen order.
+pub fn setunion(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    if args.is_empty() {
+        return Err(EvalError::BadArity {
+            name: "SETUNION".into(),
+            want: ">=1".into(),
+            got: 0,
+        });
+    }
+    let mut out: Vec<CellValue> = Vec::new();
+    for a in args {
+        for v in flatten(a, ctx)? {
+            push_unique(&mut out, v);
+        }
+    }
+    Ok(CellValue::Array(Box::new(Array::col(out))))
+}
+
+/// SETDIFF(a, b) — values in `a` that are not in `b`, deduped, in first-seen order.
+/// This is the standard set-difference operator: `a \ b`.
+///
+/// "Forward difference of two delimited strings, give uniques of 2nd" in the
+/// Carbide template's vocabulary translates to `SETDIFF(2nd, 1st)`.
+pub fn setdiff(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("SETDIFF", args, 2)?;
+    let a_values = flatten(&args[0], ctx)?;
+    let b_values = flatten(&args[1], ctx)?;
+    let mut out: Vec<CellValue> = Vec::new();
+    for v in a_values {
+        if !contains(&b_values, &v) {
+            push_unique(&mut out, v);
+        }
+    }
+    Ok(CellValue::Array(Box::new(Array::col(out))))
+}
+
+/// SETINTERSECT(a, b) — values present in both `a` and `b`, deduped.
+pub fn setintersect(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("SETINTERSECT", args, 2)?;
+    let a_values = flatten(&args[0], ctx)?;
+    let b_values = flatten(&args[1], ctx)?;
+    let mut out: Vec<CellValue> = Vec::new();
+    for v in a_values {
+        if contains(&b_values, &v) {
+            push_unique(&mut out, v);
+        }
+    }
+    Ok(CellValue::Array(Box::new(Array::col(out))))
+}
+
+/// SETSYMDIFF(a, b) — symmetric difference: values in exactly one of `a` or `b`.
+pub fn setsymdiff(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("SETSYMDIFF", args, 2)?;
+    let a_values = flatten(&args[0], ctx)?;
+    let b_values = flatten(&args[1], ctx)?;
+    let mut out: Vec<CellValue> = Vec::new();
+    for v in &a_values {
+        if !contains(&b_values, v) {
+            push_unique(&mut out, v.clone());
+        }
+    }
+    for v in &b_values {
+        if !contains(&a_values, v) {
+            push_unique(&mut out, v.clone());
+        }
+    }
+    Ok(CellValue::Array(Box::new(Array::col(out))))
+}
+
+/// IN(value, array) → boolean. True if `value` equals any element of `array`.
+pub fn in_fn(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("IN", args, 2)?;
+    let needle = eval(&args[0], ctx)?;
+    let haystack = flatten(&args[1], ctx)?;
+    Ok(CellValue::Bool(contains(&haystack, &needle)))
+}
+
+/// COUNTIF(range, criterion) — count of `range` elements equal to `criterion`.
+/// Phase 1.5 supports equality only; comparison-string criteria
+/// (`">10"`, `"<>foo"`) are a later expansion.
+pub fn countif(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("COUNTIF", args, 2)?;
+    let haystack = flatten(&args[0], ctx)?;
+    let needle = eval(&args[1], ctx)?;
+    let n = haystack
+        .iter()
+        .filter(|v| compare(v, &needle) == std::cmp::Ordering::Equal)
+        .count();
+    Ok(CellValue::Integer(n as i64))
+}
+
 pub fn register(r: &mut FunctionRegistry) {
     r.add("UNIQUE", unique);
     r.add("COUNTUNIQUE", countunique);
@@ -226,4 +335,10 @@ pub fn register(r: &mut FunctionRegistry) {
     r.add("DROP", drop_);
     r.add("TRANSPOSE", transpose);
     r.add("FLATTEN", flatten_fn);
+    r.add("SETUNION", setunion);
+    r.add("SETDIFF", setdiff);
+    r.add("SETINTERSECT", setintersect);
+    r.add("SETSYMDIFF", setsymdiff);
+    r.add("IN", in_fn);
+    r.add("COUNTIF", countif);
 }
