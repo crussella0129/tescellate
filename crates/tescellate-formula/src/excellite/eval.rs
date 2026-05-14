@@ -311,12 +311,20 @@ mod tests {
             ev(r#"TEXTJOIN(", ", TRUE, "a", "", "b", "c")"#, &ctx),
             CellValue::Text("a, b, c".into())
         );
-        // SPLIT returns an array of texts.
-        if let CellValue::Array(arr) = ev(r#"SPLIT("a-b-c", "-")"#, &ctx) {
+        // SPLIT: delimiter first, then text (symmetric with JOIN).
+        if let CellValue::Array(arr) = ev(r#"SPLIT("-", "a-b-c")"#, &ctx) {
             assert_eq!(arr.cols, 3);
             assert_eq!(arr.data[0], CellValue::Text("a".into()));
         } else {
             panic!("expected array");
+        }
+        // SPLIT across multiple cells returns a 2D array.
+        if let CellValue::Array(arr) = ev(r#"SPLIT(",", ["a,b", "c,d,e"])"#, &ctx) {
+            assert_eq!(arr.rows, 2);
+            assert_eq!(arr.cols, 3);
+            assert_eq!(arr.data[2], CellValue::Empty); // a,b padded
+        } else {
+            panic!("expected 2D array");
         }
         // UNIQUE filters duplicates.
         if let CellValue::Array(arr) = ev("UNIQUE([1, 2, 2, 3, 1])", &ctx) {

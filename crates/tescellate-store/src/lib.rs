@@ -126,6 +126,7 @@ mod tests {
                 id: sid,
                 name: "Sheet1".into(),
                 lattice: LatticeKind::Square,
+                extent: tescellate_core::SheetExtent::Unbounded,
                 cells,
             },
         );

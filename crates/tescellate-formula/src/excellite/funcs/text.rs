@@ -255,21 +255,50 @@ pub fn join(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
     Ok(CellValue::Text(parts.join(&delim)))
 }
 
-/// SPLIT(text, delimiter) → 1×N array.
+/// SPLIT(delimiter, text_or_range) → array of pieces.
+///
+/// Delimiter-first form (symmetric with `JOIN(delimiter, array)`), and the
+/// second argument can be either a single text value or a range/array — in
+/// which case we split each input and return a rectangular 2D array, one
+/// row per input cell, padded with empty for uneven splits.
 pub fn split(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
     arity_n("SPLIT", args, 2)?;
-    let text = stringify(&eval(&args[0], ctx)?);
-    let delim = stringify(&eval(&args[1], ctx)?);
-    let parts: Vec<CellValue> = if delim.is_empty() {
-        text.chars()
-            .map(|c| CellValue::Text(c.to_string()))
-            .collect()
+    let delim = stringify(&eval(&args[0], ctx)?);
+    let inputs = flatten(&args[1], ctx)?;
+    if inputs.is_empty() {
+        return Ok(CellValue::Array(Box::new(Array::new(0, 0, Vec::new()))));
+    }
+    let rows: Vec<Vec<CellValue>> = inputs
+        .iter()
+        .map(|v| {
+            let text = stringify(v);
+            if delim.is_empty() {
+                text.chars()
+                    .map(|c| CellValue::Text(c.to_string()))
+                    .collect()
+            } else {
+                text.split(&delim)
+                    .map(|s| CellValue::Text(s.to_string()))
+                    .collect()
+            }
+        })
+        .collect();
+    let cols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+    let nrows = rows.len();
+    let mut data = Vec::with_capacity(nrows * cols);
+    for mut r in rows {
+        while r.len() < cols {
+            r.push(CellValue::Empty);
+        }
+        data.extend(r);
+    }
+    if nrows == 1 {
+        // Common scalar-input case stays a 1×N row so a single-cell SPLIT
+        // spills horizontally as you'd expect.
+        Ok(CellValue::Array(Box::new(Array::row(data))))
     } else {
-        text.split(&delim)
-            .map(|s| CellValue::Text(s.to_string()))
-            .collect()
-    };
-    Ok(CellValue::Array(Box::new(Array::row(parts))))
+        Ok(CellValue::Array(Box::new(Array::new(nrows, cols, data))))
+    }
 }
 
 /// TEXTSPLIT(text, col_delim, [row_delim]) → 2D array if row_delim provided.

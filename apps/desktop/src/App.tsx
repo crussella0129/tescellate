@@ -12,12 +12,9 @@ const SNAPSHOT_RANGE = { start: 'A1', end: 'Z100' };
 export function App() {
   const [engine, setEngine] = useState<EngineKind>('excel_lite');
 
-  /**
-   * `activeCell` — the cell currently being edited (what Enter commits to).
-   * `cursorCell` — the visually highlighted cell. Equals activeCell when
-   * not editing; can differ while editing because cell-clicks insert refs
-   * rather than changing the edit target.
-   */
+  // activeCell: target of Enter (the cell being edited).
+  // cursorCell: highlight; equals activeCell when not editing; can differ
+  //             while editing because cell-clicks insert refs.
   const [activeCell, setActiveCell] = useState<Coord | null>({ col: 0, row: 0 });
   const [cursorCell, setCursorCell] = useState<Coord | null>({ col: 0, row: 0 });
   const [editing, setEditing] = useState(false);
@@ -37,21 +34,21 @@ export function App() {
     [snapshots, activeAddress],
   );
 
-  // When the active cell changes (and we're not mid-edit), sync the draft
-  // to that cell's source — taking spill into account so the bar shows the
-  // *source's* formula when the active cell is a spill target.
+  /** What the formula bar should show as a baseline for the active cell:
+   * the cell's own source, OR — if the cell is a spill target — the source's
+   * formula (so the user sees what produced the visible value). */
+  const baselineSource = useMemo(() => {
+    if (!activeSnapshot) return '';
+    if (activeSnapshot.spilled_from) {
+      return snapshots.get(activeSnapshot.spilled_from)?.source ?? '';
+    }
+    return activeSnapshot.source ?? '';
+  }, [activeSnapshot, snapshots]);
+
   useEffect(() => {
     if (editing) return;
-    if (!activeSnapshot) {
-      setDraft('');
-      return;
-    }
-    if (activeSnapshot.spilled_from) {
-      setDraft(snapshots.get(activeSnapshot.spilled_from)?.source ?? '');
-    } else {
-      setDraft(activeSnapshot.source ?? '');
-    }
-  }, [activeSnapshot, snapshots, editing]);
+    setDraft(baselineSource);
+  }, [baselineSource, editing]);
 
   const refresh = useCallback(async () => {
     try {
@@ -74,9 +71,6 @@ export function App() {
     });
   }, [refresh]);
 
-  // When user clicks a grid cell: if not editing, move the active cell.
-  // If editing, insert the cell's address at the caret position in the
-  // formula input (Excel/Sheets behaviour). Either way, the cursor moves.
   const onSelect = useCallback(
     (coord: Coord) => {
       setCursorCell(coord);
@@ -94,7 +88,6 @@ export function App() {
       const end = input.selectionEnd ?? draft.length;
       const next = draft.slice(0, start) + ref + draft.slice(end);
       setDraft(next);
-      // Re-focus and place caret after the inserted ref.
       requestAnimationFrame(() => {
         input.focus();
         const pos = start + ref.length;
@@ -104,18 +97,65 @@ export function App() {
     [editing, draft],
   );
 
+  /** Begin editing the active cell with `initial` as the initial draft —
+   * triggered by typing on the grid (the dominant "I just want to type"
+   * spreadsheet flow). */
+  const onStartEditWith = useCallback((initial: string) => {
+    setDraft(initial);
+    setEditing(true);
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (input) {
+        input.focus();
+        const end = input.value.length;
+        input.setSelectionRange(end, end);
+      }
+    });
+  }, []);
+
+  /** F2 — edit existing source. */
+  const onStartEdit = useCallback(() => {
+    setEditing(true);
+    requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    });
+  }, []);
+
+  /** Delete / Backspace — clear the active cell. */
+  const onClear = useCallback(async () => {
+    if (!activeAddress) return;
+    try {
+      const changed = await ipc.setCell(SHEET_ID, activeAddress, null);
+      setSnapshots((prev) => {
+        const next = new Map(prev);
+        for (const s of changed) next.set(s.address, s);
+        next.delete(activeAddress);
+        return next;
+      });
+      void refresh();
+    } catch (e) {
+      console.error('cell.set (clear) failed:', e);
+    }
+  }, [activeAddress, refresh]);
+
+  const onMove = useCallback((dCol: number, dRow: number) => {
+    const step = (c: Coord | null): Coord =>
+      c
+        ? { col: Math.max(0, c.col + dCol), row: Math.max(0, c.row + dRow) }
+        : { col: 0, row: 0 };
+    setActiveCell(step);
+    setCursorCell(step);
+  }, []);
+
   const onCommit = useCallback(async () => {
     if (!editing) return;
     setEditing(false);
     if (!activeAddress) return;
-    const baseline = (() => {
-      if (!activeSnapshot) return '';
-      if (activeSnapshot.spilled_from) {
-        return snapshots.get(activeSnapshot.spilled_from)?.source ?? '';
-      }
-      return activeSnapshot.source ?? '';
-    })();
-    if (draft === baseline) return;
+    if (draft === baselineSource) return;
     try {
       const changed = await ipc.setCell(
         SHEET_ID,
@@ -130,26 +170,16 @@ export function App() {
         }
         return next;
       });
-      // After commit, refresh once more to pick up any spill cells whose
-      // sources weren't in `changed` (e.g., when source array shrinks).
       void refresh();
     } catch (e) {
       console.error('cell.set failed:', e);
     }
-  }, [editing, activeAddress, activeSnapshot, draft, snapshots, refresh]);
+  }, [editing, activeAddress, draft, baselineSource, refresh]);
 
   const onCancel = useCallback(() => {
     setEditing(false);
-    if (!activeSnapshot) {
-      setDraft('');
-      return;
-    }
-    if (activeSnapshot.spilled_from) {
-      setDraft(snapshots.get(activeSnapshot.spilled_from)?.source ?? '');
-    } else {
-      setDraft(activeSnapshot.source ?? '');
-    }
-  }, [activeSnapshot, snapshots]);
+    setDraft(baselineSource);
+  }, [baselineSource]);
 
   return (
     <>
@@ -173,6 +203,10 @@ export function App() {
           cursorCell={cursorCell}
           editing={editing}
           onSelect={onSelect}
+          onStartEditWith={onStartEditWith}
+          onStartEdit={onStartEdit}
+          onClear={onClear}
+          onMove={onMove}
         />
       </div>
     </>

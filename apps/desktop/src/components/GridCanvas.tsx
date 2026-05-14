@@ -15,6 +15,15 @@ interface Props {
    * style and clicks add references instead of moving the active cell. */
   editing: boolean;
   onSelect: (c: Coord) => void;
+  /** A printable key was pressed while a cell was selected — start editing
+   * with that character as the initial draft. */
+  onStartEditWith: (initial: string) => void;
+  /** F2 / typing-into-existing — start editing the cell's current source. */
+  onStartEdit: () => void;
+  /** Delete / Backspace clears the active cell. */
+  onClear: () => void;
+  /** Move the active+cursor cell by (dCol, dRow). */
+  onMove: (dCol: number, dRow: number) => void;
 }
 
 /**
@@ -28,10 +37,19 @@ export function GridCanvas({
   cursorCell,
   editing,
   onSelect,
+  onStartEditWith,
+  onStartEdit,
+  onClear,
+  onMove,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rowHeader = 28;
   const colHeader = 48;
+
+  // Auto-focus the canvas on mount so keystrokes are picked up immediately.
+  useEffect(() => {
+    canvasRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -54,12 +72,10 @@ export function GridCanvas({
       const cols = Math.ceil((w - colHeader) / cellSize) + 1;
       const rows = Math.ceil((h - rowHeader) / cellSize) + 1;
 
-      // Cursor highlight (filled). Drawn under grid lines and the active
-      // ring so the ring stays visible on top.
-      const cursor = cursorCell;
-      if (cursor) {
-        const sx = colHeader + cursor.col * cellSize;
-        const sy = rowHeader + cursor.row * cellSize;
+      // Cursor highlight (filled).
+      if (cursorCell) {
+        const sx = colHeader + cursorCell.col * cellSize;
+        const sy = rowHeader + cursorCell.row * cellSize;
         if (sx >= colHeader && sy >= rowHeader && sx < w && sy < h) {
           ctx.fillStyle = '#1f4068';
           ctx.fillRect(sx, sy, cellSize, cellSize);
@@ -139,8 +155,7 @@ export function GridCanvas({
         }
       }
 
-      // Active-cell ring. Solid when not editing; dashed (marching ants)
-      // while editing to signal "this is where Enter will commit".
+      // Active-cell ring.
       if (activeCell) {
         const ax = colHeader + activeCell.col * cellSize;
         const ay = rowHeader + activeCell.row * cellSize;
@@ -168,13 +183,70 @@ export function GridCanvas({
     const col = Math.floor((x - colHeader) / cellSize);
     const row = Math.floor((y - rowHeader) / cellSize);
     onSelect({ col, row });
+    // Reclaim focus so subsequent keystrokes start editing on this cell.
+    if (!editing) {
+      e.currentTarget.focus();
+    }
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+    // Modifier-bearing chords are reserved for menu shortcuts (Ctrl+S etc.).
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    // Typing-to-edit: any printable single-character key starts a fresh
+    // edit on the active cell with that character as the initial draft.
+    if (e.key.length === 1) {
+      onStartEditWith(e.key);
+      e.preventDefault();
+      return;
+    }
+
+    switch (e.key) {
+      case 'F2':
+        onStartEdit();
+        e.preventDefault();
+        break;
+      case 'Delete':
+      case 'Backspace':
+        onClear();
+        e.preventDefault();
+        break;
+      case 'ArrowUp':
+        onMove(0, -1);
+        e.preventDefault();
+        break;
+      case 'ArrowDown':
+      case 'Enter':
+        onMove(0, 1);
+        e.preventDefault();
+        break;
+      case 'ArrowLeft':
+        onMove(-1, 0);
+        e.preventDefault();
+        break;
+      case 'ArrowRight':
+      case 'Tab':
+        onMove(1, 0);
+        e.preventDefault();
+        break;
+      default:
+        break;
+    }
   };
 
   return (
     <canvas
       ref={canvasRef}
+      tabIndex={0}
       onClick={onClick}
-      style={{ width: '100%', height: '100%', display: 'block', cursor: 'cell' }}
+      onKeyDown={onKeyDown}
+      style={{
+        width: '100%',
+        height: '100%',
+        display: 'block',
+        cursor: 'cell',
+        outline: 'none',
+      }}
     />
   );
 }

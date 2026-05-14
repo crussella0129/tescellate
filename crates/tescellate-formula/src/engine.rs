@@ -11,8 +11,8 @@ use crate::excellite::{eval_error_to_cell_error, ExcelLite};
 use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine};
 use hashbrown::HashMap;
 use tescellate_core::{
-    Cell, CellError, CellRef, CellValue, Dag, EngineKind, Sheet, SheetId, Workbook, WorkbookId,
-    WorkbookMeta,
+    Cell, CellError, CellRef, CellValue, Dag, EngineKind, Sheet, SheetExtent, SheetId, Workbook,
+    WorkbookId, WorkbookMeta,
 };
 use tescellate_tess::square::{SquareCoord, SquareLattice};
 use tescellate_tess::{Lattice, LatticeKind};
@@ -145,11 +145,21 @@ impl WorkbookEngine {
     }
 
     pub fn add_sheet(&mut self, name: impl Into<String>, lattice: LatticeKind) -> SheetId {
+        self.add_sheet_with_extent(name, lattice, SheetExtent::Unbounded)
+    }
+
+    pub fn add_sheet_with_extent(
+        &mut self,
+        name: impl Into<String>,
+        lattice: LatticeKind,
+        extent: SheetExtent,
+    ) -> SheetId {
         let id = SheetId(self.workbook.sheets.len() as u32 + 1);
         let sheet = Sheet {
             id,
             name: name.into(),
             lattice,
+            extent,
             cells: HashMap::new(),
         };
         self.workbook.sheets.insert(id, sheet);
