@@ -61,6 +61,32 @@ impl WorkbookEngine {
         self.workbook.id
     }
 
+    /// Evaluate a standalone Excel-lite expression — no cell-ref resolution,
+    /// no workbook context. Used by wizard inputs that accept arithmetic
+    /// formulas (e.g. cell-count fields like `100*100`).
+    pub fn eval_literal(&self, source: &str) -> Result<CellValue, SetCellError> {
+        let body = source.strip_prefix('=').unwrap_or(source);
+        let engine = self
+            .engines
+            .get(&EngineKind::ExcelLite)
+            .ok_or(SetCellError::NoEngine(EngineKind::ExcelLite))?;
+        let compiled = engine
+            .parse(body)
+            .map_err(|e| SetCellError::Parse(e.to_string()))?;
+        struct Empty;
+        impl EvalCtx for Empty {
+            fn cell(&self, _: &str) -> Result<CellValue, EvalError> {
+                Ok(CellValue::Empty)
+            }
+            fn range(&self, _: &str, _: &str) -> Result<Vec<CellValue>, EvalError> {
+                Ok(Vec::new())
+            }
+        }
+        engine
+            .eval(&compiled, &Empty)
+            .map_err(|e| SetCellError::Parse(e.to_string()))
+    }
+
     /// Persist the workbook to a `.tscl` zip at `path`. The DAG itself
     /// isn't stored — it can be reconstructed from cell sources on load.
     pub fn save(&self, path: &std::path::Path) -> Result<(), SetCellError> {
@@ -179,6 +205,12 @@ impl WorkbookEngine {
         let coord = lattice
             .parse_address(addr)
             .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+        // Bounds check before any mutation.
+        if let Some(sheet_ref) = self.workbook.sheets.get(&sheet) {
+            if !sheet_ref.extent.contains_square(coord.col, coord.row) {
+                return Err(SetCellError::OutOfBounds(addr.to_string()));
+            }
+        }
         let canonical = lattice.address(coord);
         let cref = CellRef::new(sheet, canonical.clone());
 
@@ -583,6 +615,8 @@ pub enum SetCellError {
     UnsupportedLattice(LatticeKind),
     #[error("io: {0}")]
     Io(String),
+    #[error("address {0} is outside this sheet's bounds")]
+    OutOfBounds(String),
 }
 
 #[cfg(test)]

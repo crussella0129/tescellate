@@ -34,9 +34,41 @@ async function call<T>(method: string, params: unknown = {}): Promise<T> {
   return resp.result as T;
 }
 
+export type LatticeKind =
+  | 'square'
+  | 'hex_pointy'
+  | 'hex_flat'
+  | 'triangle'
+  | 'parallelogram';
+
+export type ExtentParams =
+  | { kind: 'unbounded' }
+  | { kind: 'bounded'; cols: number; rows: number };
+
+export interface SheetInfo {
+  id: number;
+  name: string;
+  lattice: LatticeKind;
+  extent: {
+    kind: 'unbounded' | 'bounded';
+    spec?: { lattice: string; params: Record<string, number> };
+  };
+}
+
 export const ipc = {
   ping: () => call<{ ok: boolean; echo: unknown }>('ping'),
-  newWorkbook: () => call<{ sheet: number }>('workbook.new'),
+  newWorkbook: () => call<{ ok: boolean }>('workbook.new'),
+  createWorkbook: (params: {
+    name?: string;
+    lattice: LatticeKind;
+    extent: ExtentParams;
+  }) =>
+    call<{ ok: boolean; sheet: number; name: string; lattice: LatticeKind }>(
+      'workbook.create',
+      params,
+    ),
+  workbookInfo: () => call<{ sheets: SheetInfo[] }>('workbook.info'),
+  evalLiteral: (source: string) => call<CellValue>('formula.eval', { source }),
   setCell: (sheet: number, address: string, source: string | null) =>
     call<CellSnapshot[]>('cell.set', { sheet, address, source }),
   getCell: (sheet: number, address: string) =>

@@ -1,28 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FormulaBar } from './components/FormulaBar';
 import { GridCanvas } from './components/GridCanvas';
+import { WizardModal } from './components/WizardModal';
 import type { EngineKind } from './types';
-import { ipc, type CellSnapshot } from './ipc';
+import { ipc, type CellSnapshot, type SheetInfo } from './ipc';
 import { toAddress, type Coord } from './address';
 
-const SHEET_ID = 1;
 const CELL_SIZE = 96;
 const SNAPSHOT_RANGE = { start: 'A1', end: 'Z100' };
 
 export function App() {
   const [engine, setEngine] = useState<EngineKind>('excel_lite');
+  const [sheet, setSheet] = useState<SheetInfo | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
 
-  // activeCell: target of Enter (the cell being edited).
-  // cursorCell: highlight; equals activeCell when not editing; can differ
-  //             while editing because cell-clicks insert refs.
   const [activeCell, setActiveCell] = useState<Coord | null>({ col: 0, row: 0 });
   const [cursorCell, setCursorCell] = useState<Coord | null>({ col: 0, row: 0 });
   const [editing, setEditing] = useState(false);
-
   const [draft, setDraft] = useState('');
   const [snapshots, setSnapshots] = useState<Map<string, CellSnapshot>>(new Map());
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const sheetId = sheet?.id ?? null;
 
   const activeAddress = useMemo(
     () => (activeCell ? toAddress(activeCell) : null),
@@ -34,9 +34,6 @@ export function App() {
     [snapshots, activeAddress],
   );
 
-  /** What the formula bar should show as a baseline for the active cell:
-   * the cell's own source, OR — if the cell is a spill target — the source's
-   * formula (so the user sees what produced the visible value). */
   const baselineSource = useMemo(() => {
     if (!activeSnapshot) return '';
     if (activeSnapshot.spilled_from) {
@@ -50,26 +47,56 @@ export function App() {
     setDraft(baselineSource);
   }, [baselineSource, editing]);
 
-  const refresh = useCallback(async () => {
+  /** Re-query the core for the workbook's current shape. If no sheet
+   * exists, surface the wizard so the user can pick a tessellation. */
+  const refreshWorkbookInfo = useCallback(async () => {
     try {
-      const snap = await ipc.snapshotRange(SHEET_ID, SNAPSHOT_RANGE.start, SNAPSHOT_RANGE.end);
+      const info = await ipc.workbookInfo();
+      if (info.sheets.length === 0) {
+        setSheet(null);
+        setSnapshots(new Map());
+        setWizardOpen(true);
+      } else {
+        setSheet(info.sheets[0]);
+        setWizardOpen(false);
+      }
+    } catch (e) {
+      console.error('workbook.info failed:', e);
+    }
+  }, []);
+
+  const refreshSnapshot = useCallback(async () => {
+    if (sheetId == null) return;
+    try {
+      const snap = await ipc.snapshotRange(sheetId, SNAPSHOT_RANGE.start, SNAPSHOT_RANGE.end);
       const m = new Map<string, CellSnapshot>();
       for (const s of snap) m.set(s.address, s);
       setSnapshots(m);
     } catch (e) {
       console.error('snapshot failed:', e);
     }
-  }, []);
+  }, [sheetId]);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    void refreshWorkbookInfo();
+  }, [refreshWorkbookInfo]);
 
   useEffect(() => {
-    return window.tescellate.onWorkbookOpened(() => {
-      void refresh();
+    if (sheetId != null) void refreshSnapshot();
+  }, [sheetId, refreshSnapshot]);
+
+  // Main process tells us when the workbook changes (File menu actions).
+  useEffect(() => {
+    return window.tescellate.onWorkbookOpened((payload) => {
+      // `path: null` means workbook.new — show wizard. `path: string` means
+      // a file was loaded — refresh state.
+      if (payload.path === null) {
+        void refreshWorkbookInfo();
+      } else {
+        void refreshWorkbookInfo().then(() => refreshSnapshot());
+      }
     });
-  }, [refresh]);
+  }, [refreshWorkbookInfo, refreshSnapshot]);
 
   const onSelect = useCallback(
     (coord: Coord) => {
@@ -97,9 +124,6 @@ export function App() {
     [editing, draft],
   );
 
-  /** Begin editing the active cell with `initial` as the initial draft —
-   * triggered by typing on the grid (the dominant "I just want to type"
-   * spreadsheet flow). */
   const onStartEditWith = useCallback((initial: string) => {
     setDraft(initial);
     setEditing(true);
@@ -113,7 +137,6 @@ export function App() {
     });
   }, []);
 
-  /** F2 — edit existing source. */
   const onStartEdit = useCallback(() => {
     setEditing(true);
     requestAnimationFrame(() => {
@@ -125,22 +148,21 @@ export function App() {
     });
   }, []);
 
-  /** Delete / Backspace — clear the active cell. */
   const onClear = useCallback(async () => {
-    if (!activeAddress) return;
+    if (sheetId == null || !activeAddress) return;
     try {
-      const changed = await ipc.setCell(SHEET_ID, activeAddress, null);
+      const changed = await ipc.setCell(sheetId, activeAddress, null);
       setSnapshots((prev) => {
         const next = new Map(prev);
         for (const s of changed) next.set(s.address, s);
         next.delete(activeAddress);
         return next;
       });
-      void refresh();
+      void refreshSnapshot();
     } catch (e) {
       console.error('cell.set (clear) failed:', e);
     }
-  }, [activeAddress, refresh]);
+  }, [sheetId, activeAddress, refreshSnapshot]);
 
   const onMove = useCallback((dCol: number, dRow: number) => {
     const step = (c: Coord | null): Coord =>
@@ -154,11 +176,11 @@ export function App() {
   const onCommit = useCallback(async () => {
     if (!editing) return;
     setEditing(false);
-    if (!activeAddress) return;
+    if (sheetId == null || !activeAddress) return;
     if (draft === baselineSource) return;
     try {
       const changed = await ipc.setCell(
-        SHEET_ID,
+        sheetId,
         activeAddress,
         draft.trim() === '' ? null : draft,
       );
@@ -170,16 +192,28 @@ export function App() {
         }
         return next;
       });
-      void refresh();
+      void refreshSnapshot();
     } catch (e) {
       console.error('cell.set failed:', e);
     }
-  }, [editing, activeAddress, draft, baselineSource, refresh]);
+  }, [editing, sheetId, activeAddress, draft, baselineSource, refreshSnapshot]);
 
   const onCancel = useCallback(() => {
     setEditing(false);
     setDraft(baselineSource);
   }, [baselineSource]);
+
+  const onWizardComplete = useCallback(() => {
+    setWizardOpen(false);
+    void refreshWorkbookInfo();
+  }, [refreshWorkbookInfo]);
+
+  const onWizardCancel = useCallback(() => {
+    // If there's no sheet at all, cancelling the wizard would leave the user
+    // staring at nothing — so we only allow cancel when a sheet already
+    // exists (i.e. they hit File→New and changed their mind).
+    if (sheet != null) setWizardOpen(false);
+  }, [sheet]);
 
   return (
     <>
@@ -196,18 +230,25 @@ export function App() {
         spilledFrom={activeSnapshot?.spilled_from ?? null}
       />
       <div style={{ flex: 1, position: 'relative' }}>
-        <GridCanvas
-          cellSize={CELL_SIZE}
-          snapshots={snapshots}
-          activeCell={activeCell}
-          cursorCell={cursorCell}
-          editing={editing}
-          onSelect={onSelect}
-          onStartEditWith={onStartEditWith}
-          onStartEdit={onStartEdit}
-          onClear={onClear}
-          onMove={onMove}
-        />
+        {sheetId != null ? (
+          <GridCanvas
+            cellSize={CELL_SIZE}
+            snapshots={snapshots}
+            activeCell={activeCell}
+            cursorCell={cursorCell}
+            editing={editing}
+            onSelect={onSelect}
+            onStartEditWith={onStartEditWith}
+            onStartEdit={onStartEdit}
+            onClear={onClear}
+            onMove={onMove}
+          />
+        ) : (
+          <div className="no-sheet-hint">
+            No workbook yet — use the wizard to pick a tessellation.
+          </div>
+        )}
+        {wizardOpen && <WizardModal onComplete={onWizardComplete} onCancel={onWizardCancel} />}
       </div>
     </>
   );
