@@ -1,0 +1,46 @@
+# Rust
+/target/
+**/target/
+Cargo.lock.bak
+*.rs.bk
+*.pdb
+
+# Native formula compile cache
+.tescellate-cache/
+
+# Node / Electron / Vite
+node_modules/
+**/node_modules/
+dist/
+dist-electron/
+.vite/
+out/
+*.tsbuildinfo
+
+# Python (for the PyO3 venv during dev)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE / editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs / coverage
+*.log
+coverage/
+.nyc_output/
+
+# Local workbooks for testing
+*.tscl
+!examples/*.tscl
+
+# OS junk
+desktop.ini
