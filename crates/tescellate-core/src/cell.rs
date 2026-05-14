@@ -31,6 +31,8 @@ pub enum CellError {
     Compile(String),
     /// Formula exceeded its execution budget.
     Timeout,
+    /// Spill region collides with a non-empty cell. See PLAN.md §6.2.2.
+    Spill,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

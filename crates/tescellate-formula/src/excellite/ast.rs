@@ -15,6 +15,9 @@ pub enum Expr {
     CellRef(String),
     /// A range from `start` to `end`, both lattice addresses.
     Range(String, String),
+    /// Array literal: `[a, b, c]` is `Array(vec![vec![a, b, c]])`,
+    /// `[[a,b],[c,d]]` is `Array(vec![vec![a,b], vec![c,d]])`. See PLAN.md §6.2.1.
+    Array(Vec<Vec<Expr>>),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Call(String, Vec<Expr>),

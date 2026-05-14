@@ -18,6 +18,8 @@ pub enum Token {
     CellRef(String),
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     Comma,
     Colon,
     Plus,
@@ -75,6 +77,8 @@ pub fn lex(src: &str) -> Result<Vec<Spanned<Token>>, LexError> {
         let (tok, next) = match b {
             b'(' => (Token::LParen, i + 1),
             b')' => (Token::RParen, i + 1),
+            b'[' => (Token::LBracket, i + 1),
+            b']' => (Token::RBracket, i + 1),
             b',' => (Token::Comma, i + 1),
             b':' => (Token::Colon, i + 1),
             b'+' => (Token::Plus, i + 1),

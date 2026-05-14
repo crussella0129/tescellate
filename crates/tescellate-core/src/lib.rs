@@ -14,7 +14,7 @@ pub mod value;
 pub use cell::{Cell, CellError, EngineKind};
 pub use dag::{Dag, DagError};
 pub use reference::CellRef;
-pub use value::CellValue;
+pub use value::{Array, CellValue, ShapeError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WorkbookId(pub u64);
