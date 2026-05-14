@@ -14,6 +14,10 @@ interface Props {
   /** When true, the active-cell ring is drawn with a "marching ants"
    * style and clicks add references instead of moving the active cell. */
   editing: boolean;
+  /** Bumping this value asks the canvas to claim keyboard focus. App uses
+   * it after wizard-close / formula commit / formula cancel so the user's
+   * next keystroke is captured by the grid, not by document.body. */
+  focusTick: number;
   onSelect: (c: Coord) => void;
   /** A printable key was pressed while a cell was selected — start editing
    * with that character as the initial draft. */
@@ -36,6 +40,7 @@ export function GridCanvas({
   activeCell,
   cursorCell,
   editing,
+  focusTick,
   onSelect,
   onStartEditWith,
   onStartEdit,
@@ -46,10 +51,18 @@ export function GridCanvas({
   const rowHeader = 28;
   const colHeader = 48;
 
-  // Auto-focus the canvas on mount so keystrokes are picked up immediately.
+  // Claim focus on mount AND whenever `focusTick` bumps. The parent bumps
+  // it after the wizard closes or after a formula commit so the next
+  // keystroke goes to the grid (cursor navigation, type-to-edit) rather
+  // than being swallowed by document.body.
   useEffect(() => {
-    canvasRef.current?.focus();
-  }, []);
+    // requestAnimationFrame so we focus after any in-flight blur/focus
+    // events from the formula bar have settled.
+    const id = requestAnimationFrame(() => {
+      canvasRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [focusTick]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

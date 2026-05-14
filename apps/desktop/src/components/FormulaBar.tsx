@@ -69,7 +69,16 @@ export const FormulaBar = forwardRef<HTMLInputElement, FormulaBarProps>(function
         value={draft}
         onChange={(e) => onDraftChange(e.target.value)}
         onFocus={onFocus}
-        onBlur={onCommit}
+        onBlur={(e) => {
+          // If focus is moving to the grid canvas, the user is mid-edit and
+          // picking a cell to insert as a reference — keep editing alive
+          // and don't commit. Without this guard the blur fires before the
+          // canvas click handler, flipping editing to false, and the click
+          // ends up moving selection instead of inserting an A1 ref.
+          const next = e.relatedTarget as HTMLElement | null;
+          if (next && next.tagName === 'CANVAS') return;
+          onCommit();
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter') {
             e.preventDefault();

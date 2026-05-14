@@ -21,6 +21,11 @@ export function App() {
   const [snapshots, setSnapshots] = useState<Map<string, CellSnapshot>>(new Map());
 
   const inputRef = useRef<HTMLInputElement>(null);
+  // Bumping this counter asks GridCanvas to claim keyboard focus. We bump
+  // after wizard-close, formula commit, and formula cancel so cursor keys
+  // start working immediately without an explicit cell click.
+  const [gridFocusTick, setGridFocusTick] = useState(0);
+  const bumpGridFocus = useCallback(() => setGridFocusTick((n) => n + 1), []);
 
   const sheetId = sheet?.id ?? null;
 
@@ -176,6 +181,7 @@ export function App() {
   const onCommit = useCallback(async () => {
     if (!editing) return;
     setEditing(false);
+    bumpGridFocus();
     if (sheetId == null || !activeAddress) return;
     if (draft === baselineSource) return;
     try {
@@ -196,17 +202,19 @@ export function App() {
     } catch (e) {
       console.error('cell.set failed:', e);
     }
-  }, [editing, sheetId, activeAddress, draft, baselineSource, refreshSnapshot]);
+  }, [editing, sheetId, activeAddress, draft, baselineSource, refreshSnapshot, bumpGridFocus]);
 
   const onCancel = useCallback(() => {
     setEditing(false);
     setDraft(baselineSource);
-  }, [baselineSource]);
+    bumpGridFocus();
+  }, [baselineSource, bumpGridFocus]);
 
   const onWizardComplete = useCallback(() => {
     setWizardOpen(false);
     void refreshWorkbookInfo();
-  }, [refreshWorkbookInfo]);
+    bumpGridFocus();
+  }, [refreshWorkbookInfo, bumpGridFocus]);
 
   const onWizardCancel = useCallback(() => {
     // If there's no sheet at all, cancelling the wizard would leave the user
@@ -237,6 +245,7 @@ export function App() {
             activeCell={activeCell}
             cursorCell={cursorCell}
             editing={editing}
+            focusTick={gridFocusTick}
             onSelect={onSelect}
             onStartEditWith={onStartEditWith}
             onStartEdit={onStartEdit}
