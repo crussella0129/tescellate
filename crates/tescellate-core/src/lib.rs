@@ -7,9 +7,13 @@ use serde::{Deserialize, Serialize};
 use tescellate_tess::LatticeKind;
 
 pub mod cell;
+pub mod dag;
+pub mod reference;
 pub mod value;
 
 pub use cell::{Cell, CellError, EngineKind};
+pub use dag::{Dag, DagError};
+pub use reference::CellRef;
 pub use value::CellValue;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

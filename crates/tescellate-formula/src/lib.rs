@@ -1,14 +1,12 @@
 //! Formula engines for Tescellate. See PLAN.md §6.
-//!
-//! Phase 0 ships only the `FormulaEngine` trait and a placeholder
-//! `ExcelLite` implementation. The real Excel-lite parser, Python (PyO3),
-//! Rhai, and rustc-native engines land in their respective phases behind
-//! Cargo features (`python`, `rhai`, `rustnative`).
 
 use tescellate_core::{CellValue, EngineKind};
 use thiserror::Error;
 
+pub mod engine;
 pub mod excellite;
+
+pub use engine::{CellSnapshot, WorkbookEngine};
 
 #[derive(Debug, Error)]
 pub enum ParseError {
@@ -16,27 +14,46 @@ pub enum ParseError {
     Message(String),
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, PartialEq)]
 pub enum EvalError {
-    #[error("eval error: {0}")]
-    Message(String),
+    #[error("#REF! {0}")]
+    Ref(String),
+    #[error("#DIV/0!")]
+    DivZero,
+    #[error("#NUM!")]
+    Num,
+    #[error("#VALUE! {0}")]
+    Value(String),
+    #[error("unknown function: {0}")]
+    UnknownFn(String),
+    #[error("bad arity for {name}: got {got}, want {want}")]
+    BadArity {
+        name: String,
+        want: String,
+        got: usize,
+    },
 }
 
-/// Opaque per-engine compiled artifact. Each engine owns its own variant.
-/// Engines gated behind Cargo features add their variants under `cfg`.
+/// Opaque per-engine compiled artifact. Each engine owns its own variant;
+/// engines gated behind cargo features add variants under `cfg`.
 #[derive(Debug, Clone)]
 pub enum CompiledFormula {
     ExcelLite(excellite::Expr),
 }
 
-/// Context exposed to formulas at evaluation time. Phase 1 expands this
-/// to expose cell reads, range reads, and lattice introspection.
-pub struct EvalCtx<'a> {
-    pub _marker: std::marker::PhantomData<&'a ()>,
+/// What every formula engine needs to read from the surrounding workbook.
+/// Additional engine-specific shapes (numpy arrays for Python, etc.) go
+/// on top of this trait via downcasting in their own modules.
+pub trait EvalCtx {
+    fn cell(&self, addr: &str) -> Result<CellValue, EvalError>;
+    fn range(&self, start: &str, end: &str) -> Result<Vec<CellValue>, EvalError>;
 }
 
 pub trait FormulaEngine: Send + Sync {
     fn kind(&self) -> EngineKind;
     fn parse(&self, src: &str) -> Result<CompiledFormula, ParseError>;
-    fn eval(&self, compiled: &CompiledFormula, ctx: &EvalCtx<'_>) -> Result<CellValue, EvalError>;
+    /// Cell and range references the formula reads. The orchestrator uses
+    /// this to update the DAG before evaluating.
+    fn refs(&self, compiled: &CompiledFormula) -> Vec<(String, Option<String>)>;
+    fn eval(&self, compiled: &CompiledFormula, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError>;
 }

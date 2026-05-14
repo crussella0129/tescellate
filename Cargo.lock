@@ -169,8 +169,10 @@ dependencies = [
 name = "tescellate-formula"
 version = "0.0.0"
 dependencies = [
+ "hashbrown",
  "serde",
  "tescellate-core",
+ "tescellate-tess",
  "thiserror",
 ]
 

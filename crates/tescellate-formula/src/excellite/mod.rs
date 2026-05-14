@@ -5,16 +5,18 @@
 //! - cell refs (`A1`) and ranges (`A1:B5`) — square lattice only
 //! - unary `-`, `+`; binary `+ - * / ^ & = <> < > <= >=`
 //! - parenthesised expressions
-//! - function calls: `SUM`, `AVERAGE`, `IF`, `COUNT`, `MIN`, `MAX`
+//! - function calls: SUM, AVERAGE, IF, COUNT, MIN, MAX, AND, OR, NOT, ABS
 //!
 //! Out of scope for Phase 1: absolute refs (`$A$1`), cross-sheet refs
 //! (`Sheet1!A1`), defined names, array literals, dates, R1C1 style.
 
 pub mod ast;
+pub mod eval;
 pub mod lex;
 pub mod parse;
 
 pub use ast::{BinaryOp, Expr, UnaryOp};
+pub use eval::{collect_refs, eval, eval_error_to_cell_error};
 pub use parse::parse;
 
 use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine, ParseError};
@@ -34,12 +36,15 @@ impl FormulaEngine for ExcelLite {
         Ok(CompiledFormula::ExcelLite(expr))
     }
 
-    fn eval(
-        &self,
-        _compiled: &CompiledFormula,
-        _ctx: &EvalCtx<'_>,
-    ) -> Result<CellValue, EvalError> {
-        // Evaluator lands in the next commit; for now report not-yet-implemented.
-        Err(EvalError::Message("eval pending phase-1 evaluator".into()))
+    fn refs(&self, compiled: &CompiledFormula) -> Vec<(String, Option<String>)> {
+        let CompiledFormula::ExcelLite(expr) = compiled;
+        let mut out = Vec::new();
+        collect_refs(expr, &mut out);
+        out
+    }
+
+    fn eval(&self, compiled: &CompiledFormula, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+        let CompiledFormula::ExcelLite(expr) = compiled;
+        eval(expr, ctx)
     }
 }
