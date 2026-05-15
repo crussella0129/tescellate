@@ -5,6 +5,7 @@
 //! outside its region; `Unbounded` accepts any syntactically valid address.
 
 use serde::{Deserialize, Serialize};
+use tescellate_tess::ParsedCoord;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "spec", rename_all = "snake_case")]
@@ -50,8 +51,45 @@ impl SheetExtent {
             SheetExtent::Bounded(BoundedExtent::Square { cols, rows }) => {
                 col >= 0 && row >= 0 && (col as u32) < *cols && (row as u32) < *rows
             }
-            // Future lattices: their own contains_* helpers.
+            // A square address against a non-square bounded extent is meaningless;
+            // accept (the lattice will have already rejected the address).
             SheetExtent::Bounded(_) => true,
+        }
+    }
+
+    /// True if a hex address `(q, r)` falls within the sheet. Mirrors
+    /// `contains_square` but for `BoundedExtent::HexAxial` / `HexRadius`.
+    pub fn contains_hex(&self, q: i32, r: i32) -> bool {
+        match self {
+            SheetExtent::Unbounded => true,
+            SheetExtent::Bounded(BoundedExtent::HexAxial {
+                q_min,
+                q_max,
+                r_min,
+                r_max,
+            }) => q >= *q_min && q <= *q_max && r >= *r_min && r <= *r_max,
+            SheetExtent::Bounded(BoundedExtent::HexRadius {
+                center_q,
+                center_r,
+                radius,
+            }) => {
+                // Cube-distance: max of the three axis deltas, where s = -q - r.
+                let dq = (q - *center_q).abs();
+                let dr = (r - *center_r).abs();
+                let ds = ((-q - r) - (-*center_q - *center_r)).abs();
+                dq.max(dr).max(ds) as u32 <= *radius
+            }
+            // Hex address against a non-hex bound: accept (analogous to above).
+            SheetExtent::Bounded(_) => true,
+        }
+    }
+
+    /// Lattice-dispatched bounds check. Engine.rs uses this so it doesn't
+    /// have to match on lattice kind at every call site.
+    pub fn contains(&self, coord: ParsedCoord) -> bool {
+        match coord {
+            ParsedCoord::Square(c) => self.contains_square(c.col, c.row),
+            ParsedCoord::Hex(c) => self.contains_hex(c.q, c.r),
         }
     }
 }
