@@ -8,7 +8,7 @@
 //! so `NEIGHBORS()` and `RADIUS()` work uniformly regardless of lattice.
 
 use crate::excellite::{eval_error_to_cell_error, ExcelLite};
-use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine};
+use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine, FormulaRef};
 use hashbrown::HashMap;
 use tescellate_core::{
     Cell, CellError, CellRef, CellValue, Dag, EngineKind, Sheet, SheetExtent, SheetId, Workbook,
@@ -139,21 +139,34 @@ impl WorkbookEngine {
             let cref = CellRef::new(sheet_id, addr.clone());
 
             let mut deps = Vec::new();
-            for (start, end) in &refs {
-                if let Some(end) = end {
-                    let addrs = match lattice.enumerate_range(start, end) {
-                        Ok(a) => a,
-                        Err(_) => continue,
-                    };
-                    for a in addrs {
-                        deps.push(CellRef::new(sheet_id, a));
+            for r in &refs {
+                match r {
+                    FormulaRef::Cell(a) => {
+                        if let Ok(canon) = lattice.canonicalize(a) {
+                            deps.push(CellRef::new(sheet_id, canon));
+                        }
                     }
-                } else {
-                    let canon = match lattice.canonicalize(start) {
-                        Ok(s) => s,
-                        Err(_) => continue,
-                    };
-                    deps.push(CellRef::new(sheet_id, canon));
+                    FormulaRef::Range(start, end) => {
+                        if let Ok(addrs) = lattice.enumerate_range(start, end) {
+                            for a in addrs {
+                                deps.push(CellRef::new(sheet_id, a));
+                            }
+                        }
+                    }
+                    FormulaRef::Neighbors(a) => {
+                        if let Ok(addrs) = lattice.neighbor_addresses(a) {
+                            for a in addrs {
+                                deps.push(CellRef::new(sheet_id, a));
+                            }
+                        }
+                    }
+                    FormulaRef::Radius(a, n) => {
+                        if let Ok(addrs) = lattice.cells_within_addresses(a, *n) {
+                            for a in addrs {
+                                deps.push(CellRef::new(sheet_id, a));
+                            }
+                        }
+                    }
                 }
             }
             // Cycles in saved data shouldn't have been possible at save time,
@@ -244,19 +257,38 @@ impl WorkbookEngine {
 
         // Resolve dep addresses through the lattice to canonical CellRefs.
         let mut deps: Vec<CellRef> = Vec::new();
-        for (start, end) in &dep_addrs {
-            if let Some(end) = end {
-                let addrs = lattice
-                    .enumerate_range(start, end)
-                    .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
-                for a in addrs {
-                    deps.push(CellRef::new(sheet, a));
+        for r in &dep_addrs {
+            match r {
+                FormulaRef::Cell(a) => {
+                    let canon = lattice
+                        .canonicalize(a)
+                        .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+                    deps.push(CellRef::new(sheet, canon));
                 }
-            } else {
-                let canon = lattice
-                    .canonicalize(start)
-                    .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
-                deps.push(CellRef::new(sheet, canon));
+                FormulaRef::Range(start, end) => {
+                    let addrs = lattice
+                        .enumerate_range(start, end)
+                        .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+                    for a in addrs {
+                        deps.push(CellRef::new(sheet, a));
+                    }
+                }
+                FormulaRef::Neighbors(a) => {
+                    let addrs = lattice
+                        .neighbor_addresses(a)
+                        .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+                    for a in addrs {
+                        deps.push(CellRef::new(sheet, a));
+                    }
+                }
+                FormulaRef::Radius(a, n) => {
+                    let addrs = lattice
+                        .cells_within_addresses(a, *n)
+                        .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+                    for a in addrs {
+                        deps.push(CellRef::new(sheet, a));
+                    }
+                }
             }
         }
 
