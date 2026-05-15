@@ -6,6 +6,8 @@ This document is the canonical design. It is intentionally written for the **lon
 
 For language-level reference (the formula language is named **Carbide**), see [`docs/carbide/`](docs/carbide/README.md) — grammar, types, the ~90-function catalog, addressing schemes (current + planned per-lattice), and the engine-interop contract.
 
+For the architectural question of whether Tescellate could be written entirely in Rust (renderer included), see [`docs/rust-native.md`](docs/rust-native.md) — a four-level analysis from "Electron today" through "native Rust GUI, no WebView" with subsystem-by-subsystem migration mapping and tooling-maturity notes.
+
 ---
 
 ## 1. Vision
@@ -613,6 +615,7 @@ Each phase ends in something demonstrable. Phases are not calendar-bound.
 - Tauri shell with the same renderer code.
 - Move IPC transport from stdio to Unix socket / named pipe.
 - Begin CRDT layer over the cell store; Phase 5.1 ships read-only shared sessions, 5.2 ships co-editing.
+- **For the architectural rationale and the broader "could everything be Rust?" question, see [`docs/rust-native.md`](docs/rust-native.md)** — four-level analysis (L0 current, L1 this phase, L2 Rust→WASM renderer, L3 native Rust GUI), subsystem mappings, and the migration schema.
 
 ### Phase 6 — Regular tilings: the Archimedean configurator
 - Generic `Regular(*)` lattice driven by a `VertexConfig` (vertex-configuration string like `4.8.8`).

@@ -15,7 +15,13 @@ The pages are ordered from most-load-bearing to most-speculative:
 | 3. | [**functions.md**](functions.md) | The ~90-function standard library, grouped by category, each with signature, returns, edge cases, and a runnable example sourced from the test gamut. |
 | 4. | [**addressing.md**](addressing.md) | The cell-address syntax. Today only square `A1` / `AB42`; sketches for hex (axial), triangle, parallelogram, Voronoi, and drawn tilings. The page that closes the loop with the upcoming non-rectangular tessellation work. |
 | 5. | [**interop.md**](interop.md) | The engine boundary. How Excel-lite, the planned PyO3 Python engine, and the planned Rhai/rustc Rust engine all see the same `CellValue` / `Array` / `Env` / lattice address. Where coordinate schemes leak through the engine boundary and how to keep that leakage tractable. |
-| 6. | [**tessellations.md**](tessellations.md) | The deep dive on cell-shape tessellations: the regular/irregular family split, the 11 Archimedean tilings, Voronoi mode (seed distributions, addressing under floating-point drift, range-semantics breakdown), draw-and-validate-a-shape, and the aperiodic territory — Penrose tilings and the einstein hat / spectre tiles (Smith et al. 2023). Implementation cross-cuts (coordinate stability, neighbor enumeration, spatial indexing, persistence) and UX cross-cuts (wizard, drag-select, formula authoring).
+| 6. | [**tessellations.md**](tessellations.md) | The deep dive on cell-shape tessellations: the regular/irregular family split, the 11 Archimedean tilings, Voronoi mode (seed distributions, addressing under floating-point drift, range-semantics breakdown), draw-and-validate-a-shape, and the aperiodic territory — Penrose tilings and the einstein hat / spectre tiles (Smith et al. 2023). Implementation cross-cuts (coordinate stability, neighbor enumeration, spatial indexing, persistence) and UX cross-cuts (wizard, drag-select, formula authoring). |
+
+Outside the Carbide language proper but in the same v0.2 doc series:
+
+| | | |
+|---|---|---|
+| 7. | [**../rust-native.md**](../rust-native.md) | The architectural question: could Tescellate be written entirely in Rust, including the renderer? Four levels (L0 today, L1 Tauri host, L2 Rust→WASM renderer, L3 native Rust GUI) with subsystem-by-subsystem mappings, tooling-maturity tables, migration-effort estimates, and an honest tradeoff list. Lives outside `docs/carbide/` because it covers the whole app architecture, not just the language.
 
 ## Design principles
 
