@@ -4,6 +4,8 @@
 
 This document is the canonical design. It is intentionally written for the **long-term shape** of the project even though only Phase 0–1 is being implemented up front. Decisions further out are sketches; revise them in this file as we learn.
 
+For language-level reference (the formula language is named **Carbide**), see [`docs/carbide/`](docs/carbide/README.md) — grammar, types, the ~90-function catalog, addressing schemes (current + planned per-lattice), and the engine-interop contract.
+
 ---
 
 ## 1. Vision
