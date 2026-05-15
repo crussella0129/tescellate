@@ -116,6 +116,8 @@ pub trait Lattice {
 
 Tescellate exposes two top-level tessellation **families**, each with its own creation UI and runtime properties. Both implement the `Lattice` trait, so the rest of the system (DAG, formulas, persistence) is family-agnostic.
 
+> See [`docs/carbide/tessellations.md`](docs/carbide/tessellations.md) for the deep dive — Voronoi seed-addressing under float drift, draw-and-validate tileability, the einstein hat / spectre aperiodic monotiles, and the implementation + UX cross-cuts. The text below is the architectural framing; that file is the practitioner's reference.
+
 #### Regular tilings — uniform, parameterized
 
 "Regular" here is the colloquial sense: every cell uses the same shape, or a fixed *combination* of shapes that repeats vertex-by-vertex. Mathematically these are the **11 Archimedean tilings** (3 regular + 8 semi-regular). A regular tiling is fully described by its **vertex configuration** — the cyclic list of polygons meeting at each vertex:

@@ -2,6 +2,8 @@
 
 This page is where Carbide's language design closes the loop with Tescellate's tessellating cell shapes. It documents the current (square) addressing in full and sketches what changes when hex, triangle, parallelogram, Voronoi, and drawn tilings arrive. Those tilings will affect this page far more than they affect any other page in this docs set; everywhere else, the language stays the same.
 
+For the deeper dive on what each tessellation *is* — the math, rendering, implementation cross-cuts, the einstein hat tile, Penrose, and other aperiodic territory — see [tessellations.md](tessellations.md). This page focuses on the *syntax* the user types into the formula bar; that page focuses on the *structure* of the underlying tilings.
+
 Source files:
 
 - Square lattice: `crates/tescellate-tess/src/square.rs`
