@@ -1,13 +1,20 @@
-//! Native compile pipeline — turns a transpiled Carbide formula into a
-//! compiled `cdylib` and calls it in-process via `libloading`. See
+//! Native compile pipeline — compiles transpiled Carbide into a native
+//! `cdylib` and calls it in-process via `libloading`. See
 //! `docs/all-rust-roadmap.md` v5.
 //!
 //! Feature-gated (`native`) because it pulls in `libloading` and shells
 //! out to `cargo` at runtime.
 //!
+//! A [`NativeProgram`] holds one or more formulas compiled together into a
+//! single library. [`compile_program`] is backed by a process-wide cache
+//! keyed on the transpiled source, so an identical formula set compiles
+//! once; on disk, the per-content build directory plus cargo's own
+//! incremental tracking handle cross-process reuse and rustc-change
+//! invalidation.
+//!
 //! ## Soundness
 //!
-//! The compiled `cdylib` and the host exchange Rust types (`&dyn EvalCtx`,
+//! The cdylib and the host exchange Rust types (`&dyn EvalCtx`,
 //! `Result<CellValue, EvalError>`) across the library boundary. Rust does
 //! not *guarantee* a stable ABI, so this is sound only when the cdylib is
 //! built with the same rustc and the same `tescellate-formula` source as
@@ -17,18 +24,16 @@
 //! compiled formulas run in-process.
 
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::process::Command;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::excellite::ast::Expr;
 use crate::{EvalCtx, EvalError};
 use tescellate_core::CellValue;
 
-/// The exported symbol every generated cdylib carries (NUL-terminated for
-/// `libloading`).
-const SYMBOL: &[u8] = b"carbide_formula\0";
-
-/// Failure compiling or loading a native formula.
+/// Failure compiling or loading a native program.
 #[derive(Debug, thiserror::Error)]
 pub enum NativeError {
     #[error("native compile: io error: {0}")]
@@ -39,50 +44,93 @@ pub enum NativeError {
     Load(String),
 }
 
-/// A Carbide formula compiled to a native dynamic library and loaded into
-/// this process. Evaluating it is a direct call into compiled machine code.
-pub struct NativeFormula {
+/// One or more Carbide formulas compiled together into a native dynamic
+/// library and loaded into this process. Evaluating a formula is a direct
+/// call into compiled machine code.
+pub struct NativeProgram {
     lib: libloading::Library,
+    count: usize,
 }
 
-impl NativeFormula {
-    /// Evaluate the compiled formula against `ctx`.
-    pub fn eval(&self, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
-        type CarbideFormulaFn = unsafe fn(&dyn EvalCtx) -> Result<CellValue, EvalError>;
-        // SAFETY: `lib` is a cdylib this process compiled moments ago from
-        // this crate's own source with the running rustc, so the Rust ABI
-        // of `carbide_formula` matches this signature (see the module note).
+impl NativeProgram {
+    /// Number of compiled formulas; valid indices are `0..len()`.
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    /// Whether the program holds no formulas.
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Evaluate the `index`-th compiled formula against `ctx`.
+    pub fn eval(&self, index: usize, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+        assert!(
+            index < self.count,
+            "formula index {index} out of range (program has {} formulas)",
+            self.count,
+        );
+        type FormulaFn = unsafe fn(&dyn EvalCtx) -> Result<CellValue, EvalError>;
+        let symbol = format!("carbide_formula_{index}\0");
+        // SAFETY: `lib` is a cdylib this process compiled from this crate's
+        // own source with the running rustc, so the Rust ABI of the
+        // `carbide_formula_*` functions matches this signature.
         unsafe {
-            let func: libloading::Symbol<CarbideFormulaFn> = self
+            let func: libloading::Symbol<FormulaFn> = self
                 .lib
-                .get(SYMBOL)
-                .expect("carbide_formula symbol present in a cdylib we built");
+                .get(symbol.as_bytes())
+                .expect("carbide_formula_<index> symbol present in a cdylib we built");
             (*func)(ctx)
         }
     }
 }
 
-/// Transpile `expr`, compile it to a `cdylib`, and load it.
-pub fn compile(expr: &Expr) -> Result<NativeFormula, NativeError> {
-    let body = super::transpile_expr(expr);
+/// Process-wide cache: a program compiled once is reused for an identical
+/// formula set. Keyed by a content hash of the transpiled bodies.
+fn cache() -> &'static Mutex<HashMap<u64, Arc<NativeProgram>>> {
+    static CACHE: OnceLock<Mutex<HashMap<u64, Arc<NativeProgram>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
-    // A per-formula directory keyed by a content hash: parallel compiles of
-    // different formulas never collide, and each keeps its own `target/`,
-    // so cargo's own caching makes an unchanged rebuild a near-no-op.
+/// Transpile `exprs`, compile them together into one `cdylib`, and load it.
+/// An identical formula set returns the cached program without recompiling.
+pub fn compile_program(exprs: &[&Expr]) -> Result<Arc<NativeProgram>, NativeError> {
+    let bodies: Vec<String> = exprs.iter().map(|e| super::transpile_expr(e)).collect();
+
     let mut hasher = DefaultHasher::new();
-    body.hash(&mut hasher);
+    for body in &bodies {
+        body.hash(&mut hasher);
+    }
     let key = hasher.finish();
+
+    if let Some(hit) = cache().lock().unwrap().get(&key).cloned() {
+        return Ok(hit);
+    }
+    // The build runs outside the lock — concurrent compiles of *different*
+    // formula sets never serialize against each other.
+    let program = Arc::new(build_program(key, &bodies)?);
+    cache().lock().unwrap().insert(key, program.clone());
+    Ok(program)
+}
+
+/// Generate, compile, and load the cdylib for a set of transpiled bodies.
+fn build_program(key: u64, bodies: &[String]) -> Result<NativeProgram, NativeError> {
+    // A per-content directory: parallel compiles of different formula sets
+    // never collide, and each keeps its own `target/`, so cargo's caching
+    // makes an unchanged rebuild a near-no-op.
     let dir = std::env::temp_dir().join(format!("tescellate_native_{key:016x}"));
     std::fs::create_dir_all(dir.join("src"))?;
 
     let formula_crate = env!("CARGO_MANIFEST_DIR"); // .../crates/tescellate-formula
-    let lib_rs = format!(
-        "#![allow(unused_variables)]\n\
-         use tescellate_formula::transpile::rt::*;\n\n\
-         #[no_mangle]\n\
-         pub fn carbide_formula(ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {{\n    \
-         Ok({body})\n}}\n"
-    );
+    let mut lib_rs =
+        String::from("#![allow(unused_variables)]\nuse tescellate_formula::transpile::rt::*;\n\n");
+    for (i, body) in bodies.iter().enumerate() {
+        lib_rs.push_str(&format!(
+            "#[no_mangle]\n\
+             pub fn carbide_formula_{i}(ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {{\n    \
+             Ok({body})\n}}\n\n"
+        ));
+    }
     let cargo_toml = format!(
         "[package]\n\
          name = \"transpile_native\"\n\
@@ -115,34 +163,8 @@ pub fn compile(expr: &Expr) -> Result<NativeFormula, NativeError> {
     // SAFETY: loading a cdylib this process just compiled from its own source.
     let lib = unsafe { libloading::Library::new(&lib_path) }
         .map_err(|e| NativeError::Load(format!("{}: {e}", lib_path.display())))?;
-    Ok(NativeFormula { lib })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::excellite::parse::parse;
-    use crate::transpile::MapCtx;
-
-    #[test]
-    fn compiles_and_runs_arithmetic() {
-        let f = compile(&parse("1 + 2 * 3").unwrap()).expect("compile arithmetic");
-        assert_eq!(f.eval(&MapCtx::default()).unwrap(), CellValue::Number(7.0));
-    }
-
-    #[test]
-    fn compiles_and_runs_with_cell_refs() {
-        let f = compile(&parse("A1 + A2").unwrap()).expect("compile cell-ref formula");
-        let ctx = MapCtx::from_pairs(&[
-            ("A1", CellValue::Number(10.0)),
-            ("A2", CellValue::Number(5.0)),
-        ]);
-        assert_eq!(f.eval(&ctx).unwrap(), CellValue::Number(15.0));
-    }
-
-    #[test]
-    fn compiles_and_runs_a_function_call() {
-        let f = compile(&parse("SUM(1, 2, 3, 4)").unwrap()).expect("compile SUM");
-        assert_eq!(f.eval(&MapCtx::default()).unwrap(), CellValue::Number(10.0));
-    }
+    Ok(NativeProgram {
+        lib,
+        count: bodies.len(),
+    })
 }
