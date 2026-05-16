@@ -80,6 +80,47 @@ const CORPUS: &[&str] = &[
     "[A1, A2, A3]",
     "[A1 + 1, A2 * 2]",
     "[[A1, B1], [A2, B2]]",
+    // v3 — function calls: aggregates
+    "SUM(1, 2, 3)",
+    "SUM(A1, A2, A3)",
+    "SUM(A1:A3)",
+    "SUM([1, 2, 3])",
+    "AVERAGE(A1:A3)",
+    "COUNT(A1:A3)",
+    "MIN(A1:A3)",
+    "MAX(A1:A3)",
+    "MAX(A1:C1)",
+    // v3 — logical (short-circuiting)
+    "IF(A1 > 5, 100, 0)",
+    "IF(TRUE, 1, 2)",
+    "AND(TRUE, FALSE)",
+    "OR(FALSE, TRUE)",
+    "NOT(TRUE)",
+    "IFERROR(1 / 0, 99)",
+    "IFS(FALSE, 1, TRUE, 2)",
+    // v3 — math
+    "ABS(-7)",
+    "ROUND(3.14159, 2)",
+    "SQRT(16)",
+    "MOD(10, 3)",
+    "POWER(2, 8)",
+    // v3 — text
+    r#"LEN("hello")"#,
+    r#"UPPER("hi")"#,
+    r#"LEFT("hello", 3)"#,
+    // v3 — lookup / dynamic arrays
+    "INDEX([[10, 20], [30, 40]], 2, 1)",
+    r#"MATCH("b", ["a", "b", "c"])"#,
+    "SEQUENCE(5)",
+    "UNIQUE([1, 2, 2, 3])",
+    // v3 — nested calls
+    "SUM(A1:A3) + 1",
+    "IF(A1 > 0, SUM(A1:A3), 0)",
+    "ABS(A1 - B2)",
+    "SUM(A1, AVERAGE(A2:A3))",
+    // v3 — error paths
+    "BOGUS(1)",
+    "SQRT(-1)",
 ];
 
 #[test]
