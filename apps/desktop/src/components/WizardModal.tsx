@@ -39,14 +39,14 @@ const TILINGS: Array<{
     kind: 'hex_pointy',
     label: 'Hex (pointy)',
     glyph: '⬢',
-    description: 'Hexagons, point at the top. 6 neighbours.',
+    description: 'Hexagons, point at the top. 6 neighbours. H(q,r) addressing.',
     phase: 2,
   },
   {
     kind: 'hex_flat',
     label: 'Hex (flat)',
     glyph: '⬣',
-    description: 'Hexagons, flat at the top. 6 neighbours.',
+    description: 'Hexagons, flat at the top. 6 neighbours. H(q,r) addressing.',
     phase: 2,
   },
   {
@@ -64,6 +64,10 @@ const TILINGS: Array<{
     phase: 3,
   },
 ];
+
+/** Shipped lattices. Tilings outside this set render as disabled
+ * "Phase N+" placeholders in the wizard. */
+const SHIPPED: ReadonlySet<LatticeKind> = new Set(['square', 'hex_pointy', 'hex_flat']);
 
 /** Evaluate an arithmetic expression in the core. Returns the integer
  * value (rounded toward zero) on success, or an error message. */
@@ -87,6 +91,10 @@ async function evalToInt(source: string): Promise<{ ok: true; value: number } | 
 export function WizardModal({ onComplete, onCancel }: Props) {
   const [lattice, setLattice] = useState<LatticeKind>('square');
   const [extentMode, setExtentMode] = useState<'unbounded' | 'bounded'>('bounded');
+  // Hex bounded-extent UI isn't shipped yet — force unbounded for hex
+  // sheets so the wizard's "Create" button can produce a valid sheet.
+  const isHex = lattice === 'hex_pointy' || lattice === 'hex_flat';
+  const effectiveExtentMode = isHex ? 'unbounded' : extentMode;
   const [colsInput, setColsInput] = useState('100');
   const [rowsInput, setRowsInput] = useState('100');
   const [colsResult, setColsResult] = useState<Awaited<ReturnType<typeof evalToInt>> | null>(null);
@@ -97,7 +105,7 @@ export function WizardModal({ onComplete, onCancel }: Props) {
 
   // Live-evaluate the cols/rows inputs against the core.
   useEffect(() => {
-    if (extentMode !== 'bounded') {
+    if (effectiveExtentMode !== 'bounded') {
       setColsResult(null);
       setRowsResult(null);
       return;
@@ -114,21 +122,21 @@ export function WizardModal({ onComplete, onCancel }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [colsInput, rowsInput, extentMode]);
+  }, [colsInput, rowsInput, effectiveExtentMode]);
 
   const canSubmit = useMemo(() => {
     if (submitting) return false;
     if (!name.trim()) return false;
-    if (extentMode === 'unbounded') return true;
+    if (effectiveExtentMode === 'unbounded') return true;
     return colsResult?.ok && rowsResult?.ok;
-  }, [submitting, name, extentMode, colsResult, rowsResult]);
+  }, [submitting, name, effectiveExtentMode, colsResult, rowsResult]);
 
   const submit = useCallback(async () => {
     if (!canSubmit) return;
     setSubmitting(true);
     setSubmitError(null);
     const extent: ExtentParams =
-      extentMode === 'unbounded'
+      effectiveExtentMode === 'unbounded'
         ? { kind: 'unbounded' }
         : {
             kind: 'bounded',
@@ -142,7 +150,7 @@ export function WizardModal({ onComplete, onCancel }: Props) {
       setSubmitError((e as Error).message);
       setSubmitting(false);
     }
-  }, [canSubmit, name, lattice, extentMode, colsResult, rowsResult, onComplete]);
+  }, [canSubmit, name, lattice, effectiveExtentMode, colsResult, rowsResult, onComplete]);
 
   return (
     <div className="wizard-overlay" onMouseDown={onCancel}>
@@ -156,7 +164,7 @@ export function WizardModal({ onComplete, onCancel }: Props) {
           </header>
           <div className="tiling-grid">
             {TILINGS.map((t) => {
-              const enabled = t.phase === 1;
+              const enabled = SHIPPED.has(t.kind);
               const selected = lattice === t.kind && enabled;
               return (
                 <button
@@ -182,28 +190,32 @@ export function WizardModal({ onComplete, onCancel }: Props) {
             <h3>Extent</h3>
           </header>
           <div className="extent-toggle">
-            <label>
+            <label className={isHex ? 'disabled' : ''}>
               <input
                 type="radio"
                 name="extent"
-                checked={extentMode === 'bounded'}
+                checked={effectiveExtentMode === 'bounded'}
                 onChange={() => setExtentMode('bounded')}
+                disabled={isHex}
               />
               <span>Bounded</span>
-              <span className="hint">— fixed cols × rows; out-of-bounds writes are rejected</span>
+              <span className="hint">
+                — fixed cols × rows; out-of-bounds writes are rejected
+                {isHex && ' (hex bounded extent ships in a follow-up)'}
+              </span>
             </label>
             <label>
               <input
                 type="radio"
                 name="extent"
-                checked={extentMode === 'unbounded'}
+                checked={effectiveExtentMode === 'unbounded'}
                 onChange={() => setExtentMode('unbounded')}
               />
               <span>Unbounded</span>
               <span className="hint">— sparse, infinite scroll, only populated cells exist</span>
             </label>
           </div>
-          {extentMode === 'bounded' && (
+          {effectiveExtentMode === 'bounded' && (
             <div className="bounded-fields">
               <FormulaField label="Cols" value={colsInput} onChange={setColsInput} result={colsResult} />
               <FormulaField label="Rows" value={rowsInput} onChange={setRowsInput} result={rowsResult} />

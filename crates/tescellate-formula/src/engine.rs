@@ -2,20 +2,20 @@
 //! compiled-formula cache, and the registered formula engines. Drives the
 //! parse → dep-collection → recompute loop.
 //!
-//! Phase 1: single-sheet, square-only. The orchestrator is structured so
-//! that adding hex/triangle sheets in Phase 2+ is a matter of branching on
-//! `Sheet.lattice` when resolving addresses; the rest of this file already
-//! works lattice-agnostically.
+//! Lattice-agnostic at the engine layer: every address operation goes
+//! through `LatticeHandle` (square + hex today; triangle / parallelogram
+//! land in Phase 3). The eval view exposes `neighbors_of` / `cells_within`
+//! so `NEIGHBORS()` and `RADIUS()` work uniformly regardless of lattice.
 
 use crate::excellite::{eval_error_to_cell_error, ExcelLite};
-use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine};
+use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine, FormulaRef};
 use hashbrown::HashMap;
 use tescellate_core::{
     Cell, CellError, CellRef, CellValue, Dag, EngineKind, Sheet, SheetExtent, SheetId, Workbook,
     WorkbookId, WorkbookMeta,
 };
-use tescellate_tess::square::{SquareCoord, SquareLattice};
-use tescellate_tess::{Lattice, LatticeKind};
+use tescellate_tess::square::SquareCoord;
+use tescellate_tess::{LatticeHandle, LatticeKind, ParsedCoord};
 
 pub struct WorkbookEngine {
     pub workbook: Workbook,
@@ -126,7 +126,7 @@ impl WorkbookEngine {
             .collect();
 
         for (sheet_id, addr, source, engine_kind) in entries {
-            let lattice = self.square_lattice_for(sheet_id)?;
+            let lattice = self.lattice_for(sheet_id)?;
             let engine = self
                 .engines
                 .get(&engine_kind)
@@ -139,25 +139,34 @@ impl WorkbookEngine {
             let cref = CellRef::new(sheet_id, addr.clone());
 
             let mut deps = Vec::new();
-            for (start, end) in &refs {
-                if let Some(end) = end {
-                    let a = match lattice.parse_address(start) {
-                        Ok(c) => c,
-                        Err(_) => continue,
-                    };
-                    let b = match lattice.parse_address(end) {
-                        Ok(c) => c,
-                        Err(_) => continue,
-                    };
-                    for c in square_range(a, b) {
-                        deps.push(CellRef::new(sheet_id, lattice.address(c)));
+            for r in &refs {
+                match r {
+                    FormulaRef::Cell(a) => {
+                        if let Ok(canon) = lattice.canonicalize(a) {
+                            deps.push(CellRef::new(sheet_id, canon));
+                        }
                     }
-                } else {
-                    let c = match lattice.parse_address(start) {
-                        Ok(c) => c,
-                        Err(_) => continue,
-                    };
-                    deps.push(CellRef::new(sheet_id, lattice.address(c)));
+                    FormulaRef::Range(start, end) => {
+                        if let Ok(addrs) = lattice.enumerate_range(start, end) {
+                            for a in addrs {
+                                deps.push(CellRef::new(sheet_id, a));
+                            }
+                        }
+                    }
+                    FormulaRef::Neighbors(a) => {
+                        if let Ok(addrs) = lattice.neighbor_addresses(a) {
+                            for a in addrs {
+                                deps.push(CellRef::new(sheet_id, a));
+                            }
+                        }
+                    }
+                    FormulaRef::Radius(a, n) => {
+                        if let Ok(addrs) = lattice.cells_within_addresses(a, *n) {
+                            for a in addrs {
+                                deps.push(CellRef::new(sheet_id, a));
+                            }
+                        }
+                    }
                 }
             }
             // Cycles in saved data shouldn't have been possible at save time,
@@ -201,17 +210,17 @@ impl WorkbookEngine {
         addr: &str,
         source: Option<&str>,
     ) -> Result<Vec<CellRef>, SetCellError> {
-        let lattice = self.square_lattice_for(sheet)?;
+        let lattice = self.lattice_for(sheet)?;
         let coord = lattice
-            .parse_address(addr)
+            .parse_coord(addr)
             .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
         // Bounds check before any mutation.
         if let Some(sheet_ref) = self.workbook.sheets.get(&sheet) {
-            if !sheet_ref.extent.contains_square(coord.col, coord.row) {
+            if !sheet_ref.extent.contains(coord) {
                 return Err(SetCellError::OutOfBounds(addr.to_string()));
             }
         }
-        let canonical = lattice.address(coord);
+        let canonical = lattice.format_coord(coord);
         let cref = CellRef::new(sheet, canonical.clone());
 
         // Excel/Sheets convention: input starting with `=` is a formula;
@@ -248,22 +257,38 @@ impl WorkbookEngine {
 
         // Resolve dep addresses through the lattice to canonical CellRefs.
         let mut deps: Vec<CellRef> = Vec::new();
-        for (start, end) in &dep_addrs {
-            if let Some(end) = end {
-                let a = lattice
-                    .parse_address(start)
-                    .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
-                let b = lattice
-                    .parse_address(end)
-                    .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
-                for c in square_range(a, b) {
-                    deps.push(CellRef::new(sheet, lattice.address(c)));
+        for r in &dep_addrs {
+            match r {
+                FormulaRef::Cell(a) => {
+                    let canon = lattice
+                        .canonicalize(a)
+                        .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+                    deps.push(CellRef::new(sheet, canon));
                 }
-            } else {
-                let c = lattice
-                    .parse_address(start)
-                    .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
-                deps.push(CellRef::new(sheet, lattice.address(c)));
+                FormulaRef::Range(start, end) => {
+                    let addrs = lattice
+                        .enumerate_range(start, end)
+                        .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+                    for a in addrs {
+                        deps.push(CellRef::new(sheet, a));
+                    }
+                }
+                FormulaRef::Neighbors(a) => {
+                    let addrs = lattice
+                        .neighbor_addresses(a)
+                        .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+                    for a in addrs {
+                        deps.push(CellRef::new(sheet, a));
+                    }
+                }
+                FormulaRef::Radius(a, n) => {
+                    let addrs = lattice
+                        .cells_within_addresses(a, *n)
+                        .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+                    for a in addrs {
+                        deps.push(CellRef::new(sheet, a));
+                    }
+                }
             }
         }
 
@@ -322,9 +347,8 @@ impl WorkbookEngine {
     }
 
     pub fn get_cell(&self, sheet: SheetId, addr: &str) -> Option<CellSnapshot> {
-        let lattice = self.square_lattice_for(sheet).ok()?;
-        let coord = lattice.parse_address(addr).ok()?;
-        let canonical = lattice.address(coord);
+        let lattice = self.lattice_for(sheet).ok()?;
+        let canonical = lattice.canonicalize(addr).ok()?;
         let spill = self.compute_spill_for(sheet);
         // Source cell?
         if let Some(cell) = self.workbook.sheets.get(&sheet)?.cells.get(&canonical) {
@@ -361,12 +385,9 @@ impl WorkbookEngine {
         start: &str,
         end: &str,
     ) -> Result<Vec<CellSnapshot>, SetCellError> {
-        let lattice = self.square_lattice_for(sheet)?;
-        let a = lattice
-            .parse_address(start)
-            .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
-        let b = lattice
-            .parse_address(end)
+        let lattice = self.lattice_for(sheet)?;
+        let addrs = lattice
+            .enumerate_range(start, end)
             .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
         let sheet_ref = self
             .workbook
@@ -375,8 +396,7 @@ impl WorkbookEngine {
             .ok_or(SetCellError::NoSheet(sheet))?;
         let spill = self.compute_spill_for(sheet);
         let mut out = Vec::new();
-        for c in square_range(a, b) {
-            let addr = lattice.address(c);
+        for addr in addrs {
             if let Some(cell) = sheet_ref.cells.get(&addr) {
                 let value = if spill.collisions.contains(&addr) {
                     CellValue::Error(CellError::Spill)
@@ -405,12 +425,22 @@ impl WorkbookEngine {
     /// and project it into the spill map: each non-source target becomes a
     /// virtual cell, or — if the target is occupied — the source flips to
     /// `#SPILL!` and no virtual cells are emitted.
+    ///
+    /// Spill is currently only defined on square sheets — the "paint a
+    /// rectangle" semantics doesn't have an obvious analogue on hex /
+    /// other lattices. On non-square sheets this returns an empty map
+    /// and array-valued cells just stay in their source cell unspilled.
+    /// (Future: a `SpillDirection` per lattice, e.g. q-then-r on hex.)
     fn compute_spill_for(&self, sheet: SheetId) -> SpillMap {
         let mut out = SpillMap::default();
-        let lattice = match self.square_lattice_for(sheet) {
+        let lattice = match self.lattice_for(sheet) {
             Ok(l) => l,
             Err(_) => return out,
         };
+        // Spill semantics: square-only for now. See doc comment above.
+        if !matches!(lattice, LatticeHandle::Square(_)) {
+            return out;
+        }
         let sheet_ref = match self.workbook.sheets.get(&sheet) {
             Some(s) => s,
             None => return out,
@@ -420,9 +450,9 @@ impl WorkbookEngine {
                 CellValue::Array(arr) if !arr.is_scalar() && !arr.is_empty() => arr,
                 _ => continue,
             };
-            let src_coord = match lattice.parse_address(addr) {
-                Ok(c) => c,
-                Err(_) => continue,
+            let src_coord = match lattice.parse_coord(addr) {
+                Ok(ParsedCoord::Square(c)) => c,
+                _ => continue,
             };
 
             // Collect (offset, target_addr) pairs; check collisions.
@@ -433,11 +463,11 @@ impl WorkbookEngine {
                     if r == 0 && c == 0 {
                         continue;
                     }
-                    let target = SquareCoord {
+                    let target = ParsedCoord::Square(SquareCoord {
                         col: src_coord.col + c as i32,
                         row: src_coord.row + r as i32,
-                    };
-                    let target_addr = lattice.address(target);
+                    });
+                    let target_addr = lattice.format_coord(target);
                     // Collision: target is already a stored cell with a source
                     // (a stored cell with no source — i.e. just a value left
                     // over from clearing a formula — is treated as empty for
@@ -497,10 +527,14 @@ impl WorkbookEngine {
         };
 
         let value = {
+            let lattice = match self.lattice_for(cref.sheet) {
+                Ok(l) => l,
+                Err(_) => return,
+            };
             let view = SheetEvalView {
                 sheet: cref.sheet,
                 workbook: &self.workbook,
-                lattice: SquareLattice::default(),
+                lattice,
             };
             engine
                 .eval(&compiled, &view)
@@ -513,63 +547,64 @@ impl WorkbookEngine {
         }
     }
 
-    fn square_lattice_for(&self, sheet: SheetId) -> Result<SquareLattice, SetCellError> {
+    fn lattice_for(&self, sheet: SheetId) -> Result<LatticeHandle, SetCellError> {
         let s = self
             .workbook
             .sheets
             .get(&sheet)
             .ok_or(SetCellError::NoSheet(sheet))?;
-        match s.lattice {
-            LatticeKind::Square => Ok(SquareLattice::default()),
-            other => Err(SetCellError::UnsupportedLattice(other)),
-        }
+        LatticeHandle::for_kind(s.lattice).ok_or(SetCellError::UnsupportedLattice(s.lattice))
     }
 }
 
 struct SheetEvalView<'a> {
     sheet: SheetId,
     workbook: &'a Workbook,
-    lattice: SquareLattice,
+    lattice: LatticeHandle,
+}
+
+impl SheetEvalView<'_> {
+    fn lookup(&self, canon: &str) -> CellValue {
+        self.workbook
+            .sheets
+            .get(&self.sheet)
+            .and_then(|s| s.cells.get(canon))
+            .map(|c| c.value.clone())
+            .unwrap_or(CellValue::Empty)
+    }
 }
 
 impl EvalCtx for SheetEvalView<'_> {
     fn cell(&self, addr: &str) -> Result<CellValue, EvalError> {
-        let coord = self
+        let canon = self
             .lattice
-            .parse_address(addr)
+            .canonicalize(addr)
             .map_err(|e| EvalError::Ref(format!("{e}")))?;
-        let canon = self.lattice.address(coord);
-        Ok(self
-            .workbook
-            .sheets
-            .get(&self.sheet)
-            .and_then(|s| s.cells.get(&canon))
-            .map(|c| c.value.clone())
-            .unwrap_or(CellValue::Empty))
+        Ok(self.lookup(&canon))
     }
 
     fn range(&self, start: &str, end: &str) -> Result<Vec<CellValue>, EvalError> {
-        let a = self
+        let addrs = self
             .lattice
-            .parse_address(start)
+            .enumerate_range(start, end)
             .map_err(|e| EvalError::Ref(format!("{e}")))?;
-        let b = self
+        Ok(addrs.into_iter().map(|a| self.lookup(&a)).collect())
+    }
+
+    fn neighbors_of(&self, addr: &str) -> Result<Vec<CellValue>, EvalError> {
+        let addrs = self
             .lattice
-            .parse_address(end)
+            .neighbor_addresses(addr)
             .map_err(|e| EvalError::Ref(format!("{e}")))?;
-        let mut out = Vec::new();
-        for c in square_range(a, b) {
-            let canon = self.lattice.address(c);
-            let v = self
-                .workbook
-                .sheets
-                .get(&self.sheet)
-                .and_then(|s| s.cells.get(&canon))
-                .map(|cell| cell.value.clone())
-                .unwrap_or(CellValue::Empty);
-            out.push(v);
-        }
-        Ok(out)
+        Ok(addrs.into_iter().map(|a| self.lookup(&a)).collect())
+    }
+
+    fn cells_within(&self, addr: &str, radius: i64) -> Result<Vec<CellValue>, EvalError> {
+        let addrs = self
+            .lattice
+            .cells_within_addresses(addr, radius)
+            .map_err(|e| EvalError::Ref(format!("{e}")))?;
+        Ok(addrs.into_iter().map(|a| self.lookup(&a)).collect())
     }
 }
 
@@ -595,18 +630,6 @@ fn parse_literal(src: &str) -> CellValue {
         }
     }
     CellValue::Text(src.to_string())
-}
-
-fn square_range(a: SquareCoord, b: SquareCoord) -> Vec<SquareCoord> {
-    let (c0, c1) = (a.col.min(b.col), a.col.max(b.col));
-    let (r0, r1) = (a.row.min(b.row), a.row.max(b.row));
-    let mut out = Vec::with_capacity(((c1 - c0 + 1) * (r1 - r0 + 1)) as usize);
-    for r in r0..=r1 {
-        for c in c0..=c1 {
-            out.push(SquareCoord { col: c, row: r });
-        }
-    }
-    out
 }
 
 #[derive(Default)]
@@ -662,6 +685,13 @@ mod tests {
         let mut eng = WorkbookEngine::new();
         eng.new_workbook();
         let sid = eng.add_sheet("Sheet1", LatticeKind::Square);
+        (eng, sid)
+    }
+
+    fn new_hex_sheet() -> (WorkbookEngine, SheetId) {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("Hex1", LatticeKind::HexPointy);
         (eng, sid)
     }
 
@@ -1196,5 +1226,188 @@ mod tests {
             eng.get_cell(sid, "B1").unwrap().value,
             CellValue::Text("apple,banana,cherry".into())
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Hex lattice — Phase 2 end-to-end coverage.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn hex_literal_cell() {
+        let (mut eng, sid) = new_hex_sheet();
+        eng.set_cell(sid, "H(0,0)", Some("=42")).unwrap();
+        let c = eng.get_cell(sid, "H(0,0)").unwrap();
+        assert_eq!(c.value, CellValue::Number(42.0));
+    }
+
+    #[test]
+    fn hex_arithmetic_across_cells() {
+        let (mut eng, sid) = new_hex_sheet();
+        eng.set_cell(sid, "H(0,0)", Some("=10")).unwrap();
+        eng.set_cell(sid, "H(1,0)", Some("=20")).unwrap();
+        eng.set_cell(sid, "H(0,1)", Some("=H(0,0) + H(1,0)"))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "H(0,1)").unwrap().value,
+            CellValue::Number(30.0)
+        );
+        // Upstream edit propagates.
+        eng.set_cell(sid, "H(0,0)", Some("=100")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "H(0,1)").unwrap().value,
+            CellValue::Number(120.0)
+        );
+    }
+
+    #[test]
+    fn hex_range_sum() {
+        let (mut eng, sid) = new_hex_sheet();
+        // Axial-aligned parallelogram H(0,0):H(1,1) covers 4 cells:
+        // H(0,0), H(1,0), H(0,1), H(1,1).
+        eng.set_cell(sid, "H(0,0)", Some("=1")).unwrap();
+        eng.set_cell(sid, "H(1,0)", Some("=2")).unwrap();
+        eng.set_cell(sid, "H(0,1)", Some("=3")).unwrap();
+        eng.set_cell(sid, "H(1,1)", Some("=4")).unwrap();
+        eng.set_cell(sid, "H(2,2)", Some("=SUM(H(0,0):H(1,1))"))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "H(2,2)").unwrap().value,
+            CellValue::Number(10.0)
+        );
+    }
+
+    #[test]
+    fn hex_neighbors_function() {
+        let (mut eng, sid) = new_hex_sheet();
+        // Fill the 6 neighbors of H(0,0) with 1..6.
+        let neighbors = [
+            "H(1,0)", "H(1,-1)", "H(0,-1)", "H(-1,0)", "H(-1,1)", "H(0,1)",
+        ];
+        for (i, addr) in neighbors.iter().enumerate() {
+            eng.set_cell(sid, addr, Some(&format!("={}", i + 1)))
+                .unwrap();
+        }
+        eng.set_cell(sid, "H(5,5)", Some("=SUM(NEIGHBORS(H(0,0)))"))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "H(5,5)").unwrap().value,
+            // 1 + 2 + 3 + 4 + 5 + 6
+            CellValue::Number(21.0)
+        );
+    }
+
+    #[test]
+    fn hex_radius_function() {
+        let (mut eng, sid) = new_hex_sheet();
+        // Put 1 in H(0,0) and in each of its 6 neighbors; nothing else.
+        eng.set_cell(sid, "H(0,0)", Some("=1")).unwrap();
+        for addr in [
+            "H(1,0)", "H(1,-1)", "H(0,-1)", "H(-1,0)", "H(-1,1)", "H(0,1)",
+        ] {
+            eng.set_cell(sid, addr, Some("=1")).unwrap();
+        }
+        // RADIUS(H(0,0), 1) returns the closed disc of 7 cells; SUM = 7.
+        eng.set_cell(sid, "H(5,5)", Some("=SUM(RADIUS(H(0,0), 1))"))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "H(5,5)").unwrap().value,
+            CellValue::Number(7.0)
+        );
+    }
+
+    #[test]
+    fn square_neighbors_function() {
+        // Same function works on square sheets — 4 cardinal neighbors.
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A2", Some("=1")).unwrap(); // up
+        eng.set_cell(sid, "C2", Some("=2")).unwrap(); // right (B2's east)
+        eng.set_cell(sid, "B3", Some("=3")).unwrap(); // down
+        eng.set_cell(sid, "A2", Some("=4")).unwrap(); // overwrite — testing dep tracking too
+        eng.set_cell(sid, "Z10", Some("=SUM(NEIGHBORS(B2))"))
+            .unwrap();
+        // A2(4) + C2(2) + B3(3) + B1(empty=0) = 9.
+        assert_eq!(
+            eng.get_cell(sid, "Z10").unwrap().value,
+            CellValue::Number(9.0)
+        );
+    }
+
+    #[test]
+    fn hex_save_and_open_round_trip() {
+        let (mut eng, sid) = new_hex_sheet();
+        eng.set_cell(sid, "H(0,0)", Some("=10")).unwrap();
+        eng.set_cell(sid, "H(1,0)", Some("=H(0,0) * 2")).unwrap();
+        let tmp = std::env::temp_dir().join(format!(
+            "tescellate-hex-test-{}-{}.tscl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        eng.save(&tmp).unwrap();
+        let mut other = WorkbookEngine::new();
+        other.open(&tmp).unwrap();
+        std::fs::remove_file(&tmp).ok();
+        // Value preserved and dep chain rebuilt.
+        assert_eq!(
+            other.get_cell(sid, "H(1,0)").unwrap().value,
+            CellValue::Number(20.0)
+        );
+        other.set_cell(sid, "H(0,0)", Some("=100")).unwrap();
+        assert_eq!(
+            other.get_cell(sid, "H(1,0)").unwrap().value,
+            CellValue::Number(200.0)
+        );
+    }
+
+    #[test]
+    fn hex_extent_bounds_check() {
+        use tescellate_core::{BoundedExtent, SheetExtent};
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet_with_extent(
+            "BoundedHex",
+            LatticeKind::HexPointy,
+            SheetExtent::Bounded(BoundedExtent::HexAxial {
+                q_min: -2,
+                q_max: 2,
+                r_min: -2,
+                r_max: 2,
+            }),
+        );
+        // In-bounds is fine.
+        eng.set_cell(sid, "H(0,0)", Some("=1")).unwrap();
+        eng.set_cell(sid, "H(2,-2)", Some("=2")).unwrap();
+        // Out-of-bounds rejected.
+        assert!(matches!(
+            eng.set_cell(sid, "H(5,0)", Some("=3")),
+            Err(SetCellError::OutOfBounds(_))
+        ));
+    }
+
+    #[test]
+    fn hex_disc_extent_works() {
+        use tescellate_core::{BoundedExtent, SheetExtent};
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet_with_extent(
+            "DiscHex",
+            LatticeKind::HexPointy,
+            SheetExtent::Bounded(BoundedExtent::HexRadius {
+                center_q: 0,
+                center_r: 0,
+                radius: 1,
+            }),
+        );
+        // H(0,0) and any axial neighbor are at distance ≤ 1.
+        eng.set_cell(sid, "H(0,0)", Some("=1")).unwrap();
+        eng.set_cell(sid, "H(1,0)", Some("=1")).unwrap();
+        eng.set_cell(sid, "H(0,-1)", Some("=1")).unwrap();
+        // Distance 2 is rejected.
+        assert!(matches!(
+            eng.set_cell(sid, "H(2,0)", Some("=1")),
+            Err(SetCellError::OutOfBounds(_))
+        ));
     }
 }

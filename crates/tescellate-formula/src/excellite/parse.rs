@@ -13,6 +13,32 @@ use super::ast::{BinaryOp, Expr, UnaryOp};
 use super::lex::{lex, LexError, Spanned, Token};
 use std::fmt;
 
+/// If `name(args)` shapes match a lattice-address syntax, return the
+/// canonical address string. Otherwise return `None` and let the parser
+/// keep it as a function call.
+///
+/// Today: `H(int, int)` → `H(q,r)`. Hooks for triangle, parallelogram,
+/// Archimedean polygon codes, etc. land in their respective phases.
+fn recognise_lattice_address(name: &str, args: &[Expr]) -> Option<String> {
+    if name == "H" && args.len() == 2 {
+        let q = literal_int(&args[0])?;
+        let r = literal_int(&args[1])?;
+        return Some(format!("H({q},{r})"));
+    }
+    None
+}
+
+/// Extract a signed integer literal from an `Expr`, including the unary
+/// `-` and `+` wrappings the parser leaves around negative literals.
+fn literal_int(e: &Expr) -> Option<i64> {
+    match e {
+        Expr::Number(n) if n.fract() == 0.0 && n.is_finite() => Some(*n as i64),
+        Expr::Unary(UnaryOp::Neg, inner) => literal_int(inner).map(|n| -n),
+        Expr::Unary(UnaryOp::Pos, inner) => literal_int(inner),
+        _ => None,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ParseError {
     pub message: String,
@@ -93,6 +119,27 @@ impl Parser {
 
     fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
         let mut lhs = self.parse_prefix()?;
+
+        // Range parsing: `<cellref>:<cellref>`. Works for any primary that
+        // resolved to `Expr::CellRef` — square (`A1`), hex (`H(q,r)`),
+        // and future address forms. Has to run before the apply-suffix
+        // loop so that `H(0,0):H(3,3)` doesn't get mis-parsed as a call.
+        if matches!(&lhs, Expr::CellRef(_))
+            && matches!(self.peek().map(|t| &t.value), Some(Token::Colon))
+        {
+            self.bump(); // :
+            let rhs = self.parse_prefix()?;
+            let (start, end) = match (lhs, rhs) {
+                (Expr::CellRef(a), Expr::CellRef(b)) => (a, b),
+                (a, b) => {
+                    return Err(ParseError {
+                        message: format!("expected cell refs around `:`, got {a:?} : {b:?}"),
+                        pos: 0,
+                    });
+                }
+            };
+            lhs = Expr::Range(start, end);
+        }
 
         // Apply-suffix loop: any expression followed by `(...)` is a call.
         // This is what lets `Y(Fact)(5)` and `f(7)` (with `f` LET-bound)
@@ -203,30 +250,23 @@ impl Parser {
                     self.bump(); // (
                     let args = self.parse_call_args()?;
                     self.expect(Token::RParen, "expected `)` to close call")?;
-                    Ok(Expr::Call(name, args))
+                    // Lattice-address recognition: certain `Ident(args)`
+                    // shapes are addresses, not calls. Today that's just
+                    // `H(q, r)` (axial hex). Future lattices (T(x,y,▲),
+                    // O(i,j), V<hash>) extend this seam. See
+                    // `docs/carbide/addressing.md`.
+                    if let Some(canonical) = recognise_lattice_address(&name, &args) {
+                        Ok(Expr::CellRef(canonical))
+                    } else {
+                        Ok(Expr::Call(name, args))
+                    }
                 } else {
                     Ok(Expr::Var(name))
                 }
             }
             Token::CellRef(addr) => {
                 self.bump();
-                // Check for `addr:addr2` range.
-                if matches!(self.peek().map(|t| &t.value), Some(Token::Colon)) {
-                    self.bump();
-                    let end_tok = self.bump().clone();
-                    let end = match end_tok.value {
-                        Token::CellRef(s) => s,
-                        other => {
-                            return Err(ParseError {
-                                message: format!("expected cell ref after `:`, got {other:?}"),
-                                pos: end_tok.start,
-                            })
-                        }
-                    };
-                    Ok(Expr::Range(addr, end))
-                } else {
-                    Ok(Expr::CellRef(addr))
-                }
+                Ok(Expr::CellRef(addr))
             }
             other => Err(ParseError {
                 message: format!("unexpected token {other:?}"),

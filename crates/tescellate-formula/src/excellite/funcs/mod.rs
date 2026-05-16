@@ -19,6 +19,7 @@ pub mod lambda_funcs;
 pub mod logical;
 pub mod lookup;
 pub mod math;
+pub mod neighborhood;
 pub mod stats;
 pub mod text;
 
@@ -71,6 +72,7 @@ pub fn standard() -> &'static FunctionRegistry {
         logical::register(&mut r);
         lookup::register(&mut r);
         math::register(&mut r);
+        neighborhood::register(&mut r);
         stats::register(&mut r);
         text::register(&mut r);
         r

@@ -4,7 +4,7 @@
 
 use super::ast::{BinaryOp, Expr, UnaryOp};
 use super::funcs::{coerce::*, standard};
-use crate::{EvalCtx, EvalError};
+use crate::{EvalCtx, EvalError, FormulaRef};
 use tescellate_core::{Array, CellError, CellValue};
 
 pub fn eval_error_to_cell_error(e: EvalError) -> CellError {
@@ -154,18 +154,65 @@ fn eval_binary(
     }
 }
 
-/// Walk the AST and collect every cell and range reference. Used by the
-/// orchestrator to populate the DAG before evaluation.
-pub fn collect_refs(expr: &Expr, out: &mut Vec<(String, Option<String>)>) {
+/// Walk the AST and collect every statically-knowable cell, range,
+/// NEIGHBORS, and RADIUS reference. Used by the orchestrator to populate
+/// the DAG before evaluation.
+///
+/// `NEIGHBORS(<CellRef>)` and `RADIUS(<CellRef>, <int>)` emit dedicated
+/// `FormulaRef` variants so the engine layer (which knows the lattice)
+/// can expand them into concrete neighbor / disc cells.
+///
+/// Dynamic forms — `NEIGHBORS("A1")`, `NEIGHBORS(x)` where `x` is a
+/// lambda variable — fall through to the plain argument walk and don't
+/// produce a `FormulaRef`. They still evaluate correctly at runtime,
+/// but the DAG won't propagate through them when the underlying cells
+/// change. This is the documented limit on dynamic addressing.
+pub fn collect_refs(expr: &Expr, out: &mut Vec<FormulaRef>) {
     match expr {
-        Expr::CellRef(a) => out.push((a.clone(), None)),
-        Expr::Range(a, b) => out.push((a.clone(), Some(b.clone()))),
+        Expr::CellRef(a) => out.push(FormulaRef::Cell(a.clone())),
+        Expr::Range(a, b) => out.push(FormulaRef::Range(a.clone(), b.clone())),
         Expr::Unary(_, e) => collect_refs(e, out),
         Expr::Binary(_, l, r) => {
             collect_refs(l, out);
             collect_refs(r, out);
         }
-        Expr::Call(_, args) => {
+        Expr::Call(name, args) => {
+            // Lattice-aware calls: emit a dedicated FormulaRef so the
+            // engine layer can expand the neighborhood through the
+            // lattice. Fall through to the generic arg walk for the
+            // dynamic-address forms so other refs inside still register.
+            if name == "NEIGHBORS" && args.len() == 1 {
+                if let Expr::CellRef(addr) = &args[0] {
+                    out.push(FormulaRef::Neighbors(addr.clone()));
+                    return;
+                }
+            }
+            if name == "RADIUS" && (args.len() == 1 || args.len() == 2) {
+                if let Expr::CellRef(addr) = &args[0] {
+                    let n = match args.get(1) {
+                        None => 1,
+                        Some(Expr::Number(n)) if n.fract() == 0.0 => *n as i64,
+                        Some(Expr::Unary(UnaryOp::Neg, inner)) => match inner.as_ref() {
+                            Expr::Number(n) if n.fract() == 0.0 => -(*n as i64),
+                            _ => {
+                                // Dynamic n; can't expand statically.
+                                for a in args {
+                                    collect_refs(a, out);
+                                }
+                                return;
+                            }
+                        },
+                        _ => {
+                            for a in args {
+                                collect_refs(a, out);
+                            }
+                            return;
+                        }
+                    };
+                    out.push(FormulaRef::Radius(addr.clone(), n));
+                    return;
+                }
+            }
             for a in args {
                 collect_refs(a, out);
             }
@@ -311,10 +358,48 @@ mod tests {
     fn collect_refs_finds_all() {
         let mut refs = Vec::new();
         collect_refs(&parse("SUM(A1:B5) + IF(C1>0, D2, E3)").unwrap(), &mut refs);
-        assert!(refs.contains(&("A1".to_string(), Some("B5".to_string()))));
-        assert!(refs.contains(&("C1".to_string(), None)));
-        assert!(refs.contains(&("D2".to_string(), None)));
-        assert!(refs.contains(&("E3".to_string(), None)));
+        assert!(refs.contains(&FormulaRef::Range("A1".into(), "B5".into())));
+        assert!(refs.contains(&FormulaRef::Cell("C1".into())));
+        assert!(refs.contains(&FormulaRef::Cell("D2".into())));
+        assert!(refs.contains(&FormulaRef::Cell("E3".into())));
+    }
+
+    #[test]
+    fn collect_refs_finds_neighbors() {
+        let mut refs = Vec::new();
+        collect_refs(
+            &parse("NEIGHBORS(A1) + NEIGHBORS(H(2,3))").unwrap(),
+            &mut refs,
+        );
+        assert!(refs.contains(&FormulaRef::Neighbors("A1".into())));
+        assert!(refs.contains(&FormulaRef::Neighbors("H(2,3)".into())));
+    }
+
+    #[test]
+    fn collect_refs_finds_radius() {
+        let mut refs = Vec::new();
+        collect_refs(
+            &parse("RADIUS(A1, 2) + RADIUS(H(0,0), 3)").unwrap(),
+            &mut refs,
+        );
+        assert!(refs.contains(&FormulaRef::Radius("A1".into(), 2)));
+        assert!(refs.contains(&FormulaRef::Radius("H(0,0)".into(), 3)));
+    }
+
+    #[test]
+    fn collect_refs_radius_default_arg_is_one() {
+        let mut refs = Vec::new();
+        collect_refs(&parse("RADIUS(A1)").unwrap(), &mut refs);
+        assert!(refs.contains(&FormulaRef::Radius("A1".into(), 1)));
+    }
+
+    #[test]
+    fn collect_refs_skips_dynamic_neighbors_arg() {
+        // NEIGHBORS("A1") — text arg — can't be statically expanded.
+        // The arg itself contains no CellRef, so no FormulaRef is emitted.
+        let mut refs = Vec::new();
+        collect_refs(&parse(r#"NEIGHBORS("A1")"#).unwrap(), &mut refs);
+        assert!(refs.is_empty());
     }
 
     // Function library smoke tests.

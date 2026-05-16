@@ -196,6 +196,11 @@ body {
   cursor: pointer;
 }
 
+.extent-toggle label.disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .extent-toggle .hint {
   color: #7a8593;
   font-size: 12px;

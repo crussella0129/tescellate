@@ -21,7 +21,7 @@ pub use ast::{BinaryOp, Expr, UnaryOp};
 pub use eval::{collect_refs, eval, eval_error_to_cell_error};
 pub use parse::parse;
 
-use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine, ParseError};
+use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine, FormulaRef, ParseError};
 use tescellate_core::{CellValue, EngineKind};
 
 pub struct ExcelLite;
@@ -38,7 +38,7 @@ impl FormulaEngine for ExcelLite {
         Ok(CompiledFormula::ExcelLite(expr))
     }
 
-    fn refs(&self, compiled: &CompiledFormula) -> Vec<(String, Option<String>)> {
+    fn refs(&self, compiled: &CompiledFormula) -> Vec<FormulaRef> {
         let CompiledFormula::ExcelLite(expr) = compiled;
         let mut out = Vec::new();
         collect_refs(expr, &mut out);
