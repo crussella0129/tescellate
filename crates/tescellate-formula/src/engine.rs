@@ -22,6 +22,11 @@ pub struct WorkbookEngine {
     dag: Dag,
     compiled: HashMap<CellRef, CompiledFormula>,
     engines: HashMap<EngineKind, Box<dyn FormulaEngine>>,
+    /// Cells promoted to the native compiled tier (see `promote_native`).
+    /// A promoted cell's formula evaluates through its compiled `cdylib`
+    /// rather than the interpreter.
+    #[cfg(feature = "native")]
+    native: HashMap<CellRef, std::sync::Arc<crate::transpile::native::NativeProgram>>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -51,6 +56,8 @@ impl WorkbookEngine {
             dag: Dag::new(),
             compiled: HashMap::new(),
             engines,
+            #[cfg(feature = "native")]
+            native: HashMap::new(),
         }
     }
 
@@ -58,6 +65,8 @@ impl WorkbookEngine {
         self.workbook = empty_workbook();
         self.dag = Dag::new();
         self.compiled.clear();
+        #[cfg(feature = "native")]
+        self.native.clear();
         self.workbook.id
     }
 
@@ -103,6 +112,8 @@ impl WorkbookEngine {
         self.workbook = workbook;
         self.dag = Dag::new();
         self.compiled.clear();
+        #[cfg(feature = "native")]
+        self.native.clear();
         self.rebuild_dag()?;
         Ok(())
     }
@@ -222,6 +233,10 @@ impl WorkbookEngine {
         }
         let canonical = lattice.format_coord(coord);
         let cref = CellRef::new(sheet, canonical.clone());
+        // Re-editing a cell drops any native program compiled from its
+        // previous formula — that program is now stale.
+        #[cfg(feature = "native")]
+        self.native.remove(&cref);
 
         // Excel/Sheets convention: input starting with `=` is a formula;
         // anything else is a literal value. Without this branch every cell
@@ -536,15 +551,60 @@ impl WorkbookEngine {
                 workbook: &self.workbook,
                 lattice,
             };
-            engine
-                .eval(&compiled, &view)
-                .unwrap_or_else(|e| CellValue::Error(eval_error_to_cell_error(e)))
+            // A promoted cell evaluates through its native compiled tier;
+            // every other cell through the interpreter. The two are
+            // equivalent — promotion changes how a formula runs, not what
+            // it produces (see `promote_native`).
+            #[cfg(feature = "native")]
+            let result = match self.native.get(cref) {
+                Some(program) => program.eval(0, &view),
+                None => engine.eval(&compiled, &view),
+            };
+            #[cfg(not(feature = "native"))]
+            let result = engine.eval(&compiled, &view);
+            result.unwrap_or_else(|e| CellValue::Error(eval_error_to_cell_error(e)))
         };
         if let Some(sheet) = self.workbook.sheets.get_mut(&cref.sheet) {
             if let Some(cell) = sheet.cells.get_mut(&cref.address) {
                 cell.value = value;
             }
         }
+    }
+
+    /// Promote a cell to the native compiled tier: transpile its formula to
+    /// Rust, compile it to a `cdylib`, and route future evaluations of that
+    /// cell through the compiled code. The cell's value is unchanged —
+    /// compiled Carbide is equivalent to interpreted Carbide.
+    #[cfg(feature = "native")]
+    pub fn promote_native(&mut self, sheet: SheetId, addr: &str) -> Result<(), SetCellError> {
+        let lattice = self.lattice_for(sheet)?;
+        let canon = lattice
+            .canonicalize(addr)
+            .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+        let cref = CellRef::new(sheet, canon);
+        let compiled = self
+            .compiled
+            .get(&cref)
+            .ok_or_else(|| SetCellError::Native(format!("{addr}: no formula to compile")))?;
+        let CompiledFormula::ExcelLite(expr) = compiled;
+        let program = crate::transpile::native::compile_program(&[expr])
+            .map_err(|e| SetCellError::Native(format!("{e}")))?;
+        self.native.insert(cref.clone(), program);
+        self.recompute(&cref);
+        Ok(())
+    }
+
+    /// Drop a cell back to the interpreter, undoing `promote_native`.
+    #[cfg(feature = "native")]
+    pub fn demote_native(&mut self, sheet: SheetId, addr: &str) -> Result<(), SetCellError> {
+        let lattice = self.lattice_for(sheet)?;
+        let canon = lattice
+            .canonicalize(addr)
+            .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+        let cref = CellRef::new(sheet, canon);
+        self.native.remove(&cref);
+        self.recompute(&cref);
+        Ok(())
     }
 
     fn lattice_for(&self, sheet: SheetId) -> Result<LatticeHandle, SetCellError> {
@@ -675,6 +735,9 @@ pub enum SetCellError {
     Io(String),
     #[error("address {0} is outside this sheet's bounds")]
     OutOfBounds(String),
+    #[cfg(feature = "native")]
+    #[error("native: {0}")]
+    Native(String),
 }
 
 #[cfg(test)]
@@ -1409,5 +1472,56 @@ mod tests {
             eng.set_cell(sid, "H(2,0)", Some("=1")),
             Err(SetCellError::OutOfBounds(_))
         ));
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn promoted_cell_matches_interpreter_and_propagates() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("=10")).unwrap();
+        eng.set_cell(sid, "A2", Some("=20")).unwrap();
+        eng.set_cell(sid, "A3", Some("=A1 * A2 + 5")).unwrap();
+        let interpreted = eng.get_cell(sid, "A3").unwrap().value;
+        assert_eq!(interpreted, CellValue::Number(205.0));
+
+        // Promote A3 to the native compiled tier — the value must not change.
+        eng.promote_native(sid, "A3").unwrap();
+        assert_eq!(eng.get_cell(sid, "A3").unwrap().value, interpreted);
+
+        // A dependency edit still propagates: the promoted cell recomputes
+        // through its native program against the live sheet context.
+        eng.set_cell(sid, "A1", Some("=100")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A3").unwrap().value,
+            CellValue::Number(2005.0)
+        );
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn editing_a_promoted_cell_drops_the_stale_native_program() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("=2 + 3")).unwrap();
+        eng.promote_native(sid, "A1").unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A1").unwrap().value,
+            CellValue::Number(5.0)
+        );
+
+        // Re-editing the formula must drop the now-stale native program —
+        // otherwise A1 would keep evaluating the old `2 + 3`.
+        eng.set_cell(sid, "A1", Some("=2 + 40")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A1").unwrap().value,
+            CellValue::Number(42.0)
+        );
+
+        // Explicit demotion is also available — a no-op here (already
+        // interpreted) and must leave the value correct.
+        eng.demote_native(sid, "A1").unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A1").unwrap().value,
+            CellValue::Number(42.0)
+        );
     }
 }
