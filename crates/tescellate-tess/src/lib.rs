@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use thiserror::Error;
 
+pub mod hex;
 pub mod square;
 
 /// Identifies which lattice a sheet uses. Stored in workbook files.
