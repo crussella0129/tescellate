@@ -6,11 +6,12 @@
 //! out to `cargo` at runtime.
 //!
 //! A [`NativeProgram`] holds one or more formulas compiled together into a
-//! single library. [`compile_program`] is backed by a process-wide cache
-//! keyed on the transpiled source, so an identical formula set compiles
-//! once; on disk, the per-content build directory plus cargo's own
-//! incremental tracking handle cross-process reuse and rustc-change
-//! invalidation.
+//! single library. Each formula's entry point is resolved once, at load
+//! time, so evaluating one is a plain indirect call — no per-call symbol
+//! lookup. [`compile_program`] is backed by a process-wide cache keyed on
+//! the transpiled source, so an identical formula set compiles once; on
+//! disk, the per-content build directory plus cargo's own incremental
+//! tracking handle cross-process reuse and rustc-change invalidation.
 //!
 //! ## Soundness
 //!
@@ -33,6 +34,9 @@ use crate::excellite::ast::Expr;
 use crate::{EvalCtx, EvalError};
 use tescellate_core::CellValue;
 
+/// The Rust-ABI signature every generated `carbide_formula_*` exports.
+type FormulaFn = unsafe fn(&dyn EvalCtx) -> Result<CellValue, EvalError>;
+
 /// Failure compiling or loading a native program.
 #[derive(Debug, thiserror::Error)]
 pub enum NativeError {
@@ -46,42 +50,34 @@ pub enum NativeError {
 
 /// One or more Carbide formulas compiled together into a native dynamic
 /// library and loaded into this process. Evaluating a formula is a direct
-/// call into compiled machine code.
+/// indirect call into compiled machine code.
 pub struct NativeProgram {
-    lib: libloading::Library,
-    count: usize,
+    /// Resolved entry points, one per formula, pointing into `_lib`.
+    funcs: Vec<FormulaFn>,
+    /// The loaded library, held for the program's lifetime so the function
+    /// pointers in `funcs` stay valid.
+    _lib: libloading::Library,
 }
 
 impl NativeProgram {
     /// Number of compiled formulas; valid indices are `0..len()`.
     pub fn len(&self) -> usize {
-        self.count
+        self.funcs.len()
     }
 
     /// Whether the program holds no formulas.
     pub fn is_empty(&self) -> bool {
-        self.count == 0
+        self.funcs.is_empty()
     }
 
     /// Evaluate the `index`-th compiled formula against `ctx`.
     pub fn eval(&self, index: usize, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
-        assert!(
-            index < self.count,
-            "formula index {index} out of range (program has {} formulas)",
-            self.count,
-        );
-        type FormulaFn = unsafe fn(&dyn EvalCtx) -> Result<CellValue, EvalError>;
-        let symbol = format!("carbide_formula_{index}\0");
-        // SAFETY: `lib` is a cdylib this process compiled from this crate's
-        // own source with the running rustc, so the Rust ABI of the
-        // `carbide_formula_*` functions matches this signature.
-        unsafe {
-            let func: libloading::Symbol<FormulaFn> = self
-                .lib
-                .get(symbol.as_bytes())
-                .expect("carbide_formula_<index> symbol present in a cdylib we built");
-            (*func)(ctx)
-        }
+        let func = self.funcs[index];
+        // SAFETY: `func` was resolved from the cdylib `_lib` keeps mapped
+        // for this program's lifetime, and the cdylib's Rust ABI matches
+        // `FormulaFn` — it was built from this crate's source with the
+        // running rustc (see the module note).
+        unsafe { func(ctx) }
     }
 }
 
@@ -163,8 +159,18 @@ fn build_program(key: u64, bodies: &[String]) -> Result<NativeProgram, NativeErr
     // SAFETY: loading a cdylib this process just compiled from its own source.
     let lib = unsafe { libloading::Library::new(&lib_path) }
         .map_err(|e| NativeError::Load(format!("{}: {e}", lib_path.display())))?;
-    Ok(NativeProgram {
-        lib,
-        count: bodies.len(),
-    })
+
+    // Resolve every entry point once, up front.
+    let mut funcs = Vec::with_capacity(bodies.len());
+    for i in 0..bodies.len() {
+        let name = format!("carbide_formula_{i}\0");
+        // SAFETY: the cdylib exports each `carbide_formula_<i>` with the
+        // `FormulaFn` Rust ABI; the resolved pointer stays valid while
+        // `lib` lives, which `NativeProgram` guarantees.
+        let symbol = unsafe { lib.get::<FormulaFn>(name.as_bytes()) }
+            .map_err(|e| NativeError::Load(format!("symbol `carbide_formula_{i}`: {e}")))?;
+        funcs.push(*symbol);
+    }
+
+    Ok(NativeProgram { funcs, _lib: lib })
 }
