@@ -14,6 +14,9 @@
 
 pub mod rt;
 
+#[cfg(feature = "native")]
+pub mod native;
+
 use std::collections::HashMap;
 
 use crate::excellite::ast::{BinaryOp, Expr, UnaryOp};
