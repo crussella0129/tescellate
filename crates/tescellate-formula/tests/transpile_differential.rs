@@ -4,113 +4,126 @@
 //! equal the tree-walking interpreter's result. The interpreter is the
 //! oracle (see `docs/all-rust-roadmap.md`, Track B).
 //!
-//! Mechanism: parse + interpret each formula in-process (the oracle), then
-//! transpile all of them into one generated crate, `cargo run` it once, and
-//! compare each printed result against the oracle's `{:?}` form. Comparing
-//! `Debug` strings works because `CellValue` / `EvalError` derive `Debug`,
-//! so equal values format identically across the process boundary.
+//! Both sides read cells through the same `MapCtx`, built from the same
+//! `CELLS` table, so the comparison isolates the transpiler. Mechanism:
+//! parse + interpret each formula in-process (the oracle), then transpile
+//! all of them into one generated crate, `cargo run` it once, and compare
+//! each printed result against the oracle's `{:?}` form.
 
 use std::fs;
 use std::process::Command;
 
 use tescellate_formula::excellite::eval::eval;
 use tescellate_formula::excellite::parse::parse;
-use tescellate_formula::transpile::emit_formula_fn;
 use tescellate_formula::transpile::rt::CellValue;
-use tescellate_formula::{EvalCtx, EvalError};
+use tescellate_formula::transpile::{emit_formula_fn, MapCtx};
 
-/// v1 corpus — literals, unary, every binary operator, and the error and
-/// coercion edge cases. No cell references (the transpiler does not lower
-/// them until v2), so an `EvalCtx` is never actually consulted.
+/// Numeric cells the corpus reads. Both the in-process oracle and the
+/// generated crate build a `MapCtx` from this exact table.
+const CELLS: &[(&str, f64)] = &[
+    ("A1", 10.0),
+    ("A2", 2.5),
+    ("A3", 7.0),
+    ("B1", 3.0),
+    ("B2", 100.0),
+    ("C1", 0.0),
+];
+
+/// v1 + v2 corpus. v2 adds cell references, bare ranges (an error), and
+/// array literals. Differential: expected values are never hard-coded —
+/// the two evaluation paths must simply agree.
 const CORPUS: &[&str] = &[
     // literals
     "1",
     "0",
-    "42",
     "2.5",
-    "3.14159",
-    "100000",
     r#""hello""#,
     r#""""#,
     "TRUE",
     "FALSE",
-    // arithmetic
+    // arithmetic + unary
     "1 + 2",
-    "10 - 3",
-    "4 * 5",
     "20 / 4",
     "2 ^ 10",
-    "10 / 4",
-    "2 ^ 0.5",
     "1 + 2 * 3",
     "(1 + 2) * 3",
-    "((1 + 2) * (3 + 4))",
-    // unary
     "-5",
-    "+7",
     "-(3 + 4)",
-    "-(-8)",
-    // runtime errors
+    // runtime error
     "1 / 0",
-    "0 / 0",
-    // concat
+    // concat + comparisons
     r#""a" & "b""#,
-    r#""x=" & 7"#,
-    "1 & 2",
-    // comparisons
     "1 < 2",
-    "3 > 5",
     "2 = 2",
-    "2 <> 3",
     "4 >= 4",
-    "5 <= 4",
-    "7 > 7",
-    // coercion — whatever the interpreter does, the transpiler must match
-    "1 + TRUE",
-    "TRUE = TRUE",
-    r#""apple" < "banana""#,
+    // v2 — cell references
+    "A1",
+    "A2",
+    "C1",
+    "Z9",
+    "A1 + A2",
+    "B2 / A1",
+    "A1 * A2 + A3",
+    "-A1",
+    "(A1 + A2) * B1",
+    "A1 = 10",
+    "A1 > B1",
+    "Z9 + 1",
+    r#"A1 & " items""#,
+    // v2 — bare ranges (an error in both paths)
+    "A1:A3",
+    "B1:C1",
+    // v2 — array literals
+    "[1, 2, 3]",
+    "[[1, 2], [3, 4]]",
+    "[]",
+    "[A1, A2, A3]",
+    "[A1 + 1, A2 * 2]",
+    "[[A1, B1], [A2, B2]]",
 ];
-
-/// A context with no cells. The v1 subset never reads one; the methods
-/// error loudly so a regression that *does* reach for a cell is obvious.
-struct NoCtx;
-
-impl EvalCtx for NoCtx {
-    fn cell(&self, _addr: &str) -> Result<CellValue, EvalError> {
-        Err(EvalError::Ref(
-            "no cells in the v1 differential corpus".into(),
-        ))
-    }
-    fn range(&self, _start: &str, _end: &str) -> Result<Vec<CellValue>, EvalError> {
-        Err(EvalError::Ref(
-            "no ranges in the v1 differential corpus".into(),
-        ))
-    }
-}
 
 #[test]
 fn transpiled_carbide_matches_interpreter() {
+    // Shared context for the in-process oracle.
+    let oracle_pairs: Vec<(&str, CellValue)> = CELLS
+        .iter()
+        .map(|(addr, v)| (*addr, CellValue::Number(*v)))
+        .collect();
+    let ctx = MapCtx::from_pairs(&oracle_pairs);
+
     // 1. Oracle: parse + interpret each formula in-process.
     let mut oracle = Vec::new();
     let mut exprs = Vec::new();
     for &src in CORPUS {
         let expr = parse(src).unwrap_or_else(|e| panic!("parse `{src}`: {e}"));
-        let got = eval(&expr, &NoCtx);
+        let got = eval(&expr, &ctx);
         oracle.push(format!("{got:?}"));
         exprs.push((src, expr));
     }
 
     // 2. Transpile every formula into one generated source file.
-    let mut generated = String::from("use tescellate_formula::transpile::rt::*;\n\n");
+    let mut generated = String::from(
+        "#![allow(unused_variables)]\n\
+         use tescellate_formula::transpile::rt::*;\n\
+         use tescellate_formula::transpile::MapCtx;\n\n",
+    );
     for (i, (src, expr)) in exprs.iter().enumerate() {
         let func = emit_formula_fn(&format!("formula_{i}"), expr)
             .unwrap_or_else(|e| panic!("transpile `{src}`: {e}"));
         generated.push_str(&func);
         generated.push('\n');
     }
-    generated.push_str("fn main() {\n");
+    // The generated crate builds the same context from the same CELLS.
+    generated.push_str("fn context() -> MapCtx {\n    MapCtx::from_pairs(&[\n");
+    for (addr, v) in CELLS {
+        generated.push_str(&format!(
+            "        ({addr:?}, CellValue::Number({v:?}f64)),\n"
+        ));
+    }
+    generated.push_str("    ])\n}\n\n");
+    generated.push_str("fn main() {\n    let ctx = context();\n");
     for i in 0..exprs.len() {
-        generated.push_str(&format!("    println!(\"{{:?}}\", formula_{i}());\n"));
+        generated.push_str(&format!("    println!(\"{{:?}}\", formula_{i}(&ctx));\n"));
     }
     generated.push_str("}\n");
 

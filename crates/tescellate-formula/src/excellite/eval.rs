@@ -39,9 +39,7 @@ pub fn eval(expr: &Expr, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
         Expr::Str(s) => Ok(CellValue::Text(s.clone())),
         Expr::Bool(b) => Ok(CellValue::Bool(*b)),
         Expr::CellRef(addr) => ctx.cell(addr),
-        Expr::Range(_, _) => Err(EvalError::Value(
-            "ranges must appear inside a function (e.g. SUM)".into(),
-        )),
+        Expr::Range(_, _) => bare_range(),
         Expr::Array(rows) => eval_array_literal(rows, ctx),
         Expr::Unary(op, rhs) => {
             let v = eval(rhs, ctx)?;
@@ -103,6 +101,15 @@ fn eval_binary(
     let l = eval(lhs, ctx)?;
     let r = eval(rhs, ctx)?;
     apply_binary_op(op, l, r)
+}
+
+/// The value of a bare range expression: there is none. Ranges are only
+/// meaningful as function arguments. Shared by the interpreter and
+/// transpiled code so the two produce an identical error.
+pub fn bare_range() -> Result<CellValue, EvalError> {
+    Err(EvalError::Value(
+        "ranges must appear inside a function (e.g. SUM)".into(),
+    ))
 }
 
 /// Apply a unary operator to an already-evaluated value.
