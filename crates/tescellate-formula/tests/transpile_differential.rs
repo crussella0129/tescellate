@@ -121,6 +121,20 @@ const CORPUS: &[&str] = &[
     // v3 — error paths
     "BOGUS(1)",
     "SQRT(-1)",
+    // v4 — LET / LAMBDA / LETREC, lambdas, higher-order
+    "LET(x, 10, x + 5)",
+    "LET(x, 10, y, x * 2, x + y)",
+    "LET(m, A1, m * 2)",
+    "(LAMBDA(x, x * 2))(5)",
+    "(LAMBDA(a, b, a + b))(3, 4)",
+    "LET(f, LAMBDA(x, x + 1), f(7))",
+    "LET(n, 100, g, LAMBDA(x, x + n), g(5))",
+    "LETREC(fact, LAMBDA(n, IF(n <= 1, 1, n * fact(n - 1))), fact(5))",
+    "MAP([1, 2, 3], LAMBDA(x, x * 2))",
+    "REDUCE(0, [1, 2, 3, 4], LAMBDA(a, x, a + x))",
+    "MAKEARRAY(2, 2, LAMBDA(r, c, r + c))",
+    // v4 — bare variable (unbound at a cell's top level — an error, both paths)
+    "x",
 ];
 
 #[test]
@@ -148,9 +162,8 @@ fn transpiled_carbide_matches_interpreter() {
          use tescellate_formula::transpile::rt::*;\n\
          use tescellate_formula::transpile::MapCtx;\n\n",
     );
-    for (i, (src, expr)) in exprs.iter().enumerate() {
-        let func = emit_formula_fn(&format!("formula_{i}"), expr)
-            .unwrap_or_else(|e| panic!("transpile `{src}`: {e}"));
+    for (i, (_, expr)) in exprs.iter().enumerate() {
+        let func = emit_formula_fn(&format!("formula_{i}"), expr);
         generated.push_str(&func);
         generated.push('\n');
     }
