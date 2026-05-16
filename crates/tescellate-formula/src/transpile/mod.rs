@@ -3,15 +3,15 @@
 //! Lowers a Carbide `Expr` to Rust source that, once compiled, evaluates to
 //! the same `CellValue` as the tree-walking interpreter. Transpiled code
 //! calls the very same value-level primitives the interpreter uses
-//! (`apply_binary_op`, `apply_unary_op`, `bare_range`) and reads cells
-//! through the same `EvalCtx` trait, so equivalence holds *by construction*
-//! for every subset implemented here — there is one implementation of the
-//! semantics, not two.
+//! (`apply_binary_op`, `apply_unary_op`, `bare_range`), reads cells through
+//! the same `EvalCtx` trait, and dispatches function calls into the same
+//! `excellite::funcs::standard()` registry — so equivalence holds *by
+//! construction*: there is one implementation of the semantics, not two.
 //!
 //! Coverage: literals (`Number`, `Str`, `Bool`), `Unary`, `Binary`,
 //! `CellRef`, `Range` (bare ranges are an error, as in the interpreter),
-//! and `Array` literals. `Var` / `Apply` / `Call` return
-//! `TranspileError::Unsupported` until v3 (function calls) and v4 (lambdas).
+//! `Array` literals, and `Call` (dispatched into the function registry).
+//! `Var` / `Apply` return `TranspileError::Unsupported` until v4 (lambdas).
 
 pub mod rt;
 
@@ -32,8 +32,8 @@ pub enum TranspileError {
 ///
 /// The result is valid inside a function body that returns
 /// `Result<CellValue, EvalError>` and has a `ctx: &dyn EvalCtx` in scope
-/// (see [`emit_formula_fn`]): operator and cell-read lowerings end in `?`,
-/// so an evaluation error propagates exactly as it does in the interpreter.
+/// (see [`emit_formula_fn`]): operator, cell-read, and call lowerings end
+/// in `?`, so an evaluation error propagates exactly as in the interpreter.
 pub fn transpile_expr(expr: &Expr) -> Result<String, TranspileError> {
     match expr {
         Expr::Number(n) => Ok(format!("CellValue::Number({n:?}f64)")),
@@ -54,9 +54,16 @@ pub fn transpile_expr(expr: &Expr) -> Result<String, TranspileError> {
                 binary_op_path(*op)
             ))
         }
+        // A call dispatches into the shared `standard()` registry. Its
+        // arguments are passed as reconstructed AST (`emit_expr_literal`),
+        // not pre-evaluated values, so registry functions keep their lazy
+        // argument semantics — `IF` / `AND` short-circuiting still works.
+        Expr::Call(name, args) => Ok(format!(
+            "standard().call({name:?}, &[{}], ctx)?",
+            emit_expr_list(args)
+        )),
         Expr::Var(n) => unsupported(format!("variable `{n}`")),
         Expr::Apply(..) => unsupported("function application".into()),
-        Expr::Call(name, _) => unsupported(format!("function call `{name}`")),
     }
 }
 
@@ -79,6 +86,60 @@ fn transpile_array(rows: &[Vec<Expr>]) -> Result<String, TranspileError> {
         "CellValue::Array(Box::new(Array::new({nrows}, {ncols}, vec![{}])))",
         elems.join(", "),
     ))
+}
+
+/// Serialize `expr` back to Rust source that *constructs* the equivalent
+/// `Expr` value. Used to hand a `Call`'s argument ASTs to the function
+/// registry, which evaluates them itself.
+fn emit_expr_literal(expr: &Expr) -> String {
+    match expr {
+        Expr::Number(n) => format!("Expr::Number({n:?}f64)"),
+        Expr::Str(s) => format!("Expr::Str({s:?}.to_string())"),
+        Expr::Bool(b) => format!("Expr::Bool({b})"),
+        Expr::CellRef(a) => format!("Expr::CellRef({a:?}.to_string())"),
+        Expr::Range(a, b) => {
+            format!("Expr::Range({a:?}.to_string(), {b:?}.to_string())")
+        }
+        Expr::Array(rows) => {
+            let rows_src: Vec<String> = rows
+                .iter()
+                .map(|row| format!("vec![{}]", emit_expr_list(row)))
+                .collect();
+            format!("Expr::Array(vec![{}])", rows_src.join(", "))
+        }
+        Expr::Var(n) => format!("Expr::Var({n:?}.to_string())"),
+        Expr::Unary(op, inner) => format!(
+            "Expr::Unary({}, Box::new({}))",
+            unary_op_path(*op),
+            emit_expr_literal(inner),
+        ),
+        Expr::Binary(op, lhs, rhs) => format!(
+            "Expr::Binary({}, Box::new({}), Box::new({}))",
+            binary_op_path(*op),
+            emit_expr_literal(lhs),
+            emit_expr_literal(rhs),
+        ),
+        Expr::Apply(callee, args) => format!(
+            "Expr::Apply(Box::new({}), vec![{}])",
+            emit_expr_literal(callee),
+            emit_expr_list(args),
+        ),
+        Expr::Call(name, args) => {
+            format!(
+                "Expr::Call({name:?}.to_string(), vec![{}])",
+                emit_expr_list(args)
+            )
+        }
+    }
+}
+
+/// Comma-join the reconstructed AST source of each expression in `exprs`.
+fn emit_expr_list(exprs: &[Expr]) -> String {
+    exprs
+        .iter()
+        .map(emit_expr_literal)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Emit a complete named Rust function that evaluates `expr`. The function
@@ -148,10 +209,39 @@ impl EvalCtx for MapCtx {
             .cloned()
             .unwrap_or_default())
     }
-    fn range(&self, _start: &str, _end: &str) -> Result<Vec<CellValue>, EvalError> {
-        Err(EvalError::Value(
-            "MapCtx::range — ranges-in-functions land at v3".into(),
-        ))
+
+    /// Rectangular range over single-letter columns — enough for the
+    /// differential corpus and headless use; multi-letter columns are
+    /// out of `MapCtx`'s scope.
+    fn range(&self, start: &str, end: &str) -> Result<Vec<CellValue>, EvalError> {
+        let (sc, sr) = parse_a1(start)?;
+        let (ec, er) = parse_a1(end)?;
+        let mut out = Vec::new();
+        for row in sr.min(er)..=sr.max(er) {
+            for col in sc.min(ec)..=sc.max(ec) {
+                let addr = format!("{}{row}", (b'A' + col) as char);
+                out.push(self.cells.get(&addr).cloned().unwrap_or_default());
+            }
+        }
+        Ok(out)
+    }
+}
+
+fn addr_err(addr: &str) -> EvalError {
+    EvalError::Ref(format!("MapCtx: unsupported address `{addr}`"))
+}
+
+/// Parse a single-letter A1 address (`"B7"`) into `(col, row)`.
+fn parse_a1(addr: &str) -> Result<(u8, u32), EvalError> {
+    match addr.bytes().next() {
+        Some(c) if c.is_ascii_alphabetic() => {
+            let col = c.to_ascii_uppercase() - b'A';
+            match addr[1..].parse::<u32>() {
+                Ok(row) => Ok((col, row)),
+                Err(_) => Err(addr_err(addr)),
+            }
+        }
+        _ => Err(addr_err(addr)),
     }
 }
 
@@ -243,6 +333,32 @@ mod tests {
     }
 
     #[test]
+    fn function_call_dispatches_to_registry() {
+        let s = t("SUM(A1, A2)");
+        assert!(s.starts_with(r#"standard().call("SUM", &["#));
+        assert!(s.contains(r#"Expr::CellRef("A1".to_string())"#));
+        assert!(s.contains(r#"Expr::CellRef("A2".to_string())"#));
+        assert!(s.ends_with("], ctx)?"));
+    }
+
+    #[test]
+    fn call_nested_in_arithmetic() {
+        let s = t("SUM(A1) + 1");
+        assert!(s.starts_with(r#"apply_binary_op(BinaryOp::Add, standard().call("SUM","#));
+        assert!(s.ends_with("CellValue::Number(1.0f64))?"));
+    }
+
+    #[test]
+    fn call_args_reconstruct_nested_ast() {
+        // `IF`'s branches must reach the registry unevaluated.
+        let s = t("IF(A1, SUM(A2:A3), 0)");
+        assert!(s.contains(r#"Expr::CellRef("A1".to_string())"#));
+        assert!(s.contains(r#"Expr::Call("SUM".to_string()"#));
+        assert!(s.contains(r#"Expr::Range("A2".to_string(), "A3".to_string())"#));
+        assert!(s.contains("Expr::Number(0.0f64)"));
+    }
+
+    #[test]
     fn emit_named_function_takes_ctx() {
         let f = emit_formula_fn("formula_0", &parse("1").unwrap()).unwrap();
         assert_eq!(
@@ -258,9 +374,10 @@ mod tests {
             transpile_expr(&parse("X").unwrap()),
             Err(TranspileError::Unsupported(_))
         ));
-        // function call (Call) — lands at v3
+        // function application (Apply) — lands at v4
+        let apply = Expr::Apply(Box::new(Expr::Var("F".to_string())), vec![]);
         assert!(matches!(
-            transpile_expr(&parse("SUM(A1:A3)").unwrap()),
+            transpile_expr(&apply),
             Err(TranspileError::Unsupported(_))
         ));
     }
@@ -271,5 +388,25 @@ mod tests {
         assert_eq!(ctx.cell("A1").unwrap(), CellValue::Number(9.0));
         assert_eq!(ctx.cell("a1").unwrap(), CellValue::Number(9.0));
         assert_eq!(ctx.cell("Z9").unwrap(), CellValue::Empty);
+    }
+
+    #[test]
+    fn map_ctx_range_walks_rectangle() {
+        let ctx = MapCtx::from_pairs(&[
+            ("A1", CellValue::Number(1.0)),
+            ("A2", CellValue::Number(2.0)),
+            ("A3", CellValue::Number(3.0)),
+        ]);
+        let got = ctx.range("A1", "A3").unwrap();
+        assert_eq!(
+            got,
+            vec![
+                CellValue::Number(1.0),
+                CellValue::Number(2.0),
+                CellValue::Number(3.0),
+            ]
+        );
+        // Missing cells fill with Empty.
+        assert_eq!(ctx.range("B1", "B2").unwrap(), vec![CellValue::Empty; 2]);
     }
 }
