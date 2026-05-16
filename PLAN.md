@@ -8,6 +8,8 @@ For language-level reference (the formula language is named **Carbide**), see [`
 
 For the architectural question of whether Tescellate could be written entirely in Rust (renderer included), see [`docs/rust-native.md`](docs/rust-native.md) — a four-level analysis from "Electron today" through "native Rust GUI, no WebView" with subsystem-by-subsystem migration mapping and tooling-maturity notes.
 
+For the **execution roadmap** toward an all-Rust application with a Carbide→Rust transpiler — the ordered, version-by-version plan that sequences and supersedes the Phase 4 (`rustnative`) and Phase 5 (Tauri) work below — see [`docs/all-rust-roadmap.md`](docs/all-rust-roadmap.md).
+
 ---
 
 ## 1. Vision
