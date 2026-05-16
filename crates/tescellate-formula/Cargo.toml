@@ -15,6 +15,9 @@ default = []
 python = []
 rhai = []
 rustnative = []
+# Native compile tier — transpiles Carbide to a cdylib and loads it.
+# Needs `libloading` and a `cargo` toolchain available at runtime.
+native = ["dep:libloading"]
 
 [dependencies]
 serde = { workspace = true }
@@ -23,3 +26,4 @@ tescellate-core = { workspace = true }
 tescellate-tess = { workspace = true }
 tescellate-store = { workspace = true }
 hashbrown = { workspace = true }
+libloading = { version = "0.8", optional = true }

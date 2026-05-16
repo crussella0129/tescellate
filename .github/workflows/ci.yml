@@ -58,3 +58,17 @@ jobs:
         run: npm run typecheck
       - name: build
         run: npm run build
+
+  native:
+    name: native compile pipeline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy --features native
+        run: cargo clippy -p tescellate-formula --features native --all-targets -- -D warnings
+      - name: cargo test --features native
+        run: cargo test -p tescellate-formula --features native
