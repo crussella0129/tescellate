@@ -66,28 +66,12 @@ pub fn eval(expr: &Expr, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
             .var(name)
             .ok_or_else(|| EvalError::Ref(format!("unbound: {name}"))),
         Expr::Apply(callee, args) => {
-            let value = eval(callee, ctx)?;
-            let func = match &value {
-                CellValue::Function(arc) => arc.clone(),
-                _ => {
-                    return Err(EvalError::Value(format!("not a function: {value:?}")));
-                }
-            };
-            let evaluated: Vec<CellValue> = args
+            let callee_v = eval(callee, ctx)?;
+            let arg_vs: Vec<CellValue> = args
                 .iter()
                 .map(|a| eval(a, ctx))
                 .collect::<Result<_, _>>()?;
-            // Downcast via the CarbideFn::as_any() escape hatch. The
-            // concrete Lambda type lives in `excellite::lambda` and is
-            // the only producer of `CellValue::Function` for now.
-            let any = func.as_any();
-            if let Some(lambda) = any.downcast_ref::<crate::excellite::lambda::Lambda>() {
-                lambda.call(evaluated, ctx)
-            } else {
-                Err(EvalError::Value(
-                    "cannot apply this function value here".into(),
-                ))
-            }
+            apply_lambda(callee_v, arg_vs, ctx)
         }
     }
 }
@@ -110,6 +94,25 @@ pub fn bare_range() -> Result<CellValue, EvalError> {
     Err(EvalError::Value(
         "ranges must appear inside a function (e.g. SUM)".into(),
     ))
+}
+
+/// Apply an already-evaluated callee value to already-evaluated argument
+/// values. Shared by the interpreter's `Apply` arm and transpiled code
+/// (`crate::transpile`), so an immediately-invoked lambda runs the same way
+/// whichever path reaches it.
+pub fn apply_lambda(
+    callee: CellValue,
+    args: Vec<CellValue>,
+    ctx: &dyn EvalCtx,
+) -> Result<CellValue, EvalError> {
+    match callee {
+        CellValue::Function(arc) => arc
+            .as_any()
+            .downcast_ref::<crate::excellite::lambda::Lambda>()
+            .ok_or_else(|| EvalError::Value("cannot apply this function value here".into()))?
+            .call(args, ctx),
+        other => Err(EvalError::Value(format!("not a function: {other:?}"))),
+    }
 }
 
 /// Apply a unary operator to an already-evaluated value.

@@ -3,15 +3,14 @@
 //! Lowers a Carbide `Expr` to Rust source that, once compiled, evaluates to
 //! the same `CellValue` as the tree-walking interpreter. Transpiled code
 //! calls the very same value-level primitives the interpreter uses
-//! (`apply_binary_op`, `apply_unary_op`, `bare_range`), reads cells through
-//! the same `EvalCtx` trait, and dispatches function calls into the same
-//! `excellite::funcs::standard()` registry — so equivalence holds *by
-//! construction*: there is one implementation of the semantics, not two.
+//! (`apply_binary_op`, `apply_unary_op`, `bare_range`, `apply_lambda`),
+//! reads cells and variables through the same `EvalCtx` trait, and
+//! dispatches function calls into the same `excellite::funcs::standard()`
+//! registry — so equivalence holds *by construction*: there is one
+//! implementation of the semantics, not two.
 //!
-//! Coverage: literals (`Number`, `Str`, `Bool`), `Unary`, `Binary`,
-//! `CellRef`, `Range` (bare ranges are an error, as in the interpreter),
-//! `Array` literals, and `Call` (dispatched into the function registry).
-//! `Var` / `Apply` return `TranspileError::Unsupported` until v4 (lambdas).
+//! As of v4 every `Expr` variant is lowered — transpilation is **total**,
+//! so `transpile_expr` is infallible and returns a plain `String`.
 
 pub mod rt;
 
@@ -21,71 +20,83 @@ use crate::excellite::ast::{BinaryOp, Expr, UnaryOp};
 use crate::{EvalCtx, EvalError};
 use tescellate_core::CellValue;
 
-/// A formula the transpiler cannot yet lower.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum TranspileError {
-    #[error("transpile: unsupported expression — {0}")]
-    Unsupported(String),
-}
-
 /// Lower `expr` to a Rust expression of type `CellValue`.
 ///
 /// The result is valid inside a function body that returns
 /// `Result<CellValue, EvalError>` and has a `ctx: &dyn EvalCtx` in scope
-/// (see [`emit_formula_fn`]): operator, cell-read, and call lowerings end
-/// in `?`, so an evaluation error propagates exactly as in the interpreter.
-pub fn transpile_expr(expr: &Expr) -> Result<String, TranspileError> {
+/// (see [`emit_formula_fn`]): operator, cell-read, variable, call, and
+/// apply lowerings end in `?`, so an evaluation error propagates exactly
+/// as it does in the interpreter.
+pub fn transpile_expr(expr: &Expr) -> String {
     match expr {
-        Expr::Number(n) => Ok(format!("CellValue::Number({n:?}f64)")),
-        Expr::Str(s) => Ok(format!("CellValue::Text({s:?}.to_string())")),
-        Expr::Bool(b) => Ok(format!("CellValue::Bool({b})")),
-        Expr::CellRef(addr) => Ok(format!("ctx.cell({addr:?})?")),
-        Expr::Range(_, _) => Ok("bare_range()?".to_string()),
+        Expr::Number(n) => format!("CellValue::Number({n:?}f64)"),
+        Expr::Str(s) => format!("CellValue::Text({s:?}.to_string())"),
+        Expr::Bool(b) => format!("CellValue::Bool({b})"),
+        Expr::CellRef(addr) => format!("ctx.cell({addr:?})?"),
+        Expr::Range(_, _) => "bare_range()?".to_string(),
         Expr::Array(rows) => transpile_array(rows),
-        Expr::Unary(op, inner) => {
-            let inner = transpile_expr(inner)?;
-            Ok(format!("apply_unary_op({}, {inner})?", unary_op_path(*op)))
-        }
-        Expr::Binary(op, lhs, rhs) => {
-            let lhs = transpile_expr(lhs)?;
-            let rhs = transpile_expr(rhs)?;
-            Ok(format!(
-                "apply_binary_op({}, {lhs}, {rhs})?",
-                binary_op_path(*op)
-            ))
-        }
+        Expr::Unary(op, inner) => format!(
+            "apply_unary_op({}, {})?",
+            unary_op_path(*op),
+            transpile_expr(inner),
+        ),
+        Expr::Binary(op, lhs, rhs) => format!(
+            "apply_binary_op({}, {}, {})?",
+            binary_op_path(*op),
+            transpile_expr(lhs),
+            transpile_expr(rhs),
+        ),
         // A call dispatches into the shared `standard()` registry. Its
         // arguments are passed as reconstructed AST (`emit_expr_literal`),
         // not pre-evaluated values, so registry functions keep their lazy
-        // argument semantics — `IF` / `AND` short-circuiting still works.
-        Expr::Call(name, args) => Ok(format!(
-            "standard().call({name:?}, &[{}], ctx)?",
-            emit_expr_list(args)
-        )),
-        Expr::Var(n) => unsupported(format!("variable `{n}`")),
-        Expr::Apply(..) => unsupported("function application".into()),
+        // argument semantics — `IF` / `AND` short-circuiting still works,
+        // and `LET` / `LAMBDA` / `LETREC` evaluate their bodies themselves.
+        Expr::Call(name, args) => {
+            format!(
+                "standard().call({name:?}, &[{}], ctx)?",
+                emit_expr_list(args)
+            )
+        }
+        // A bare variable resolves against the lexical environment. At a
+        // cell's top level there is no scope, so this is an unbound error
+        // — exactly what the interpreter produces.
+        Expr::Var(name) => {
+            let msg = format!("unbound: {name}");
+            format!("ctx.var({name:?}).ok_or_else(|| EvalError::Ref({msg:?}.to_string()))?")
+        }
+        // Application of a callee value (e.g. an immediately-invoked
+        // lambda): evaluate the callee, then the arguments, then dispatch
+        // through the shared `apply_lambda` primitive.
+        Expr::Apply(callee, args) => {
+            let arg_srcs: Vec<String> = args.iter().map(transpile_expr).collect();
+            format!(
+                "apply_lambda({}, vec![{}], ctx)?",
+                transpile_expr(callee),
+                arg_srcs.join(", "),
+            )
+        }
     }
 }
 
 /// Lower an array literal. Mirrors `excellite::eval::eval_array_literal`:
 /// row-major flatten, `cols` taken from the first row — the parser already
 /// rejects ragged arrays, so every row has the same length.
-fn transpile_array(rows: &[Vec<Expr>]) -> Result<String, TranspileError> {
+fn transpile_array(rows: &[Vec<Expr>]) -> String {
     if rows.is_empty() {
-        return Ok("CellValue::Array(Box::new(Array::new(0, 0, Vec::new())))".to_string());
+        return "CellValue::Array(Box::new(Array::new(0, 0, Vec::new())))".to_string();
     }
     let nrows = rows.len();
     let ncols = rows[0].len();
     let mut elems = Vec::with_capacity(nrows * ncols);
     for row in rows {
         for e in row {
-            elems.push(transpile_expr(e)?);
+            elems.push(transpile_expr(e));
         }
     }
-    Ok(format!(
+    format!(
         "CellValue::Array(Box::new(Array::new({nrows}, {ncols}, vec![{}])))",
         elems.join(", "),
-    ))
+    )
 }
 
 /// Serialize `expr` back to Rust source that *constructs* the equivalent
@@ -145,15 +156,11 @@ fn emit_expr_list(exprs: &[Expr]) -> String {
 /// Emit a complete named Rust function that evaluates `expr`. The function
 /// takes `ctx: &dyn EvalCtx` — the same trait the interpreter reads cells
 /// through — and is the unit the differential harness batches into a crate.
-pub fn emit_formula_fn(name: &str, expr: &Expr) -> Result<String, TranspileError> {
-    let body = transpile_expr(expr)?;
-    Ok(format!(
+pub fn emit_formula_fn(name: &str, expr: &Expr) -> String {
+    let body = transpile_expr(expr);
+    format!(
         "pub fn {name}(ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {{\n    Ok({body})\n}}\n"
-    ))
-}
-
-fn unsupported(what: String) -> Result<String, TranspileError> {
-    Err(TranspileError::Unsupported(what))
+    )
 }
 
 fn unary_op_path(op: UnaryOp) -> &'static str {
@@ -251,7 +258,7 @@ mod tests {
     use crate::excellite::parse::parse;
 
     fn t(src: &str) -> String {
-        transpile_expr(&parse(src).unwrap()).unwrap()
+        transpile_expr(&parse(src).unwrap())
     }
 
     #[test]
@@ -285,10 +292,7 @@ mod tests {
     #[test]
     fn string_literals_are_escaped() {
         let e = Expr::Str("a\"b".to_string());
-        assert_eq!(
-            transpile_expr(&e).unwrap(),
-            r#"CellValue::Text("a\"b".to_string())"#
-        );
+        assert_eq!(transpile_expr(&e), r#"CellValue::Text("a\"b".to_string())"#);
     }
 
     #[test]
@@ -359,27 +363,36 @@ mod tests {
     }
 
     #[test]
-    fn emit_named_function_takes_ctx() {
-        let f = emit_formula_fn("formula_0", &parse("1").unwrap()).unwrap();
+    fn var_reads_through_ctx() {
         assert_eq!(
-            f,
-            "pub fn formula_0(ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {\n    Ok(CellValue::Number(1.0f64))\n}\n"
+            transpile_expr(&Expr::Var("X".to_string())),
+            r#"ctx.var("X").ok_or_else(|| EvalError::Ref("unbound: X".to_string()))?"#
         );
     }
 
     #[test]
-    fn unsupported_variants_error() {
-        // bare variable (Var) — lambdas land at v4
-        assert!(matches!(
-            transpile_expr(&parse("X").unwrap()),
-            Err(TranspileError::Unsupported(_))
-        ));
-        // function application (Apply) — lands at v4
-        let apply = Expr::Apply(Box::new(Expr::Var("F".to_string())), vec![]);
-        assert!(matches!(
-            transpile_expr(&apply),
-            Err(TranspileError::Unsupported(_))
-        ));
+    fn apply_invokes_lambda() {
+        // (LAMBDA(x, x))(5) → apply_lambda(<lambda value>, vec![5], ctx)?
+        let apply = Expr::Apply(
+            Box::new(Expr::Call(
+                "LAMBDA".to_string(),
+                vec![Expr::Var("X".to_string()), Expr::Var("X".to_string())],
+            )),
+            vec![Expr::Number(5.0)],
+        );
+        let s = transpile_expr(&apply);
+        assert!(s.starts_with(r#"apply_lambda(standard().call("LAMBDA","#));
+        assert!(s.contains("vec![CellValue::Number(5.0f64)]"));
+        assert!(s.ends_with(", ctx)?"));
+    }
+
+    #[test]
+    fn emit_named_function_takes_ctx() {
+        let f = emit_formula_fn("formula_0", &parse("1").unwrap());
+        assert_eq!(
+            f,
+            "pub fn formula_0(ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {\n    Ok(CellValue::Number(1.0f64))\n}\n"
+        );
     }
 
     #[test]
@@ -406,7 +419,6 @@ mod tests {
                 CellValue::Number(3.0),
             ]
         );
-        // Missing cells fill with Empty.
         assert_eq!(ctx.range("B1", "B2").unwrap(), vec![CellValue::Empty; 2]);
     }
 }
