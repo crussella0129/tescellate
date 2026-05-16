@@ -111,11 +111,29 @@ impl<'a> EvalCtx for ScopedCtx<'a> {
     }
 }
 
+/// A statically-knowable cell-dependency. Each variant is what the
+/// engine layer expands into concrete dep cells (using the lattice for
+/// `Neighbors` / `Radius`).
+///
+/// Dynamic references — `NEIGHBORS(some_lambda_arg)` or `RADIUS(text, n)`
+/// where the address arrives at eval-time — can't be expanded statically
+/// and don't appear in this list. Those formulas still *evaluate* fine,
+/// they just won't propagate through the DAG when their dynamically-
+/// resolved deps change. The deterministic literal-address form is what
+/// users should reach for when DAG propagation matters.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FormulaRef {
+    Cell(String),
+    Range(String, String),
+    Neighbors(String),
+    Radius(String, i64),
+}
+
 pub trait FormulaEngine: Send + Sync {
     fn kind(&self) -> EngineKind;
     fn parse(&self, src: &str) -> Result<CompiledFormula, ParseError>;
-    /// Cell and range references the formula reads. The orchestrator uses
-    /// this to update the DAG before evaluating.
-    fn refs(&self, compiled: &CompiledFormula) -> Vec<(String, Option<String>)>;
+    /// Cell, range, NEIGHBORS, and RADIUS references the formula reads.
+    /// The orchestrator uses this to update the DAG before evaluating.
+    fn refs(&self, compiled: &CompiledFormula) -> Vec<FormulaRef>;
     fn eval(&self, compiled: &CompiledFormula, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError>;
 }
