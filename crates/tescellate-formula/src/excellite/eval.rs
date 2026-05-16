@@ -45,11 +45,7 @@ pub fn eval(expr: &Expr, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
         Expr::Array(rows) => eval_array_literal(rows, ctx),
         Expr::Unary(op, rhs) => {
             let v = eval(rhs, ctx)?;
-            let n = to_number(&v)?;
-            Ok(CellValue::Number(match op {
-                UnaryOp::Neg => -n,
-                UnaryOp::Pos => n,
-            }))
+            apply_unary_op(*op, v)
         }
         Expr::Binary(op, lhs, rhs) => eval_binary(*op, lhs, rhs, ctx),
         Expr::Call(name, args) => {
@@ -106,6 +102,25 @@ fn eval_binary(
 ) -> Result<CellValue, EvalError> {
     let l = eval(lhs, ctx)?;
     let r = eval(rhs, ctx)?;
+    apply_binary_op(op, l, r)
+}
+
+/// Apply a unary operator to an already-evaluated value.
+///
+/// Shared by the tree-walking interpreter (`eval`) and transpiled code
+/// (`crate::transpile`), so the two paths cannot diverge — there is
+/// exactly one implementation of the operator semantics.
+pub fn apply_unary_op(op: UnaryOp, v: CellValue) -> Result<CellValue, EvalError> {
+    let n = to_number(&v)?;
+    Ok(CellValue::Number(match op {
+        UnaryOp::Neg => -n,
+        UnaryOp::Pos => n,
+    }))
+}
+
+/// Apply a binary operator to two already-evaluated values. Shared by the
+/// interpreter and transpiled code — see `apply_unary_op`.
+pub fn apply_binary_op(op: BinaryOp, l: CellValue, r: CellValue) -> Result<CellValue, EvalError> {
     match op {
         BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow => {
             let a = to_number(&l)?;

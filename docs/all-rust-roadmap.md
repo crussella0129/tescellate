@@ -105,8 +105,11 @@ A version does not merge until both gates pass. Versions are not calendar-bound.
 
 ### v1 — Transpiler skeleton + arithmetic core
 
-- New module `crates/tescellate-formula/src/transpile/`, behind a `transpile` Cargo
-  feature so the default build is unaffected.
+- New module `crates/tescellate-formula/src/transpile/` — always compiled (lightweight,
+  pure-Rust codegen with no external-toolchain needs, so CI covers it by default).
+  Transpiled code and the interpreter share the value-level primitives
+  (`apply_binary_op` / `apply_unary_op`), so they are equivalent by construction.
+  Feature-gating waits for v5's runtime compile pipeline.
 - Lower `Expr::{Number, Str, Bool, Unary, Binary}` → a Rust expression string.
 - The **differential harness**: collect a batch of Carbide formulas, generate one
   micro-crate that exposes each as a function, compile it once, run all, and assert each

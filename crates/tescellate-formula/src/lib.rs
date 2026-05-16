@@ -6,6 +6,7 @@ use thiserror::Error;
 
 pub mod engine;
 pub mod excellite;
+pub mod transpile;
 
 pub use engine::{CellSnapshot, WorkbookEngine};
 
