@@ -1,15 +1,18 @@
 //! The Tescellate application — an `eframe::App` that owns a
-//! `WorkbookEngine` and draws the spreadsheet grid with egui.
+//! `WorkbookEngine` and draws the spreadsheet with egui.
 //!
-//! v2: keyboard navigation and in-cell editing via the pure `keymap`
-//! layer. v3: per-column / per-row sizing. v4: cell formatting from the
-//! pure `format` layer. v5: the formatting ribbon — `format` set through
-//! buttons and pickers, not only the keyboard.
+//! v2: keyboard navigation + in-cell editing. v3: row/column sizing.
+//! v4: cell formatting. v5: the formatting ribbon. v6: the hex view — a
+//! second sheet rendered as a real hexagonal tessellation, consuming
+//! `tescellate-tess`'s `HexLattice` for every bit of geometry (the
+//! engine owns and exhaustively tests the hex math; the front-end only
+//! paints it).
 
 use eframe::egui;
 use tescellate_core::{CellValue, SheetId};
 use tescellate_formula::WorkbookEngine;
-use tescellate_tess::LatticeKind;
+use tescellate_tess::hex::{self, HexCoord, HexLattice};
+use tescellate_tess::{Lattice, LatticeKind, Point2};
 
 use crate::format::{self, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
@@ -18,6 +21,11 @@ use crate::ribbon::{self, RibbonAction};
 
 const COLS: u32 = 16;
 const ROWS: u32 = 32;
+
+/// Circumradius of a rendered hex cell, in points.
+const HEX_SIZE: f32 = 36.0;
+/// How many rings of hexes the hex view shows around the origin.
+const HEX_VIEW_RADIUS: i32 = 3;
 
 /// Ctrl+Shift, for the alignment shortcuts.
 const CTRL_SHIFT: egui::Modifiers = egui::Modifiers {
@@ -61,6 +69,13 @@ const EDIT_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::NONE, egui::Key::Escape),
 ];
 
+/// Which of the workbook's sheets is currently on screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActiveSheet {
+    Square,
+    Hex,
+}
+
 /// An in-progress cell edit.
 struct EditState {
     buffer: String,
@@ -79,25 +94,35 @@ enum Resize {
 /// The Tescellate front-end application.
 pub struct TescellateApp {
     engine: WorkbookEngine,
-    sheet: SheetId,
-    /// Zero-indexed `(column, row)` of the selected cell.
+    /// The square-lattice sheet.
+    square_sheet: SheetId,
+    /// The hex-lattice sheet.
+    hex_sheet: SheetId,
+    /// Geometry for the hex sheet — owned by `tescellate-tess`.
+    hex_lattice: HexLattice,
+    /// Which sheet is on screen.
+    active: ActiveSheet,
+    /// Zero-indexed `(column, row)` selected on the square sheet.
     selected: (u32, u32),
-    /// `Some` while a cell is being edited.
+    /// Axial coord selected on the hex sheet.
+    hex_selected: HexCoord,
+    /// `Some` while a square cell is being edited.
     edit: Option<EditState>,
-    /// Per-column widths and per-row heights.
+    /// Per-column widths and per-row heights of the square sheet.
     metrics: GridMetrics,
     /// `Some` while a header border is being dragged.
     resizing: Option<Resize>,
-    /// Per-cell visual formatting.
+    /// Per-cell visual formatting of the square sheet.
     formats: FormatMap,
 }
 
 impl TescellateApp {
-    /// Build the app, seeding a small demo workbook.
+    /// Build the app, seeding a square demo sheet and a hex demo sheet.
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let mut engine = WorkbookEngine::new();
         engine.new_workbook();
-        let sheet = engine.add_sheet("Sheet1", LatticeKind::Square);
+
+        let square_sheet = engine.add_sheet("Budget", LatticeKind::Square);
         for (addr, src) in [
             ("A1", "Monthly budget"),
             ("A2", "Rent"),
@@ -109,12 +134,34 @@ impl TescellateApp {
             ("A5", "Total"),
             ("B5", "=SUM(B2:B4)"),
         ] {
-            let _ = engine.set_cell(sheet, addr, Some(src));
+            let _ = engine.set_cell(square_sheet, addr, Some(src));
         }
+
+        // A pointy-top hex sheet: a labelled core, its six edge-neighbors,
+        // and a cell summing an axial range — the hex address form is
+        // `H(q,r)`, and `SUM` over a hex range is an axial parallelogram.
+        let hex_sheet = engine.add_sheet("Hex demo", LatticeKind::HexPointy);
+        for (addr, src) in [
+            ("H(0,0)", "core"),
+            ("H(1,0)", "=12"),
+            ("H(-1,0)", "=20"),
+            ("H(0,1)", "=10"),
+            ("H(0,-1)", "=15"),
+            ("H(1,-1)", "=8"),
+            ("H(-1,1)", "=5"),
+            ("H(0,2)", "=SUM(H(-1,-1):H(1,1))"),
+        ] {
+            let _ = engine.set_cell(hex_sheet, addr, Some(src));
+        }
+
         Self {
             engine,
-            sheet,
+            square_sheet,
+            hex_sheet,
+            hex_lattice: HexLattice::pointy(HEX_SIZE),
+            active: ActiveSheet::Square,
             selected: (0, 0),
+            hex_selected: HexCoord::new(0, 0),
             edit: None,
             metrics: GridMetrics::new(),
             resizing: None,
@@ -130,37 +177,65 @@ impl TescellateApp {
         }
     }
 
-    /// The display text for a cell, read from the engine and rendered
-    /// under the cell's number format.
+    /// The display text for a square-sheet cell, read from the engine and
+    /// rendered under the cell's number format.
     fn cell_text(&self, col: u32, row: u32) -> String {
         let addr = grid::cell_address(col, row);
-        let Some(snapshot) = self.engine.get_cell(self.sheet, &addr) else {
+        let Some(snapshot) = self.engine.get_cell(self.square_sheet, &addr) else {
             return String::new();
         };
         let number = self.formats.get((col, row)).number;
         match snapshot.value {
-            CellValue::Empty => String::new(),
             CellValue::Number(n) => {
                 format::render_number(n, number).unwrap_or_else(|| format_number(n))
             }
             CellValue::Integer(i) => {
                 format::render_number(i as f64, number).unwrap_or_else(|| i.to_string())
             }
-            CellValue::Bool(b) => if b { "TRUE" } else { "FALSE" }.to_string(),
-            CellValue::Text(t) => t,
-            CellValue::Error(_) => "#ERROR".to_string(),
-            CellValue::Array(_) => "{array}".to_string(),
-            _ => String::new(),
+            other => natural_text(other),
         }
     }
 
-    /// The raw source of the selected cell.
+    /// The display text for a hex-sheet cell — no number format, since
+    /// formatting is square-only for now.
+    fn hex_cell_text(&self, coord: HexCoord) -> String {
+        self.engine
+            .get_cell(self.hex_sheet, &hex_address(coord))
+            .map(|snapshot| natural_text(snapshot.value))
+            .unwrap_or_default()
+    }
+
+    /// The raw source of the selected square cell.
     fn selected_source(&self) -> String {
         let (col, row) = self.selected;
         self.engine
-            .get_cell(self.sheet, &grid::cell_address(col, row))
+            .get_cell(self.square_sheet, &grid::cell_address(col, row))
             .and_then(|s| s.source)
             .unwrap_or_default()
+    }
+
+    /// The selected cell's address and source text on the active sheet,
+    /// for the formula bar.
+    fn active_address_and_source(&self) -> (String, String) {
+        match self.active {
+            ActiveSheet::Square => {
+                let (col, row) = self.selected;
+                let source = match &self.edit {
+                    Some(edit) => edit.buffer.clone(),
+                    None => self.selected_source(),
+                };
+                (grid::cell_address(col, row), source)
+            }
+            ActiveSheet::Hex => {
+                let addr = hex_address(self.hex_selected);
+                let source = self
+                    .engine
+                    .get_cell(self.hex_sheet, &addr)
+                    .and_then(|s| s.source)
+                    .unwrap_or_default();
+                (addr, source)
+            }
+        }
     }
 
     /// Read key events and turn them into commands through `keymap`. Keys
@@ -275,14 +350,14 @@ impl TescellateApp {
         } else {
             Some(edit.buffer.as_str())
         };
-        let _ = self.engine.set_cell(self.sheet, &addr, source);
+        let _ = self.engine.set_cell(self.square_sheet, &addr, source);
     }
 
     fn clear_selected(&mut self) {
         let (col, row) = self.selected;
         let _ = self
             .engine
-            .set_cell(self.sheet, &grid::cell_address(col, row), None);
+            .set_cell(self.square_sheet, &grid::cell_address(col, row), None);
     }
 
     /// Resize the header border under an in-progress drag.
@@ -427,49 +502,152 @@ impl TescellateApp {
             }
         }
     }
+
+    /// Paint one hexagon — its polygon plus any cell value — using
+    /// vertices and a centroid straight from the engine's `HexLattice`.
+    fn paint_hex(
+        &self,
+        painter: &egui::Painter,
+        origin: egui::Pos2,
+        coord: HexCoord,
+        fill: egui::Color32,
+        stroke: egui::Stroke,
+        text_color: egui::Color32,
+    ) {
+        let vertices: Vec<egui::Pos2> = self
+            .hex_lattice
+            .vertices(coord)
+            .iter()
+            .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
+            .collect();
+        painter.add(egui::Shape::convex_polygon(vertices, fill, stroke));
+
+        let text = self.hex_cell_text(coord);
+        if !text.is_empty() {
+            let centroid = self.hex_lattice.centroid(coord);
+            painter.text(
+                egui::pos2(origin.x + centroid.x, origin.y + centroid.y),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::proportional(13.0),
+                text_color,
+            );
+        }
+    }
+
+    fn draw_hex_grid(&mut self, ui: &mut egui::Ui) {
+        let size = ui.available_size();
+        let (response, painter) = ui.allocate_painter(size, egui::Sense::click());
+        // Lattice-space (0,0) is drawn at the panel's centre.
+        let origin = response.rect.center();
+
+        if response.clicked() {
+            if let Some(p) = response.interact_pointer_pos() {
+                let local = Point2::new(p.x - origin.x, p.y - origin.y);
+                if let Some(coord) = self.hex_lattice.cell_at(local) {
+                    if HexCoord::new(0, 0).distance(coord) <= HEX_VIEW_RADIUS {
+                        self.hex_selected = coord;
+                    }
+                }
+            }
+        }
+
+        let visuals = ui.visuals();
+        let line = egui::Stroke::new(1.0, visuals.weak_text_color());
+        let sel_stroke = egui::Stroke::new(2.5, visuals.selection.stroke.color);
+        let cell_bg = visuals.extreme_bg_color;
+        let sel_bg = visuals.selection.bg_fill;
+        let text_color = visuals.text_color();
+
+        for coord in hex::hex_disc(HexCoord::new(0, 0), HEX_VIEW_RADIUS) {
+            if coord == self.hex_selected {
+                continue;
+            }
+            self.paint_hex(&painter, origin, coord, cell_bg, line, text_color);
+        }
+        // The selected hex is painted last so its ring sits above every
+        // neighbour's shared border.
+        self.paint_hex(
+            &painter,
+            origin,
+            self.hex_selected,
+            sel_bg,
+            sel_stroke,
+            text_color,
+        );
+    }
 }
 
 impl eframe::App for TescellateApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        for command in self.collect_commands(ctx) {
-            self.apply(command);
+        if self.active == ActiveSheet::Square {
+            for command in self.collect_commands(ctx) {
+                self.apply(command);
+            }
         }
 
-        egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| {
-            let current = self.formats.get(self.selected);
-            if let Some(action) = ribbon::ribbon(ui, &current) {
-                self.apply_ribbon(action);
+        egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| match self.active {
+            ActiveSheet::Square => {
+                let current = self.formats.get(self.selected);
+                if let Some(action) = ribbon::ribbon(ui, &current) {
+                    self.apply_ribbon(action);
+                }
+            }
+            ActiveSheet::Hex => {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Tescellate").strong());
+                    ui.separator();
+                    ui.label("Hex demo — a pointy-top tessellation. Click a cell to select it.");
+                });
             }
         });
+
         egui::TopBottomPanel::top("tescellate_formula_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                let (c, r) = self.selected;
-                ui.monospace(grid::cell_address(c, r));
+                let (addr, source) = self.active_address_and_source();
+                ui.monospace(addr);
                 ui.separator();
-                let shown = match &self.edit {
-                    Some(edit) => edit.buffer.clone(),
-                    None => self.selected_source(),
-                };
-                ui.label(if shown.is_empty() {
+                ui.label(if source.is_empty() {
                     egui::RichText::new("(empty)").weak()
                 } else {
-                    egui::RichText::new(shown).monospace()
+                    egui::RichText::new(source).monospace()
                 });
             });
         });
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::both()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    self.draw_grid(ui);
-                });
+
+        egui::TopBottomPanel::bottom("tescellate_sheet_tabs").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                if ui
+                    .selectable_label(self.active == ActiveSheet::Square, "Budget")
+                    .clicked()
+                {
+                    self.commit_edit();
+                    self.active = ActiveSheet::Square;
+                }
+                if ui
+                    .selectable_label(self.active == ActiveSheet::Hex, "Hex demo")
+                    .clicked()
+                {
+                    self.commit_edit();
+                    self.active = ActiveSheet::Hex;
+                }
+            });
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| match self.active {
+            ActiveSheet::Square => {
+                egui::ScrollArea::both()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| self.draw_grid(ui));
+            }
+            ActiveSheet::Hex => self.draw_hex_grid(ui),
         });
     }
 }
 
-/// Draw a cell's value with its formatting — colour, alignment, italic,
-/// and faux-bold (a second offset pass, since egui's default font has no
-/// bold weight).
+/// Draw a square cell's value with its formatting — colour, alignment,
+/// italic, and faux-bold (a second offset pass, since egui's default font
+/// has no bold weight).
 fn draw_cell_text(
     painter: &egui::Painter,
     text: &str,
@@ -505,6 +683,22 @@ fn draw_cell_text(
     }
 }
 
+/// Render a cell value with the engine's natural formatting — no number
+/// format applied. Used for the hex sheet and as the square sheet's
+/// fallback for non-numeric values.
+fn natural_text(value: CellValue) -> String {
+    match value {
+        CellValue::Empty => String::new(),
+        CellValue::Number(n) => format_number(n),
+        CellValue::Integer(i) => i.to_string(),
+        CellValue::Bool(b) => if b { "TRUE" } else { "FALSE" }.to_string(),
+        CellValue::Text(t) => t,
+        CellValue::Error(_) => "#ERROR".to_string(),
+        CellValue::Array(_) => "{array}".to_string(),
+        _ => String::new(),
+    }
+}
+
 /// Format a numeric cell value: integers without a fractional part, other
 /// finite numbers with Rust's default float formatting.
 fn format_number(n: f64) -> String {
@@ -512,5 +706,45 @@ fn format_number(n: f64) -> String {
         format!("{}", n as i64)
     } else {
         format!("{n}")
+    }
+}
+
+/// The `H(q,r)` address string for a hex coord — the form the engine's
+/// hex lattice canonicalizes to.
+fn hex_address(c: HexCoord) -> String {
+    format!("H({},{})", c.q, c.r)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_number_drops_the_point_for_integers() {
+        assert_eq!(format_number(3.0), "3");
+        assert_eq!(format_number(-7.0), "-7");
+        assert_eq!(format_number(0.0), "0");
+    }
+
+    #[test]
+    fn format_number_keeps_a_fractional_part() {
+        assert_eq!(format_number(3.5), "3.5");
+        assert_eq!(format_number(-0.25), "-0.25");
+    }
+
+    #[test]
+    fn natural_text_renders_each_value_kind() {
+        assert_eq!(natural_text(CellValue::Empty), "");
+        assert_eq!(natural_text(CellValue::Number(42.0)), "42");
+        assert_eq!(natural_text(CellValue::Bool(true)), "TRUE");
+        assert_eq!(natural_text(CellValue::Bool(false)), "FALSE");
+        assert_eq!(natural_text(CellValue::Text("hi".to_string())), "hi");
+    }
+
+    #[test]
+    fn hex_address_formats_axial_coords() {
+        assert_eq!(hex_address(HexCoord::new(0, 0)), "H(0,0)");
+        assert_eq!(hex_address(HexCoord::new(2, -3)), "H(2,-3)");
+        assert_eq!(hex_address(HexCoord::new(-1, 4)), "H(-1,4)");
     }
 }
