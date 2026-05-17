@@ -99,11 +99,12 @@ A version does not merge until both gates pass. Versions are not calendar-bound.
 > **Execution note (post-v6).** v0–v6 — Track B, the Carbide transpiler — shipped as
 > planned. The loop then continued on engine work it can verify headlessly: wiring the
 > native tier into `WorkbookEngine` (the deferred v5 follow-on), the PyO3 Python engine,
-> then type-specialized transpiler codegen with transpile-time constant folding (a real
-> >2x speedup on constant-bearing formulas) — all taken ahead of Track A. The UI
-> rustification (v7–v9 above) is still the plan, but its *actual-behavior* gate needs a
-> running GUI, so it is deferred to a session where that can be driven and verified
-> interactively.
+> type-specialized transpiler codegen with transpile-time constant folding (~2x on
+> constant-bearing formulas), then generative differential testing — a seeded random
+> Carbide-AST fuzzer, which immediately caught an operand-evaluation-order bug in the
+> v9 codegen — all taken ahead of Track A. The UI rustification (v7–v9 above) is still
+> the plan, but its *actual-behavior* gate needs a running GUI, so it is deferred to a
+> session where that can be driven and verified interactively.
 
 ### v0 — Roadmap + CI pipeline *(this version)*
 

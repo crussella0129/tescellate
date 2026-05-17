@@ -19,7 +19,12 @@
 //! `f64` code calling `number_binary_op`, skipping the `CellValue` boxing
 //! and the `to_number` coercion the general path pays. Where a type isn't
 //! statically known, the general `apply_*_op` / `CellValue` path is used.
-//! `to_number` is inserted only at the boundary between the two.
+//! `to_number` is inserted only at the boundary between the two — and
+//! arithmetic binds *both* operands to locals before coercing either, so
+//! coercion (which belongs to the operator, not the operand) never runs
+//! ahead of evaluating the other operand: an error surfaces from exactly
+//! the operand the interpreter's `eval(lhs)?; eval(rhs)?` order would
+//! surface it from.
 //!
 //! Building on that, a subtree whose every leaf is a number literal is a
 //! compile-time constant: [`const_fold`] evaluates it *during transpilation*
@@ -87,16 +92,21 @@ fn transpile_typed(expr: &Expr) -> (String, Ty) {
             };
             (code, Ty::Number)
         }
-        // Arithmetic over `f64` — the specialized numeric kernel. Each
-        // operand is coerced to `f64` (a no-op when already a number).
+        // Arithmetic over `f64` — the specialized numeric kernel. Both
+        // operands are evaluated into locals (`a`, `b`) *first*, then each
+        // is coerced to `f64` (a no-op when already a number). Binding
+        // before coercing keeps the interpreter's `eval(lhs)?; eval(rhs)?`
+        // order: coercing `a` must not run before `b` is evaluated, or an
+        // error would surface from the wrong operand. Nested arithmetic
+        // shadows `a`/`b` in its own block — correct and scope-local.
         Expr::Binary(op, lhs, rhs) if is_arithmetic(*op) => {
             let (lc, lt) = transpile_typed(lhs);
             let (rc, rt) = transpile_typed(rhs);
             let code = format!(
-                "number_binary_op({}, {}, {})?",
+                "{{ let a = {lc}; let b = {rc}; number_binary_op({}, {}, {})? }}",
                 binary_op_path(*op),
-                as_number(&lc, lt),
-                as_number(&rc, rt),
+                as_number("a", lt),
+                as_number("b", rt),
             );
             (code, Ty::Number)
         }
@@ -404,12 +414,12 @@ mod tests {
     #[test]
     fn arithmetic_specializes_and_nests() {
         // `A1 + A2 * A3` parses as `A1 + (A2 * A3)`; non-constant operands
-        // stay as nested `number_binary_op` over raw f64s, with one
-        // `CellValue::Number` wrap at the very top.
+        // stay as nested `number_binary_op` over raw f64s, each arithmetic
+        // node binding its operands to `a`/`b` before coercing.
         let s = t("A1 + A2 * A3");
-        assert!(s.starts_with("CellValue::Number(number_binary_op(BinaryOp::Add, "));
-        assert!(s.contains("number_binary_op(BinaryOp::Mul, "));
-        assert!(s.contains(r#"to_number(&(ctx.cell("A3")?))?"#));
+        assert!(s.starts_with(r#"CellValue::Number({ let a = ctx.cell("A1")?; let b = {"#));
+        assert!(s.contains("number_binary_op(BinaryOp::Mul, to_number(&(a))?, to_number(&(b))?)?"));
+        assert!(s.ends_with("number_binary_op(BinaryOp::Add, to_number(&(a))?, b)? })"));
     }
 
     #[test]
@@ -428,7 +438,7 @@ mod tests {
         // The constant factor `2 * 3` folds; the cell read stays a runtime op.
         assert_eq!(
             t("A1 + 2 * 3"),
-            r#"CellValue::Number(number_binary_op(BinaryOp::Add, to_number(&(ctx.cell("A1")?))?, 6.0f64)?)"#
+            r#"CellValue::Number({ let a = ctx.cell("A1")?; let b = 6.0f64; number_binary_op(BinaryOp::Add, to_number(&(a))?, b)? })"#
         );
     }
 
@@ -438,18 +448,19 @@ mod tests {
         // the interpreter does — so it stays a runtime call, not a fold.
         assert_eq!(
             t("1 / 0"),
-            "CellValue::Number(number_binary_op(BinaryOp::Div, 1.0f64, 0.0f64)?)"
+            "CellValue::Number({ let a = 1.0f64; let b = 0.0f64; number_binary_op(BinaryOp::Div, a, b)? })"
         );
     }
 
     #[test]
     fn cell_ref_in_arithmetic_coerces_with_to_number() {
         // A cell read is `Value`-typed, so it crosses into the numeric path
-        // through `to_number` — exactly as the interpreter coerces it.
-        let s = t("A1 + A2");
-        assert!(s.starts_with("CellValue::Number(number_binary_op(BinaryOp::Add, "));
-        assert!(s.contains(r#"to_number(&(ctx.cell("A1")?))?"#));
-        assert!(s.contains(r#"to_number(&(ctx.cell("A2")?))?"#));
+        // through `to_number` — exactly as the interpreter coerces it. Both
+        // operands are bound to locals before either is coerced.
+        assert_eq!(
+            t("A1 + A2"),
+            r#"CellValue::Number({ let a = ctx.cell("A1")?; let b = ctx.cell("A2")?; number_binary_op(BinaryOp::Add, to_number(&(a))?, to_number(&(b))?)? })"#
+        );
     }
 
     #[test]
@@ -526,10 +537,12 @@ mod tests {
 
     #[test]
     fn call_in_arithmetic_coerces_with_to_number() {
-        let s = t("SUM(A1) + 1");
-        assert!(s.starts_with("CellValue::Number(number_binary_op(BinaryOp::Add, to_number(&("));
-        assert!(s.contains(r#"standard().call("SUM","#));
-        assert!(s.ends_with("1.0f64)?)"));
+        // A call is `Value`-typed; bound to `a`, then coerced. The literal
+        // `1` is already `Number`-typed, so `b` needs no coercion.
+        assert_eq!(
+            t("SUM(A1) + 1"),
+            r#"CellValue::Number({ let a = standard().call("SUM", &[Expr::CellRef("A1".to_string())], ctx)?; let b = 1.0f64; number_binary_op(BinaryOp::Add, to_number(&(a))?, b)? })"#
+        );
     }
 
     #[test]

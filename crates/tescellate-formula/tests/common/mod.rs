@@ -1,7 +1,22 @@
-//! Shared fixtures for the differential tests — the formula corpus and the
-//! cell table used by both `transpile_differential` (transpiled source run
-//! as a binary) and `native_differential` (transpiled source compiled to a
-//! native cdylib). One corpus, one source of truth.
+//! Shared fixtures for the differential tests — the formula corpus, the
+//! cell table, and `run_differential`, the transpile → compile → compare
+//! harness. Used by `transpile_differential` (the hand-written corpus, run
+//! as a binary), `native_differential` (the corpus, compiled to a cdylib),
+//! and `transpile_fuzz` (generated formulas). One corpus, one harness.
+//!
+//! `dead_code` is allowed module-wide: each differential test binary is a
+//! separate crate that includes this module and uses a different subset of
+//! it (`native_differential` reads only `CELLS`/`CORPUS`, never the
+//! harness), which is the normal shape of a shared test-fixture module.
+#![allow(dead_code)]
+
+use std::fs;
+use std::process::Command;
+
+use tescellate_formula::excellite::ast::Expr;
+use tescellate_formula::excellite::eval::eval;
+use tescellate_formula::transpile::rt::CellValue;
+use tescellate_formula::transpile::{emit_formula_fn, MapCtx};
 
 /// Numeric cells the corpus reads. Both differential tests build a `MapCtx`
 /// from this exact table on each side of the comparison.
@@ -132,6 +147,12 @@ pub const CORPUS: &[&str] = &[
     "FALSE * 100",
     r#""5" + 3"#,
     r#""abc" + 1"#,
+    // v10 regression — arithmetic operand-evaluation order. The lhs
+    // evaluates fine but coerces to an error; the rhs *evaluates* to an
+    // error. The interpreter evaluates rhs before coercing lhs, so it
+    // surfaces `#DIV/0!`; the transpiler must bind both operands before
+    // coercing either, or it would surface the lhs coercion error instead.
+    r#"("x" & "y") * (1 / 0)"#,
     r#"1 = "1""#,
     r#""" & "" & "x""#,
     "IF(1 / 0, 1, 2)",
@@ -147,3 +168,117 @@ pub const CORPUS: &[&str] = &[
     "LET(xs, [1, 2, 3, 4], SUM(MAP(xs, LAMBDA(v, v * v))))",
     "LET(adder, LAMBDA(x, LAMBDA(y, x + y)), (adder(10))(5))",
 ];
+
+/// The shared cell context — `CELLS` as a `MapCtx`. The interpreter reads
+/// from one of these in-process; every generated crate rebuilds the same
+/// table (see `run_differential`), so both sides see an identical sheet.
+fn cell_context() -> MapCtx {
+    let pairs: Vec<(&str, CellValue)> = CELLS
+        .iter()
+        .map(|(addr, v)| (*addr, CellValue::Number(*v)))
+        .collect();
+    MapCtx::from_pairs(&pairs)
+}
+
+/// Differentially check a batch of `(label, expr)` cases against the
+/// tree-walking interpreter — the oracle.
+///
+/// Every case is transpiled into one generated crate, which is compiled and
+/// run exactly once; each transpiled result must `{:?}`-equal `eval`'s
+/// result — value, type, *and* error. `label` is only used to identify a
+/// case in a failure message (a source string for the corpus, a `{:?}` AST
+/// dump for generated formulas).
+///
+/// `dir_name` names the generated crate's temp directory and package, so
+/// callers running concurrently never share a generated crate.
+pub fn run_differential(dir_name: &str, cases: &[(String, Expr)]) {
+    let ctx = cell_context();
+
+    // 1. Oracle: interpret every case in-process.
+    let oracle: Vec<String> = cases
+        .iter()
+        .map(|(_, expr)| format!("{:?}", eval(expr, &ctx)))
+        .collect();
+
+    // 2. Transpile every case into one generated source file.
+    let mut generated = String::from(
+        "#![allow(unused_variables)]\n\
+         use tescellate_formula::transpile::rt::*;\n\
+         use tescellate_formula::transpile::MapCtx;\n\n",
+    );
+    for (i, (_, expr)) in cases.iter().enumerate() {
+        generated.push_str(&emit_formula_fn(&format!("formula_{i}"), expr));
+        generated.push('\n');
+    }
+    // The generated crate rebuilds the context from the same CELLS table.
+    generated.push_str("fn context() -> MapCtx {\n    MapCtx::from_pairs(&[\n");
+    for (addr, v) in CELLS {
+        generated.push_str(&format!(
+            "        ({addr:?}, CellValue::Number({v:?}f64)),\n"
+        ));
+    }
+    generated.push_str("    ])\n}\n\n");
+    generated.push_str("fn main() {\n    let ctx = context();\n");
+    for i in 0..cases.len() {
+        generated.push_str(&format!("    println!(\"{{:?}}\", formula_{i}(&ctx));\n"));
+    }
+    generated.push_str("}\n");
+
+    // 3. Materialize a standalone crate. The temp dir is stable, so the
+    //    crate's `target/` persists and re-runs are fast. `[workspace]`
+    //    detaches it from any ancestor workspace.
+    let formula_crate = env!("CARGO_MANIFEST_DIR"); // .../crates/tescellate-formula
+    let crate_dir = std::env::temp_dir().join(dir_name);
+    fs::create_dir_all(crate_dir.join("src")).expect("create generated crate dir");
+    let cargo_toml = format!(
+        "[package]\n\
+         name = \"{dir_name}\"\n\
+         version = \"0.0.0\"\n\
+         edition = \"2021\"\n\n\
+         [dependencies]\n\
+         tescellate-formula = {{ path = {formula_crate:?} }}\n\n\
+         [workspace]\n"
+    );
+    fs::write(crate_dir.join("Cargo.toml"), cargo_toml).expect("write generated Cargo.toml");
+    fs::write(crate_dir.join("src/main.rs"), &generated).expect("write generated main.rs");
+
+    // 4. Compile + run the generated crate.
+    let out = Command::new("cargo")
+        .args(["run", "--quiet"])
+        .current_dir(&crate_dir)
+        .output()
+        .expect("invoke cargo on the generated crate");
+    assert!(
+        out.status.success(),
+        "generated crate failed to build/run\n--- stderr ---\n{}\n--- generated source ---\n{generated}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+
+    // 5. Compare each printed result against the oracle.
+    let stdout = String::from_utf8(out.stdout).expect("generated crate stdout is utf-8");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines.len(),
+        oracle.len(),
+        "expected {} result lines, got {}\n{stdout}",
+        oracle.len(),
+        lines.len(),
+    );
+
+    let mut mismatches = Vec::new();
+    for (i, (label, _)) in cases.iter().enumerate() {
+        if oracle[i].as_str() != lines[i] {
+            mismatches.push(format!(
+                "  {label}\n      interpreter: {}\n      transpiled : {}",
+                oracle[i], lines[i],
+            ));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "transpiled output diverged from the interpreter ({} of {} cases):\n{}",
+        mismatches.len(),
+        cases.len(),
+        mismatches.join("\n"),
+    );
+}
