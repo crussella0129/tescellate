@@ -3,14 +3,32 @@
 //! Lowers a Carbide `Expr` to Rust source that, once compiled, evaluates to
 //! the same `CellValue` as the tree-walking interpreter. Transpiled code
 //! calls the very same value-level primitives the interpreter uses
-//! (`apply_binary_op`, `apply_unary_op`, `bare_range`, `apply_lambda`),
-//! reads cells and variables through the same `EvalCtx` trait, and
-//! dispatches function calls into the same `excellite::funcs::standard()`
-//! registry — so equivalence holds *by construction*: there is one
-//! implementation of the semantics, not two.
+//! (`apply_binary_op`, `apply_unary_op`, `bare_range`, `apply_lambda`,
+//! `number_binary_op`), reads cells and variables through the same
+//! `EvalCtx` trait, and dispatches function calls into the same
+//! `excellite::funcs::standard()` registry — so equivalence holds *by
+//! construction*: there is one implementation of the semantics, not two.
 //!
-//! As of v4 every `Expr` variant is lowered — transpilation is **total**,
-//! so `transpile_expr` is infallible and returns a plain `String`.
+//! ## Type specialization (v9)
+//!
+//! Every `Expr` variant is lowered, so transpilation is total. On top of
+//! that, the codegen is *typed*: `transpile_typed` tracks whether a subtree
+//! is statically known to be a number ([`Ty::Number`]) or of unknown type
+//! ([`Ty::Value`], a `CellValue`). A number-typed subtree — number
+//! literals, and arithmetic over number-typed operands — is emitted as raw
+//! `f64` code calling `number_binary_op`, skipping the `CellValue` boxing
+//! and the `to_number` coercion the general path pays. Where a type isn't
+//! statically known, the general `apply_*_op` / `CellValue` path is used.
+//! `to_number` is inserted only at the boundary between the two.
+//!
+//! Building on that, a subtree whose every leaf is a number literal is a
+//! compile-time constant: [`const_fold`] evaluates it *during transpilation*
+//! — through the interpreter's own `number_binary_op`, so the folded value
+//! is bit-identical to a runtime evaluation — and the whole subtree
+//! collapses to a single `f64` literal. A constant that would error at
+//! runtime (a literal `1 / 0`, or an overflow to infinity) is deliberately
+//! left unfolded, so the error still surfaces exactly as the interpreter
+//! raises it.
 
 pub mod rt;
 
@@ -20,8 +38,18 @@ pub mod native;
 use std::collections::HashMap;
 
 use crate::excellite::ast::{BinaryOp, Expr, UnaryOp};
+use crate::excellite::eval::number_binary_op;
 use crate::{EvalCtx, EvalError};
 use tescellate_core::CellValue;
+
+/// The static type the codegen tracks for a subtree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ty {
+    /// Statically a number — emitted as a raw `f64` expression.
+    Number,
+    /// Unknown type — emitted as a `CellValue` expression.
+    Value,
+}
 
 /// Lower `expr` to a Rust expression of type `CellValue`.
 ///
@@ -31,53 +59,143 @@ use tescellate_core::CellValue;
 /// apply lowerings end in `?`, so an evaluation error propagates exactly
 /// as it does in the interpreter.
 pub fn transpile_expr(expr: &Expr) -> String {
+    let (code, ty) = transpile_typed(expr);
+    as_value(&code, ty)
+}
+
+/// Lower `expr`, returning the Rust source and its static [`Ty`].
+fn transpile_typed(expr: &Expr) -> (String, Ty) {
+    // A fully-constant arithmetic subtree collapses to one `f64` literal,
+    // computed now rather than on every evaluation.
+    if let Some(v) = const_fold(expr) {
+        return (format!("{v:?}f64"), Ty::Number);
+    }
     match expr {
-        Expr::Number(n) => format!("CellValue::Number({n:?}f64)"),
-        Expr::Str(s) => format!("CellValue::Text({s:?}.to_string())"),
-        Expr::Bool(b) => format!("CellValue::Bool({b})"),
-        Expr::CellRef(addr) => format!("ctx.cell({addr:?})?"),
-        Expr::Range(_, _) => "bare_range()?".to_string(),
-        Expr::Array(rows) => transpile_array(rows),
-        Expr::Unary(op, inner) => format!(
-            "apply_unary_op({}, {})?",
-            unary_op_path(*op),
-            transpile_expr(inner),
-        ),
-        Expr::Binary(op, lhs, rhs) => format!(
-            "apply_binary_op({}, {}, {})?",
-            binary_op_path(*op),
-            transpile_expr(lhs),
-            transpile_expr(rhs),
-        ),
+        Expr::Number(n) => (format!("{n:?}f64"), Ty::Number),
+        Expr::Str(s) => (format!("CellValue::Text({s:?}.to_string())"), Ty::Value),
+        Expr::Bool(b) => (format!("CellValue::Bool({b})"), Ty::Value),
+        Expr::CellRef(addr) => (format!("ctx.cell({addr:?})?"), Ty::Value),
+        Expr::Range(_, _) => ("bare_range()?".to_string(), Ty::Value),
+        Expr::Array(rows) => (transpile_array(rows), Ty::Value),
+        // Unary `-` / `+` always produce a number; specialize the operand.
+        Expr::Unary(op, inner) => {
+            let (ic, it) = transpile_typed(inner);
+            let operand = as_number(&ic, it);
+            let code = match op {
+                UnaryOp::Neg => format!("(-({operand}))"),
+                UnaryOp::Pos => operand,
+            };
+            (code, Ty::Number)
+        }
+        // Arithmetic over `f64` — the specialized numeric kernel. Each
+        // operand is coerced to `f64` (a no-op when already a number).
+        Expr::Binary(op, lhs, rhs) if is_arithmetic(*op) => {
+            let (lc, lt) = transpile_typed(lhs);
+            let (rc, rt) = transpile_typed(rhs);
+            let code = format!(
+                "number_binary_op({}, {}, {})?",
+                binary_op_path(*op),
+                as_number(&lc, lt),
+                as_number(&rc, rt),
+            );
+            (code, Ty::Number)
+        }
+        // Concat / comparisons produce Text / Bool, not a number — they
+        // stay on the general `CellValue` path.
+        Expr::Binary(op, lhs, rhs) => {
+            let (lc, lt) = transpile_typed(lhs);
+            let (rc, rt) = transpile_typed(rhs);
+            let code = format!(
+                "apply_binary_op({}, {}, {})?",
+                binary_op_path(*op),
+                as_value(&lc, lt),
+                as_value(&rc, rt),
+            );
+            (code, Ty::Value)
+        }
         // A call dispatches into the shared `standard()` registry. Its
         // arguments are passed as reconstructed AST (`emit_expr_literal`),
         // not pre-evaluated values, so registry functions keep their lazy
         // argument semantics — `IF` / `AND` short-circuiting still works,
         // and `LET` / `LAMBDA` / `LETREC` evaluate their bodies themselves.
-        Expr::Call(name, args) => {
+        Expr::Call(name, args) => (
             format!(
                 "standard().call({name:?}, &[{}], ctx)?",
                 emit_expr_list(args)
-            )
-        }
+            ),
+            Ty::Value,
+        ),
         // A bare variable resolves against the lexical environment. At a
-        // cell's top level there is no scope, so this is an unbound error
-        // — exactly what the interpreter produces.
+        // cell's top level there is no scope, so this is an unbound error.
         Expr::Var(name) => {
             let msg = format!("unbound: {name}");
-            format!("ctx.var({name:?}).ok_or_else(|| EvalError::Ref({msg:?}.to_string()))?")
+            (
+                format!("ctx.var({name:?}).ok_or_else(|| EvalError::Ref({msg:?}.to_string()))?"),
+                Ty::Value,
+            )
         }
         // Application of a callee value (e.g. an immediately-invoked
         // lambda): evaluate the callee, then the arguments, then dispatch
         // through the shared `apply_lambda` primitive.
         Expr::Apply(callee, args) => {
             let arg_srcs: Vec<String> = args.iter().map(transpile_expr).collect();
-            format!(
-                "apply_lambda({}, vec![{}], ctx)?",
-                transpile_expr(callee),
-                arg_srcs.join(", "),
+            (
+                format!(
+                    "apply_lambda({}, vec![{}], ctx)?",
+                    transpile_expr(callee),
+                    arg_srcs.join(", "),
+                ),
+                Ty::Value,
             )
         }
+    }
+}
+
+/// Coerce a transpiled sub-expression to an `f64` expression. A `Number`
+/// subtree is already an `f64`; a `Value` subtree is run through the
+/// shared `to_number` coercion (exactly what the interpreter does).
+fn as_number(code: &str, ty: Ty) -> String {
+    match ty {
+        Ty::Number => code.to_string(),
+        Ty::Value => format!("to_number(&({code}))?"),
+    }
+}
+
+/// Coerce a transpiled sub-expression to a `CellValue` expression.
+fn as_value(code: &str, ty: Ty) -> String {
+    match ty {
+        Ty::Number => format!("CellValue::Number({code})"),
+        Ty::Value => code.to_string(),
+    }
+}
+
+fn is_arithmetic(op: BinaryOp) -> bool {
+    matches!(
+        op,
+        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow
+    )
+}
+
+/// Evaluate a fully-constant arithmetic subtree at transpile time.
+///
+/// Returns `Some(v)` only when every leaf is a number literal *and* the
+/// arithmetic succeeds. Folding goes through the interpreter's own
+/// [`number_binary_op`], so a folded constant is bit-identical to what a
+/// runtime evaluation would produce. A subtree that *would* error at
+/// runtime — a literal `1 / 0`, or a `Pow` that overflows to infinity —
+/// yields `None`: `number_binary_op` returns `Err`, `.ok()` drops it, and
+/// the runtime call is left in place to raise the error exactly as the
+/// interpreter does. Non-arithmetic nodes (cell reads, calls, concat,
+/// comparisons) are never constant here and short-circuit to `None`.
+fn const_fold(expr: &Expr) -> Option<f64> {
+    match expr {
+        Expr::Number(n) => Some(*n),
+        Expr::Unary(UnaryOp::Neg, inner) => Some(-const_fold(inner)?),
+        Expr::Unary(UnaryOp::Pos, inner) => const_fold(inner),
+        Expr::Binary(op, lhs, rhs) if is_arithmetic(*op) => {
+            number_binary_op(*op, const_fold(lhs)?, const_fold(rhs)?).ok()
+        }
+        _ => None,
     }
 }
 
@@ -274,22 +392,80 @@ mod tests {
     }
 
     #[test]
-    fn unary_negation() {
+    fn unary_negation_specializes_to_f64() {
+        // A non-constant operand: negation emits raw f64 — no `apply_unary_op`,
+        // no `CellValue` box for the operand.
         assert_eq!(
-            t("-5"),
-            "apply_unary_op(UnaryOp::Neg, CellValue::Number(5.0f64))?"
+            t("-A1"),
+            r#"CellValue::Number((-(to_number(&(ctx.cell("A1")?))?)))"#
         );
     }
 
     #[test]
-    fn binary_nests_by_parse_precedence() {
-        let s = t("1 + 2 * 3");
-        assert!(s.starts_with("apply_binary_op(BinaryOp::Add, CellValue::Number(1.0f64), "));
-        assert!(s.contains(
-            "apply_binary_op(BinaryOp::Mul, CellValue::Number(2.0f64), \
-             CellValue::Number(3.0f64))?"
-        ));
-        assert!(s.ends_with(")?"));
+    fn arithmetic_specializes_and_nests() {
+        // `A1 + A2 * A3` parses as `A1 + (A2 * A3)`; non-constant operands
+        // stay as nested `number_binary_op` over raw f64s, with one
+        // `CellValue::Number` wrap at the very top.
+        let s = t("A1 + A2 * A3");
+        assert!(s.starts_with("CellValue::Number(number_binary_op(BinaryOp::Add, "));
+        assert!(s.contains("number_binary_op(BinaryOp::Mul, "));
+        assert!(s.contains(r#"to_number(&(ctx.cell("A3")?))?"#));
+    }
+
+    #[test]
+    fn constant_arithmetic_folds_at_transpile_time() {
+        // Fully-constant subtrees are evaluated during transpilation.
+        assert_eq!(t("1 + 2"), "CellValue::Number(3.0f64)");
+        assert_eq!(t("2 ^ 10"), "CellValue::Number(1024.0f64)");
+        assert_eq!(t("(3 + 4) * 2"), "CellValue::Number(14.0f64)");
+        assert_eq!(t("-5"), "CellValue::Number(-5.0f64)");
+        // Precedence holds: `1 + 2 * 3` folds to 7, not 9.
+        assert_eq!(t("1 + 2 * 3"), "CellValue::Number(7.0f64)");
+    }
+
+    #[test]
+    fn partial_constants_fold_only_the_constant_part() {
+        // The constant factor `2 * 3` folds; the cell read stays a runtime op.
+        assert_eq!(
+            t("A1 + 2 * 3"),
+            r#"CellValue::Number(number_binary_op(BinaryOp::Add, to_number(&(ctx.cell("A1")?))?, 6.0f64)?)"#
+        );
+    }
+
+    #[test]
+    fn constant_that_would_error_is_left_unfolded() {
+        // A literal `1 / 0` must still raise #DIV/0! at runtime, exactly as
+        // the interpreter does — so it stays a runtime call, not a fold.
+        assert_eq!(
+            t("1 / 0"),
+            "CellValue::Number(number_binary_op(BinaryOp::Div, 1.0f64, 0.0f64)?)"
+        );
+    }
+
+    #[test]
+    fn cell_ref_in_arithmetic_coerces_with_to_number() {
+        // A cell read is `Value`-typed, so it crosses into the numeric path
+        // through `to_number` — exactly as the interpreter coerces it.
+        let s = t("A1 + A2");
+        assert!(s.starts_with("CellValue::Number(number_binary_op(BinaryOp::Add, "));
+        assert!(s.contains(r#"to_number(&(ctx.cell("A1")?))?"#));
+        assert!(s.contains(r#"to_number(&(ctx.cell("A2")?))?"#));
+    }
+
+    #[test]
+    fn concat_stays_on_the_value_path() {
+        let s = t(r#""a" & "b""#);
+        assert!(s.starts_with("apply_binary_op(BinaryOp::Concat, "));
+        assert!(s.contains(r#"CellValue::Text("a".to_string())"#));
+    }
+
+    #[test]
+    fn comparison_stays_on_the_value_path() {
+        // `1 < 2` produces a Bool — number operands are wrapped back up.
+        let s = t("1 < 2");
+        assert!(s.starts_with("apply_binary_op(BinaryOp::Lt, "));
+        assert!(s.contains("CellValue::Number(1.0f64)"));
+        assert!(s.contains("CellValue::Number(2.0f64)"));
     }
 
     #[test]
@@ -349,10 +525,11 @@ mod tests {
     }
 
     #[test]
-    fn call_nested_in_arithmetic() {
+    fn call_in_arithmetic_coerces_with_to_number() {
         let s = t("SUM(A1) + 1");
-        assert!(s.starts_with(r#"apply_binary_op(BinaryOp::Add, standard().call("SUM","#));
-        assert!(s.ends_with("CellValue::Number(1.0f64))?"));
+        assert!(s.starts_with("CellValue::Number(number_binary_op(BinaryOp::Add, to_number(&("));
+        assert!(s.contains(r#"standard().call("SUM","#));
+        assert!(s.ends_with("1.0f64)?)"));
     }
 
     #[test]

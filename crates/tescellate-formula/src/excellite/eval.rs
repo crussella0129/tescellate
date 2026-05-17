@@ -128,6 +128,38 @@ pub fn apply_unary_op(op: UnaryOp, v: CellValue) -> Result<CellValue, EvalError>
     }))
 }
 
+/// Apply an arithmetic binary operator (`Add`/`Sub`/`Mul`/`Div`/`Pow`) to
+/// two `f64` operands — the shared numeric kernel.
+///
+/// `apply_binary_op` calls it after coercing both sides to numbers;
+/// type-specialized transpiled code (`crate::transpile`) calls it directly
+/// on `f64`s it has statically proven are numbers, skipping the `CellValue`
+/// boxing and the coercion. Reproduces the interpreter's `#DIV/0!` and
+/// `#NUM!` errors, so the two paths stay equivalent.
+pub fn number_binary_op(op: BinaryOp, a: f64, b: f64) -> Result<f64, EvalError> {
+    let v = match op {
+        BinaryOp::Add => a + b,
+        BinaryOp::Sub => a - b,
+        BinaryOp::Mul => a * b,
+        BinaryOp::Div => {
+            if b == 0.0 {
+                return Err(EvalError::DivZero);
+            }
+            a / b
+        }
+        BinaryOp::Pow => a.powf(b),
+        other => {
+            return Err(EvalError::Value(format!(
+                "number_binary_op: not an arithmetic operator: {other:?}"
+            )))
+        }
+    };
+    if v.is_nan() || v.is_infinite() {
+        return Err(EvalError::Num);
+    }
+    Ok(v)
+}
+
 /// Apply a binary operator to two already-evaluated values. Shared by the
 /// interpreter and transpiled code — see `apply_unary_op`.
 pub fn apply_binary_op(op: BinaryOp, l: CellValue, r: CellValue) -> Result<CellValue, EvalError> {
@@ -135,23 +167,7 @@ pub fn apply_binary_op(op: BinaryOp, l: CellValue, r: CellValue) -> Result<CellV
         BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Pow => {
             let a = to_number(&l)?;
             let b = to_number(&r)?;
-            let v = match op {
-                BinaryOp::Add => a + b,
-                BinaryOp::Sub => a - b,
-                BinaryOp::Mul => a * b,
-                BinaryOp::Div => {
-                    if b == 0.0 {
-                        return Err(EvalError::DivZero);
-                    }
-                    a / b
-                }
-                BinaryOp::Pow => a.powf(b),
-                _ => unreachable!(),
-            };
-            if v.is_nan() || v.is_infinite() {
-                return Err(EvalError::Num);
-            }
-            Ok(CellValue::Number(v))
+            Ok(CellValue::Number(number_binary_op(op, a, b)?))
         }
         BinaryOp::Concat => Ok(CellValue::Text(format!(
             "{}{}",
