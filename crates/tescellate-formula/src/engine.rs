@@ -51,6 +51,8 @@ impl WorkbookEngine {
     pub fn new() -> Self {
         let mut engines: HashMap<EngineKind, Box<dyn FormulaEngine>> = HashMap::new();
         engines.insert(EngineKind::ExcelLite, Box::new(ExcelLite));
+        #[cfg(feature = "python")]
+        engines.insert(EngineKind::Python, Box::new(crate::python::PythonEngine));
         Self {
             workbook: empty_workbook(),
             dag: Dag::new(),
@@ -586,7 +588,15 @@ impl WorkbookEngine {
             .compiled
             .get(&cref)
             .ok_or_else(|| SetCellError::Native(format!("{addr}: no formula to compile")))?;
-        let CompiledFormula::ExcelLite(expr) = compiled;
+        let expr = match compiled {
+            CompiledFormula::ExcelLite(expr) => expr,
+            #[cfg(feature = "python")]
+            CompiledFormula::Python(_) => {
+                return Err(SetCellError::Native(
+                    "a Python formula cannot be compiled to native code".into(),
+                ));
+            }
+        };
         let program = crate::transpile::native::compile_program(&[expr])
             .map_err(|e| SetCellError::Native(format!("{e}")))?;
         self.native.insert(cref.clone(), program);
@@ -1522,6 +1532,32 @@ mod tests {
         assert_eq!(
             eng.get_cell(sid, "A1").unwrap().value,
             CellValue::Number(42.0)
+        );
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn python_engine_cell_evaluates() {
+        let (mut eng, sid) = new_sheet();
+        eng.workbook.default_engine = EngineKind::Python;
+        eng.set_cell(sid, "A1", Some("=21 + 21")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A1").unwrap().value,
+            CellValue::Integer(42)
+        );
+    }
+
+    #[cfg(feature = "python")]
+    #[test]
+    fn python_cell_reads_another_cell_via_ctx() {
+        let (mut eng, sid) = new_sheet();
+        eng.workbook.default_engine = EngineKind::Python;
+        eng.set_cell(sid, "A1", Some("=10.0")).unwrap();
+        eng.set_cell(sid, "B1", Some("=ctx.cell('A1') * 2"))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "B1").unwrap().value,
+            CellValue::Number(20.0)
         );
     }
 }

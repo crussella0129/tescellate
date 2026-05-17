@@ -39,14 +39,24 @@ impl FormulaEngine for ExcelLite {
     }
 
     fn refs(&self, compiled: &CompiledFormula) -> Vec<FormulaRef> {
-        let CompiledFormula::ExcelLite(expr) = compiled;
-        let mut out = Vec::new();
-        collect_refs(expr, &mut out);
-        out
+        match compiled {
+            CompiledFormula::ExcelLite(expr) => {
+                let mut out = Vec::new();
+                collect_refs(expr, &mut out);
+                out
+            }
+            #[cfg(feature = "python")]
+            CompiledFormula::Python(_) => Vec::new(),
+        }
     }
 
     fn eval(&self, compiled: &CompiledFormula, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
-        let CompiledFormula::ExcelLite(expr) = compiled;
-        eval(expr, ctx)
+        match compiled {
+            CompiledFormula::ExcelLite(expr) => eval(expr, ctx),
+            #[cfg(feature = "python")]
+            CompiledFormula::Python(_) => Err(EvalError::Value(
+                "internal: a Python formula reached the Excel-lite engine".into(),
+            )),
+        }
     }
 }

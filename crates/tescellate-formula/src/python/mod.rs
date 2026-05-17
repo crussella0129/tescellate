@@ -14,8 +14,8 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 
-use crate::EvalCtx;
-use tescellate_core::CellValue;
+use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine, FormulaRef, ParseError};
+use tescellate_core::{CellValue, EngineKind};
 
 /// Failure evaluating a Python formula.
 #[derive(Debug, thiserror::Error)]
@@ -159,6 +159,42 @@ fn cell_value_to_py<'py>(py: Python<'py>, value: &CellValue) -> PyResult<Bound<'
         CellValue::Error(e) => Err(PyRuntimeError::new_err(format!("cell error: {e:?}"))),
         CellValue::Pending => Err(PyRuntimeError::new_err("cell value is pending")),
         CellValue::Function(_) => Err(PyRuntimeError::new_err("cell holds a function value")),
+    }
+}
+
+/// The Python formula engine, registered in `WorkbookEngine` as
+/// `EngineKind::Python`. A Python cell's `=`-prefixed source is run as a
+/// Python expression with `ctx` in scope.
+pub struct PythonEngine;
+
+impl FormulaEngine for PythonEngine {
+    fn kind(&self) -> EngineKind {
+        EngineKind::Python
+    }
+
+    fn parse(&self, src: &str) -> Result<CompiledFormula, ParseError> {
+        // Tolerate a leading `=`, like the Excel-lite engine.
+        let body = src.strip_prefix('=').unwrap_or(src).to_string();
+        Ok(CompiledFormula::Python(body))
+    }
+
+    fn refs(&self, _compiled: &CompiledFormula) -> Vec<FormulaRef> {
+        // A Python formula reads cells through dynamic `ctx.cell(...)`
+        // calls, which aren't statically analyzable — so Python cells
+        // contribute no DAG edges and don't auto-recompute when a cell
+        // they read changes. A documented limit of the Python engine.
+        Vec::new()
+    }
+
+    fn eval(&self, compiled: &CompiledFormula, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+        match compiled {
+            CompiledFormula::Python(src) => {
+                eval_python_with_ctx(src, ctx).map_err(|e| EvalError::Value(e.to_string()))
+            }
+            CompiledFormula::ExcelLite(_) => Err(EvalError::Value(
+                "internal: an Excel-lite formula reached the Python engine".into(),
+            )),
+        }
     }
 }
 
