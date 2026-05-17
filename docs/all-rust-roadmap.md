@@ -110,8 +110,9 @@ A version does not merge until both gates pass. Versions are not calendar-bound.
 > by an end-to-end smoke test driving the real `tescellate-core` binary over its
 > JSON-RPC stdio protocol, scale/stress tests that surfaced and fixed an
 > unbounded-recursion crash on pathologically deep formulas, and a cross-engine
-> differential proving the Carbide and Python formula engines agree — all taken
-> ahead of Track A. The UI rustification (v7–v9 above) is still
+> differential proving the Carbide and Python formula engines agree. v18 then wrote
+> the Carbide language reference (`docs/carbide/reference.md`) with every example
+> CI-verified. All taken ahead of Track A. The UI rustification (v7–v9 above) is still
 > the plan, but its *actual-behavior* gate needs a running GUI, so it is deferred to a
 > session where that can be driven and verified interactively.
 

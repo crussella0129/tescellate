@@ -1,0 +1,178 @@
+//! Verification of the Carbide language reference — v18.
+//!
+//! Every example shown in `docs/carbide/reference.md` is reproduced here
+//! and checked against the engine. If the reference claims a behaviour the
+//! engine does not have, CI fails — the documentation cannot quietly rot.
+//!
+//! Formulas are parsed as expression *bodies* (the cell-level `=` marker
+//! is stripped before parsing, so it does not appear here).
+
+use tescellate_core::CellValue;
+use tescellate_formula::excellite::eval::eval;
+use tescellate_formula::excellite::parse::parse;
+use tescellate_formula::transpile::MapCtx;
+
+/// The cell context the reference's cell-reference examples assume.
+fn ctx() -> MapCtx {
+    MapCtx::from_pairs(&[
+        ("A1", CellValue::Number(10.0)),
+        ("A2", CellValue::Number(20.0)),
+        ("A3", CellValue::Number(30.0)),
+    ])
+}
+
+/// Parse and evaluate a Carbide expression body.
+fn eval_src(src: &str) -> Result<CellValue, String> {
+    let ast = parse(src).map_err(|e| format!("parse error: {e}"))?;
+    eval(&ast, &ctx()).map_err(|e| format!("eval error: {e:?}"))
+}
+
+/// The numeric value of a formula. Carbide has two numeric variants —
+/// `Number` (a 64-bit float, the result of arithmetic) and `Integer`
+/// (produced by counting functions such as `COUNT`) — and both are
+/// accepted here.
+#[track_caller]
+fn num(src: &str) -> f64 {
+    match eval_src(src) {
+        Ok(CellValue::Number(n)) => n,
+        Ok(CellValue::Integer(i)) => i as f64,
+        other => panic!("`{src}`: expected a number, got {other:?}"),
+    }
+}
+
+#[track_caller]
+fn text(src: &str) -> String {
+    match eval_src(src) {
+        Ok(CellValue::Text(t)) => t,
+        other => panic!("`{src}`: expected Text, got {other:?}"),
+    }
+}
+
+#[track_caller]
+fn boolean(src: &str) -> bool {
+    match eval_src(src) {
+        Ok(CellValue::Bool(b)) => b,
+        other => panic!("`{src}`: expected a Bool, got {other:?}"),
+    }
+}
+
+#[track_caller]
+fn is_array(src: &str) -> bool {
+    matches!(eval_src(src), Ok(CellValue::Array(_)))
+}
+
+#[test]
+fn value_literals() {
+    assert_eq!(num("42"), 42.0);
+    assert_eq!(num("2.5"), 2.5);
+    assert_eq!(text(r#""hello""#), "hello");
+    assert_eq!(text(r#""""#), "");
+    assert!(boolean("TRUE"));
+    assert!(!boolean("FALSE"));
+    assert!(is_array("[1, 2, 3]"));
+    assert!(is_array("[[1, 2], [3, 4]]"));
+    assert!(is_array("[]"));
+}
+
+#[test]
+fn operators() {
+    // Arithmetic, with precedence.
+    assert_eq!(num("1 + 2 * 3"), 7.0);
+    assert_eq!(num("(1 + 2) * 3"), 9.0);
+    assert_eq!(num("7 - 2 - 1"), 4.0); // additive is left-associative
+    assert_eq!(num("10 / 4"), 2.5);
+    // Exponentiation is right-associative: 2 ^ (3 ^ 2) = 2 ^ 9.
+    assert_eq!(num("2 ^ 3 ^ 2"), 512.0);
+    // Unary minus binds tighter than `^`, so this is (-2) ^ 2.
+    assert_eq!(num("-2 ^ 2"), 4.0);
+    // Concatenation.
+    assert_eq!(text(r#""a" & "b""#), "ab");
+    // Comparisons yield booleans.
+    assert!(boolean("1 < 2"));
+    assert!(boolean("2 = 2"));
+    assert!(boolean("3 <> 4"));
+    assert!(boolean("4 >= 4"));
+}
+
+#[test]
+fn cell_references_and_ranges() {
+    assert_eq!(num("A1"), 10.0);
+    assert_eq!(num("A1 + A2"), 30.0);
+    assert_eq!(num("SUM(A1:A3)"), 60.0);
+}
+
+#[test]
+fn functions() {
+    // Aggregate.
+    assert_eq!(num("SUM(1, 2, 3)"), 6.0);
+    assert_eq!(num("AVERAGE(2, 4, 6)"), 4.0);
+    assert_eq!(num("MIN(5, 1, 3)"), 1.0);
+    assert_eq!(num("MAX(5, 1, 3)"), 5.0);
+    assert_eq!(num("COUNT(1, 2, 3)"), 3.0);
+    // Math.
+    assert_eq!(num("ABS(-7)"), 7.0);
+    assert_eq!(num("SQRT(16)"), 4.0);
+    assert_eq!(num("POWER(2, 8)"), 256.0);
+    assert_eq!(num("MOD(10, 3)"), 1.0);
+    assert_eq!(num("ROUND(1.23456, 2)"), 1.23);
+    assert_eq!(num("SIGN(-3)"), -1.0);
+    // Logical.
+    assert_eq!(num("IF(TRUE, 10, 20)"), 10.0);
+    assert_eq!(num("IF(FALSE, 10, 20)"), 20.0);
+    assert!(boolean("AND(TRUE, TRUE)"));
+    assert!(!boolean("AND(TRUE, FALSE)"));
+    assert!(boolean("OR(FALSE, TRUE)"));
+    assert!(!boolean("NOT(TRUE)"));
+    assert_eq!(num("IFERROR(1 / 0, 99)"), 99.0);
+    // Text.
+    assert_eq!(num("LEN(\"hello\")"), 5.0);
+    assert_eq!(text(r#"UPPER("hi")"#), "HI");
+    assert_eq!(text(r#"LOWER("HI")"#), "hi");
+    assert_eq!(text(r#"LEFT("hello", 3)"#), "hel");
+    assert_eq!(text(r#"RIGHT("hello", 2)"#), "lo");
+    // Statistics — these take a single array or range argument.
+    assert_eq!(num("MEDIAN([1, 2, 3])"), 2.0);
+    // Dynamic arrays.
+    assert!(is_array("SEQUENCE(5)"));
+    assert!(is_array("UNIQUE([1, 2, 2, 3])"));
+}
+
+#[test]
+fn binding_and_lambda_forms() {
+    assert_eq!(num("LET(x, 10, x + 5)"), 15.0);
+    assert_eq!(num("LET(x, 3, y, 4, x * y)"), 12.0);
+    assert_eq!(num("(LAMBDA(x, x * 2))(21)"), 42.0);
+    assert_eq!(
+        num("LETREC(fact, LAMBDA(n, IF(n <= 1, 1, n * fact(n - 1))), fact(5))"),
+        120.0,
+    );
+    assert_eq!(num("SUM(MAP([1, 2, 3], LAMBDA(x, x * x)))"), 14.0);
+    assert_eq!(num("REDUCE(0, [1, 2, 3, 4], LAMBDA(a, x, a + x))"), 10.0,);
+}
+
+#[test]
+fn errors() {
+    // A formula that cannot produce a value evaluates to an error.
+    assert!(eval_src("1 / 0").is_err(), "division by zero");
+    assert!(eval_src("SQRT(-1)").is_err(), "square root of a negative");
+    assert!(eval_src("BOGUS(1)").is_err(), "unknown function");
+    assert!(eval_src("x").is_err(), "unbound bare identifier");
+}
+
+#[test]
+fn nesting_limit() {
+    // A formula nested within the limit parses and evaluates.
+    let ok: String = std::iter::once("1")
+        .chain(std::iter::repeat("+1").take(40))
+        .collect();
+    assert_eq!(num(&ok), 41.0);
+
+    // A formula nested far past the 128-level limit is a parse error.
+    let deep: String = std::iter::once("1")
+        .chain(std::iter::repeat("+1").take(5000))
+        .collect();
+    assert!(
+        eval_src(&deep).is_err(),
+        "a formula past the nesting limit must be rejected",
+    );
+}
