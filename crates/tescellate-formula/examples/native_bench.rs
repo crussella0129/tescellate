@@ -96,10 +96,10 @@ fn main() {
 }
 
 // ---------------------------------------------------------------------------
-// Representative result (release, x86-64 Windows):
+// Representative result (release, x86-64 Windows; ~10% run-to-run noise):
 //
-//   [cell-bound]        interpreted ~612 ns, native ~532 ns  (~1.15x)
-//   [constant-bearing]  interpreted ~411 ns, native ~187 ns  (~2.19x)
+//   [cell-bound]        interpreted ~625 ns, native ~520 ns  (~1.2x)
+//   [constant-bearing]  interpreted ~380 ns, native ~195 ns  (~2.0x)
 //
 // The cell-bound formula is dominated by `ctx.cell` dynamic dispatch and
 // map lookups — work both paths share — so removing the AST-walk dispatch
@@ -107,5 +107,5 @@ fn main() {
 // transpiler folds the `(1 + 0.07) ^ n` growth factors to literals, so the
 // native path does two multiplies, one add, one subtract and three cell
 // reads, while the interpreter re-walks (and re-computes) the constant
-// `Pow`/`Add` subtrees on every evaluation — better than a 2x speedup.
+// `Pow`/`Add` subtrees on every evaluation — around a 2x speedup.
 // ---------------------------------------------------------------------------
