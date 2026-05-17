@@ -1,16 +1,16 @@
 //! The Tescellate application — an `eframe::App` that owns a
 //! `WorkbookEngine` and draws the spreadsheet grid with egui.
 //!
-//! v2: Excel/Sheets-grade keyboard navigation and in-cell editing. Key
-//! presses are routed through the pure [`crate::keymap`] layer, so the
-//! keyboard *model* is unit-tested independently of egui.
+//! v2: Excel/Sheets-grade keyboard navigation and in-cell editing — key
+//! presses are routed through the pure [`crate::keymap`] layer.
+//! v3: per-column / per-row sizing — drag a header border to resize.
 
 use eframe::egui;
 use tescellate_core::{CellValue, SheetId};
 use tescellate_formula::WorkbookEngine;
 use tescellate_tess::LatticeKind;
 
-use crate::grid;
+use crate::grid::{self, GridMetrics};
 use crate::keymap::{self, Command, Dir, Mode};
 
 const COLS: u32 = 16;
@@ -53,6 +53,13 @@ struct EditState {
     fresh: bool,
 }
 
+/// A header border being dragged to resize.
+#[derive(Debug, Clone, Copy)]
+enum Resize {
+    Column(u32),
+    Row(u32),
+}
+
 /// The Tescellate front-end application.
 pub struct TescellateApp {
     engine: WorkbookEngine,
@@ -61,6 +68,10 @@ pub struct TescellateApp {
     selected: (u32, u32),
     /// `Some` while a cell is being edited.
     edit: Option<EditState>,
+    /// Per-column widths and per-row heights.
+    metrics: GridMetrics,
+    /// `Some` while a header border is being dragged.
+    resizing: Option<Resize>,
 }
 
 impl TescellateApp {
@@ -87,6 +98,8 @@ impl TescellateApp {
             sheet,
             selected: (0, 0),
             edit: None,
+            metrics: GridMetrics::new(),
+            resizing: None,
         }
     }
 
@@ -144,10 +157,9 @@ impl TescellateApp {
                     }
                 }
             }
-            // While navigating, the first typed character begins an edit;
-            // remove that text event so the new `TextEdit` doesn't re-type
-            // it.
             if mode == Mode::Navigating {
+                // The first typed character begins an edit; remove that
+                // text event so the new `TextEdit` doesn't re-type it.
                 let mut typed: Option<String> = None;
                 input.events.retain(|event| match event {
                     egui::Event::Text(text) if typed.is_none() => {
@@ -225,22 +237,62 @@ impl TescellateApp {
             .set_cell(self.sheet, &grid::cell_address(col, row), None);
     }
 
+    /// Resize the header border under an in-progress drag.
+    fn handle_resize(&mut self, response: &egui::Response, origin: egui::Pos2) {
+        if response.drag_started() {
+            if let Some(p) = response.interact_pointer_pos() {
+                self.resizing = self
+                    .metrics
+                    .col_border_at(origin, p, COLS)
+                    .map(Resize::Column)
+                    .or_else(|| self.metrics.row_border_at(origin, p, ROWS).map(Resize::Row));
+            }
+        }
+        if response.dragged() {
+            let delta = response.drag_delta();
+            match self.resizing {
+                Some(Resize::Column(c)) => {
+                    let w = self.metrics.col_width(c) + delta.x;
+                    self.metrics.set_col_width(c, w);
+                }
+                Some(Resize::Row(r)) => {
+                    let h = self.metrics.row_height(r) + delta.y;
+                    self.metrics.set_row_height(r, h);
+                }
+                None => {}
+            }
+        }
+        if response.drag_stopped() {
+            self.resizing = None;
+        }
+    }
+
     fn draw_grid(&mut self, ui: &mut egui::Ui) {
         let size = egui::vec2(
-            grid::HEADER_W + COLS as f32 * grid::CELL_W,
-            grid::HEADER_H + ROWS as f32 * grid::CELL_H,
+            self.metrics.total_width(COLS),
+            self.metrics.total_height(ROWS),
         );
-        let (response, painter) = ui.allocate_painter(size, egui::Sense::click());
+        let (response, painter) = ui.allocate_painter(size, egui::Sense::click_and_drag());
         let origin = response.rect.min;
 
+        // A resize cursor when hovering a header border.
+        if let Some(p) = response.hover_pos() {
+            if self.metrics.col_border_at(origin, p, COLS).is_some() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
+            } else if self.metrics.row_border_at(origin, p, ROWS).is_some() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeRow);
+            }
+        }
+        self.handle_resize(&response, origin);
+
         // A click commits any in-progress edit, then moves the selection.
+        // A border drag reports `dragged()`, not `clicked()`, so resizing
+        // never selects a cell.
         if response.clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                if let Some((c, r)) = grid::cell_at(origin.x, origin.y, pos.x, pos.y) {
-                    if c < COLS && r < ROWS {
-                        self.commit_edit();
-                        self.selected = (c, r);
-                    }
+            if let Some(p) = response.interact_pointer_pos() {
+                if let Some(cell) = self.metrics.cell_at(origin, p, COLS, ROWS) {
+                    self.commit_edit();
+                    self.selected = cell;
                 }
             }
         }
@@ -255,11 +307,8 @@ impl TescellateApp {
         // Column-letter headers.
         for c in 0..COLS {
             let rect = egui::Rect::from_min_size(
-                egui::pos2(
-                    origin.x + grid::HEADER_W + c as f32 * grid::CELL_W,
-                    origin.y,
-                ),
-                egui::vec2(grid::CELL_W, grid::HEADER_H),
+                egui::pos2(origin.x + self.metrics.col_left(c), origin.y),
+                egui::vec2(self.metrics.col_width(c), grid::HEADER_H),
             );
             painter.rect_filled(rect, 0.0, header_bg);
             painter.rect_stroke(rect, 0.0, grid_line);
@@ -274,11 +323,8 @@ impl TescellateApp {
         // Row-number headers.
         for r in 0..ROWS {
             let rect = egui::Rect::from_min_size(
-                egui::pos2(
-                    origin.x,
-                    origin.y + grid::HEADER_H + r as f32 * grid::CELL_H,
-                ),
-                egui::vec2(grid::HEADER_W, grid::CELL_H),
+                egui::pos2(origin.x, origin.y + self.metrics.row_top(r)),
+                egui::vec2(grid::HEADER_W, self.metrics.row_height(r)),
             );
             painter.rect_filled(rect, 0.0, header_bg);
             painter.rect_stroke(rect, 0.0, grid_line);
@@ -295,7 +341,7 @@ impl TescellateApp {
         let editing_cell = self.edit.as_ref().map(|_| self.selected);
         for r in 0..ROWS {
             for c in 0..COLS {
-                let rect = grid::cell_rect(origin.x, origin.y, c, r);
+                let rect = self.metrics.cell_rect(origin, c, r);
                 painter.rect_filled(rect, 0.0, cell_bg);
                 painter.rect_stroke(rect, 0.0, grid_line);
                 if editing_cell == Some((c, r)) {
@@ -316,14 +362,14 @@ impl TescellateApp {
         // The selection ring.
         let (sc, sr) = self.selected;
         painter.rect_stroke(
-            grid::cell_rect(origin.x, origin.y, sc, sr),
+            self.metrics.cell_rect(origin, sc, sr),
             0.0,
             egui::Stroke::new(2.0, visuals.selection.stroke.color),
         );
 
         // The in-cell editor overlay.
         if let Some(edit) = &mut self.edit {
-            let rect = grid::cell_rect(origin.x, origin.y, sc, sr);
+            let rect = self.metrics.cell_rect(origin, sc, sr);
             let response = ui.put(
                 rect,
                 egui::TextEdit::singleline(&mut edit.buffer)
@@ -332,7 +378,6 @@ impl TescellateApp {
             );
             if std::mem::take(&mut edit.fresh) {
                 response.request_focus();
-                // Put the caret at the end so a type-to-edit appends.
                 if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), response.id) {
                     let end = egui::text::CCursor::new(edit.buffer.chars().count());
                     state
@@ -354,7 +399,7 @@ impl eframe::App for TescellateApp {
         egui::TopBottomPanel::top("tescellate_toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Tescellate");
-                ui.label(egui::RichText::new("pure-Rust front-end · v2").weak());
+                ui.label(egui::RichText::new("pure-Rust front-end · v3").weak());
             });
         });
         egui::TopBottomPanel::top("tescellate_formula_bar").show(ctx, |ui| {
