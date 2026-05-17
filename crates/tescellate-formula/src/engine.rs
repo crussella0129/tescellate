@@ -588,15 +588,9 @@ impl WorkbookEngine {
             .compiled
             .get(&cref)
             .ok_or_else(|| SetCellError::Native(format!("{addr}: no formula to compile")))?;
-        let expr = match compiled {
-            CompiledFormula::ExcelLite(expr) => expr,
-            #[cfg(feature = "python")]
-            CompiledFormula::Python(_) => {
-                return Err(SetCellError::Native(
-                    "a Python formula cannot be compiled to native code".into(),
-                ));
-            }
-        };
+        let expr = compiled.as_excellite().ok_or_else(|| {
+            SetCellError::Native("a Python formula cannot be compiled to native code".into())
+        })?;
         let program = crate::transpile::native::compile_program(&[expr])
             .map_err(|e| SetCellError::Native(format!("{e}")))?;
         self.native.insert(cref.clone(), program);

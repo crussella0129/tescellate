@@ -50,6 +50,17 @@ pub enum CompiledFormula {
     Python(String),
 }
 
+impl CompiledFormula {
+    /// The Excel-lite AST, if this is an Excel-lite formula.
+    pub fn as_excellite(&self) -> Option<&excellite::Expr> {
+        match self {
+            CompiledFormula::ExcelLite(expr) => Some(expr),
+            #[cfg(feature = "python")]
+            CompiledFormula::Python(_) => None,
+        }
+    }
+}
+
 /// What every formula engine needs to read from the surrounding workbook.
 /// Additional engine-specific shapes (numpy arrays for Python, etc.) go
 /// on top of this trait via downcasting in their own modules.
