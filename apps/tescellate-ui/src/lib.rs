@@ -10,5 +10,6 @@ mod app;
 pub mod format;
 pub mod grid;
 pub mod keymap;
+pub mod ribbon;
 
 pub use app::TescellateApp;

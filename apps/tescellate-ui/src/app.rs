@@ -2,9 +2,9 @@
 //! `WorkbookEngine` and draws the spreadsheet grid with egui.
 //!
 //! v2: keyboard navigation and in-cell editing via the pure `keymap`
-//! layer. v3: per-column / per-row sizing. v4: cell formatting — bold,
-//! italic, alignment, colours, and number formats from the pure `format`
-//! layer.
+//! layer. v3: per-column / per-row sizing. v4: cell formatting from the
+//! pure `format` layer. v5: the formatting ribbon — `format` set through
+//! buttons and pickers, not only the keyboard.
 
 use eframe::egui;
 use tescellate_core::{CellValue, SheetId};
@@ -14,6 +14,7 @@ use tescellate_tess::LatticeKind;
 use crate::format::{self, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
 use crate::keymap::{self, Command, Dir, Mode};
+use crate::ribbon::{self, RibbonAction};
 
 const COLS: u32 = 16;
 const ROWS: u32 = 32;
@@ -226,6 +227,20 @@ impl TescellateApp {
         }
     }
 
+    /// Apply a formatting action from the ribbon to the selected cell.
+    fn apply_ribbon(&mut self, action: RibbonAction) {
+        let sel = self.selected;
+        match action {
+            RibbonAction::ToggleBold => self.formats.update(sel, |f| f.bold = !f.bold),
+            RibbonAction::ToggleItalic => self.formats.update(sel, |f| f.italic = !f.italic),
+            RibbonAction::SetAlign(align) => self.formats.update(sel, |f| f.align = align),
+            RibbonAction::SetNumber(number) => self.formats.update(sel, |f| f.number = number),
+            RibbonAction::SetTextColor(color) => self.formats.update(sel, |f| f.text_color = color),
+            RibbonAction::SetFill(fill) => self.formats.update(sel, |f| f.fill = fill),
+            RibbonAction::ClearFormat => self.formats.update(sel, |f| *f = CellFormat::default()),
+        }
+    }
+
     fn move_selection(&mut self, dir: Dir) {
         let (col, row) = self.selected;
         self.selected = match dir {
@@ -420,11 +435,11 @@ impl eframe::App for TescellateApp {
             self.apply(command);
         }
 
-        egui::TopBottomPanel::top("tescellate_toolbar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("Tescellate");
-                ui.label(egui::RichText::new("pure-Rust front-end · v4").weak());
-            });
+        egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| {
+            let current = self.formats.get(self.selected);
+            if let Some(action) = ribbon::ribbon(ui, &current) {
+                self.apply_ribbon(action);
+            }
         });
         egui::TopBottomPanel::top("tescellate_formula_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
