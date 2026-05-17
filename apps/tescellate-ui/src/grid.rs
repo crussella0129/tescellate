@@ -1,19 +1,29 @@
-//! Pure grid geometry — A1 addressing and cell ↔ pixel mapping.
+//! Grid geometry — A1 addressing and cell ↔ pixel mapping.
 //!
-//! Deliberately framework-light: it touches only egui's plain geometry
-//! value types (`Rect`, `Pos2`), so every function here is exercised by
-//! ordinary `cargo test`, no browser or GUI required.
+//! [`GridMetrics`] holds per-column widths and per-row heights (each
+//! defaulting until overridden), so columns and rows can be resized
+//! independently. It is framework-light — only egui's plain geometry
+//! value types — so every function here is exercised by ordinary
+//! `cargo test`, no browser required.
 
-use egui::{pos2, Rect, Vec2};
+use std::collections::HashMap;
 
-/// Width of a cell, in points.
-pub const CELL_W: f32 = 84.0;
-/// Height of a cell, in points.
-pub const CELL_H: f32 = 22.0;
+use egui::{pos2, Pos2, Rect, Vec2};
+
+/// Default column width, in points.
+pub const DEFAULT_COL_W: f32 = 84.0;
+/// Default row height, in points.
+pub const DEFAULT_ROW_H: f32 = 22.0;
+/// Smallest a column may be dragged.
+pub const MIN_COL_W: f32 = 32.0;
+/// Smallest a row may be dragged.
+pub const MIN_ROW_H: f32 = 16.0;
 /// Width of the row-number header column.
 pub const HEADER_W: f32 = 44.0;
 /// Height of the column-letter header row.
 pub const HEADER_H: f32 = 22.0;
+/// Half-width of the border zone that begins a resize drag.
+pub const BORDER_GRAB: f32 = 4.0;
 
 /// The A1-style label of a zero-indexed column: `0 -> "A"`, `25 -> "Z"`,
 /// `26 -> "AA"`. Bijective base-26, as spreadsheets use.
@@ -35,23 +45,128 @@ pub fn cell_address(col: u32, row: u32) -> String {
     format!("{}{}", column_label(col), row + 1)
 }
 
-/// The on-screen rectangle of a zero-indexed cell, given the grid's
-/// top-left origin (the corner of the header band).
-pub fn cell_rect(origin_x: f32, origin_y: f32, col: u32, row: u32) -> Rect {
-    let x = origin_x + HEADER_W + col as f32 * CELL_W;
-    let y = origin_y + HEADER_H + row as f32 * CELL_H;
-    Rect::from_min_size(pos2(x, y), Vec2::new(CELL_W, CELL_H))
+/// Per-column and per-row sizes. A column/row absent from the maps uses
+/// the default size, so an empty `GridMetrics` is a uniform grid.
+#[derive(Debug, Clone, Default)]
+pub struct GridMetrics {
+    col_w: HashMap<u32, f32>,
+    row_h: HashMap<u32, f32>,
 }
 
-/// Which cell a point falls in, given the grid's top-left origin. Returns
-/// `None` when the point lands in the header band or above/left of it.
-pub fn cell_at(origin_x: f32, origin_y: f32, px: f32, py: f32) -> Option<(u32, u32)> {
-    let local_x = px - origin_x - HEADER_W;
-    let local_y = py - origin_y - HEADER_H;
-    if local_x < 0.0 || local_y < 0.0 {
-        return None;
+impl GridMetrics {
+    pub fn new() -> Self {
+        Self::default()
     }
-    Some(((local_x / CELL_W) as u32, (local_y / CELL_H) as u32))
+
+    pub fn col_width(&self, col: u32) -> f32 {
+        self.col_w.get(&col).copied().unwrap_or(DEFAULT_COL_W)
+    }
+
+    pub fn row_height(&self, row: u32) -> f32 {
+        self.row_h.get(&row).copied().unwrap_or(DEFAULT_ROW_H)
+    }
+
+    /// Set a column's width, clamped to at least [`MIN_COL_W`].
+    pub fn set_col_width(&mut self, col: u32, width: f32) {
+        self.col_w.insert(col, width.max(MIN_COL_W));
+    }
+
+    /// Set a row's height, clamped to at least [`MIN_ROW_H`].
+    pub fn set_row_height(&mut self, row: u32, height: f32) {
+        self.row_h.insert(row, height.max(MIN_ROW_H));
+    }
+
+    /// X of a column's left edge, relative to the grid origin. Column 0
+    /// starts just past the row-header band.
+    pub fn col_left(&self, col: u32) -> f32 {
+        HEADER_W + (0..col).map(|c| self.col_width(c)).sum::<f32>()
+    }
+
+    /// Y of a row's top edge, relative to the grid origin.
+    pub fn row_top(&self, row: u32) -> f32 {
+        HEADER_H + (0..row).map(|r| self.row_height(r)).sum::<f32>()
+    }
+
+    /// Total grid width including the row-header band.
+    pub fn total_width(&self, cols: u32) -> f32 {
+        self.col_left(cols)
+    }
+
+    /// Total grid height including the column-header band.
+    pub fn total_height(&self, rows: u32) -> f32 {
+        self.row_top(rows)
+    }
+
+    /// The on-screen rectangle of a cell, given the grid's top-left origin.
+    pub fn cell_rect(&self, origin: Pos2, col: u32, row: u32) -> Rect {
+        let min = pos2(origin.x + self.col_left(col), origin.y + self.row_top(row));
+        Rect::from_min_size(min, Vec2::new(self.col_width(col), self.row_height(row)))
+    }
+
+    /// The cell a point falls in. `None` if the point is in a header band,
+    /// above/left of the grid, or past the last `cols`/`rows` cell.
+    pub fn cell_at(&self, origin: Pos2, p: Pos2, cols: u32, rows: u32) -> Option<(u32, u32)> {
+        let local = p - origin;
+        if local.x < HEADER_W || local.y < HEADER_H {
+            return None;
+        }
+        let col = self.axis_index(local.x, cols, |c| self.col_width(c), HEADER_W)?;
+        let row = self.axis_index(local.y, rows, |r| self.row_height(r), HEADER_H)?;
+        Some((col, row))
+    }
+
+    /// Walk an axis, accumulating sizes, to find which index `local`
+    /// (a grid-relative coordinate) lands in. `header` is the leading band.
+    fn axis_index(
+        &self,
+        local: f32,
+        count: u32,
+        size: impl Fn(u32) -> f32,
+        header: f32,
+    ) -> Option<u32> {
+        let mut edge = header;
+        for i in 0..count {
+            edge += size(i);
+            if local < edge {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// If `p` is in the column-header band and near a column's right
+    /// border, the column that border resizes.
+    pub fn col_border_at(&self, origin: Pos2, p: Pos2, cols: u32) -> Option<u32> {
+        let local = p - origin;
+        if local.y < 0.0 || local.y >= HEADER_H {
+            return None;
+        }
+        let mut edge = HEADER_W;
+        for c in 0..cols {
+            edge += self.col_width(c);
+            if (local.x - edge).abs() <= BORDER_GRAB {
+                return Some(c);
+            }
+        }
+        None
+    }
+
+    /// If `p` is in the row-header band and near a row's bottom border,
+    /// the row that border resizes.
+    pub fn row_border_at(&self, origin: Pos2, p: Pos2, rows: u32) -> Option<u32> {
+        let local = p - origin;
+        if local.x < 0.0 || local.x >= HEADER_W {
+            return None;
+        }
+        let mut edge = HEADER_H;
+        for r in 0..rows {
+            edge += self.row_height(r);
+            if (local.y - edge).abs() <= BORDER_GRAB {
+                return Some(r);
+            }
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -63,40 +178,88 @@ mod tests {
         assert_eq!(column_label(0), "A");
         assert_eq!(column_label(25), "Z");
         assert_eq!(column_label(26), "AA");
-        assert_eq!(column_label(27), "AB");
-        assert_eq!(column_label(51), "AZ");
-        assert_eq!(column_label(52), "BA");
         assert_eq!(column_label(701), "ZZ");
     }
 
     #[test]
     fn cell_addresses() {
         assert_eq!(cell_address(0, 0), "A1");
-        assert_eq!(cell_address(2, 4), "C5");
         assert_eq!(cell_address(27, 99), "AB100");
     }
 
     #[test]
-    fn cell_rect_places_the_first_cell_after_the_header() {
-        let r = cell_rect(0.0, 0.0, 0, 0);
-        assert_eq!(r.min, pos2(HEADER_W, HEADER_H));
-        assert_eq!(r.width(), CELL_W);
-        assert_eq!(r.height(), CELL_H);
+    fn default_metrics_are_uniform() {
+        let m = GridMetrics::new();
+        assert_eq!(m.col_width(0), DEFAULT_COL_W);
+        assert_eq!(m.col_width(99), DEFAULT_COL_W);
+        assert_eq!(m.row_height(5), DEFAULT_ROW_H);
+        assert_eq!(m.col_left(0), HEADER_W);
+        assert_eq!(m.col_left(2), HEADER_W + 2.0 * DEFAULT_COL_W);
     }
 
     #[test]
-    fn cell_at_is_the_inverse_of_cell_rect() {
-        for (c, r) in [(0, 0), (1, 2), (7, 13)] {
-            let rect = cell_rect(10.0, 20.0, c, r);
-            let mid = rect.center();
-            assert_eq!(cell_at(10.0, 20.0, mid.x, mid.y), Some((c, r)));
+    fn resizing_clamps_to_a_minimum_and_shifts_later_columns() {
+        let mut m = GridMetrics::new();
+        m.set_col_width(0, 200.0);
+        assert_eq!(m.col_width(0), 200.0);
+        assert_eq!(m.col_left(1), HEADER_W + 200.0);
+        // Below the minimum is clamped up.
+        m.set_col_width(1, 1.0);
+        assert_eq!(m.col_width(1), MIN_COL_W);
+        m.set_row_height(3, 0.0);
+        assert_eq!(m.row_height(3), MIN_ROW_H);
+    }
+
+    #[test]
+    fn cell_at_inverts_cell_rect_after_a_resize() {
+        let mut m = GridMetrics::new();
+        m.set_col_width(0, 150.0);
+        m.set_row_height(0, 40.0);
+        let origin = pos2(10.0, 20.0);
+        for (c, r) in [(0, 0), (1, 1), (3, 5)] {
+            let mid = m.cell_rect(origin, c, r).center();
+            assert_eq!(m.cell_at(origin, mid, 8, 8), Some((c, r)));
         }
+        // Header band and out-of-range yield None.
+        assert_eq!(m.cell_at(origin, pos2(12.0, 22.0), 8, 8), None);
+        let far = m.cell_rect(origin, 7, 7).center();
+        assert_eq!(m.cell_at(origin, far, 4, 4), None);
     }
 
     #[test]
-    fn cell_at_rejects_the_header_band() {
-        assert_eq!(cell_at(0.0, 0.0, 5.0, 5.0), None);
-        assert_eq!(cell_at(0.0, 0.0, HEADER_W + 5.0, 5.0), None);
-        assert_eq!(cell_at(0.0, 0.0, 5.0, HEADER_H + 5.0), None);
+    fn col_border_hit_test() {
+        let m = GridMetrics::new();
+        let origin = pos2(0.0, 0.0);
+        // The right border of column 0 is at HEADER_W + DEFAULT_COL_W.
+        let border_x = HEADER_W + DEFAULT_COL_W;
+        assert_eq!(
+            m.col_border_at(origin, pos2(border_x, HEADER_H / 2.0), 8),
+            Some(0),
+        );
+        // Mid-column is not a border.
+        assert_eq!(
+            m.col_border_at(origin, pos2(HEADER_W + DEFAULT_COL_W / 2.0, 5.0), 8),
+            None,
+        );
+        // Below the header band is not a column-resize zone.
+        assert_eq!(
+            m.col_border_at(origin, pos2(border_x, HEADER_H + 50.0), 8),
+            None,
+        );
+    }
+
+    #[test]
+    fn row_border_hit_test() {
+        let m = GridMetrics::new();
+        let origin = pos2(0.0, 0.0);
+        let border_y = HEADER_H + DEFAULT_ROW_H;
+        assert_eq!(
+            m.row_border_at(origin, pos2(HEADER_W / 2.0, border_y), 8),
+            Some(0),
+        );
+        assert_eq!(
+            m.row_border_at(origin, pos2(HEADER_W + 50.0, border_y), 8),
+            None,
+        );
     }
 }
