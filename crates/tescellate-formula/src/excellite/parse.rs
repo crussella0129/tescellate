@@ -13,6 +13,15 @@ use super::ast::{BinaryOp, Expr, UnaryOp};
 use super::lex::{lex, LexError, Spanned, Token};
 use std::fmt;
 
+/// Hard cap on formula nesting depth. A formula nested deeper than this is
+/// rejected at parse time — far beyond any hand-written formula (Excel's
+/// classic limit was 64), and low enough that the recursive tree-walks
+/// over the resulting `Expr` (`eval`, reference collection, the
+/// transpiler, even `Expr`'s own recursive `Drop`) cannot overflow the
+/// stack. Without this cap a pathologically deep formula crashes the
+/// process instead of producing a `#VALUE!`-style parse error.
+const MAX_EXPR_DEPTH: u32 = 128;
+
 /// If `name(args)` shapes match a lattice-address syntax, return the
 /// canonical address string. Otherwise return `None` and let the parser
 /// keep it as a function call.
@@ -64,7 +73,11 @@ impl From<LexError> for ParseError {
 
 pub fn parse(src: &str) -> Result<Expr, ParseError> {
     let tokens = lex(src)?;
-    let mut p = Parser { tokens, i: 0 };
+    let mut p = Parser {
+        tokens,
+        i: 0,
+        depth: 0,
+    };
     let expr = p.parse_expr(0)?;
     if p.i < p.tokens.len() {
         let tok = &p.tokens[p.i];
@@ -79,6 +92,10 @@ pub fn parse(src: &str) -> Result<Expr, ParseError> {
 struct Parser {
     tokens: Vec<Spanned<Token>>,
     i: usize,
+    /// Current `parse_expr` nesting. Bounded by `MAX_EXPR_DEPTH` so a
+    /// pathologically deep formula is rejected here rather than crashing a
+    /// later recursive walk over the `Expr` tree.
+    depth: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,7 +134,29 @@ impl Parser {
         t
     }
 
+    /// Reject a formula that has nested past `MAX_EXPR_DEPTH`.
+    fn check_depth(&self) -> Result<(), ParseError> {
+        if self.depth > MAX_EXPR_DEPTH {
+            Err(ParseError {
+                message: format!("formula nesting is too deep (limit is {MAX_EXPR_DEPTH} levels)"),
+                pos: self.peek().map(|t| t.start).unwrap_or(0),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
     fn parse_expr(&mut self, min_bp: u8) -> Result<Expr, ParseError> {
+        // Track nesting depth so an absurdly deep formula is rejected here
+        // rather than overflowing the stack in a later recursive walk
+        // (`eval`, reference collection, the transpiler, `Expr`'s drop).
+        // The operator and apply-suffix loops grow a left-deep chain, so
+        // each iteration counts as a level too. `entry_depth` is restored
+        // on the way out, so a sibling subtree starts from a clean slate.
+        let entry_depth = self.depth;
+        self.depth += 1;
+        self.check_depth()?;
+
         let mut lhs = self.parse_prefix()?;
 
         // Range parsing: `<cellref>:<cellref>`. Works for any primary that
@@ -146,6 +185,8 @@ impl Parser {
         // parse — the postfix is left-associative, so each `(args)` wraps
         // the running lhs in another `Apply`.
         while matches!(self.peek().map(|t| &t.value), Some(Token::LParen)) {
+            self.depth += 1;
+            self.check_depth()?;
             self.bump(); // (
             let args = self.parse_call_args()?;
             self.expect(Token::RParen, "expected `)` to close call")?;
@@ -159,6 +200,9 @@ impl Parser {
             if bp < min_bp {
                 break;
             }
+            // Each operator extends the left-deep chain by one level.
+            self.depth += 1;
+            self.check_depth()?;
             self.bump();
             let next_min = match assoc {
                 Assoc::Left => bp + 1,
@@ -167,6 +211,7 @@ impl Parser {
             let rhs = self.parse_expr(next_min)?;
             lhs = Expr::Binary(op, Box::new(lhs), Box::new(rhs));
         }
+        self.depth = entry_depth;
         Ok(lhs)
     }
 
@@ -516,5 +561,29 @@ mod tests {
     #[test]
     fn empty_array_ok() {
         assert_eq!(p("[]"), Expr::Array(vec![]));
+    }
+
+    #[test]
+    fn deep_nesting_is_rejected_not_crashed() {
+        // A formula nested far past `MAX_EXPR_DEPTH` is a parse error — the
+        // engine would otherwise overflow the stack walking the tree.
+        let mut deep = String::from("1");
+        for _ in 0..5000 {
+            deep.push_str("+1");
+        }
+        assert!(
+            parse(&deep).is_err(),
+            "a 5000-deep formula must be rejected"
+        );
+
+        // A formula comfortably within the limit still parses.
+        let mut shallow = String::from("1");
+        for _ in 0..50 {
+            shallow.push_str("+1");
+        }
+        assert!(
+            parse(&shallow).is_ok(),
+            "a 50-deep formula must still parse"
+        );
     }
 }
