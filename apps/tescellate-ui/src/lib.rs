@@ -7,6 +7,7 @@
 //! the Electron front-end this replaces.
 
 mod app;
+pub mod format;
 pub mod grid;
 pub mod keymap;
 
