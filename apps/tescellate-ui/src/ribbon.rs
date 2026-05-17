@@ -1,0 +1,160 @@
+//! The formatting toolbar — a single Google-Sheets-style strip that
+//! surfaces the [`crate::format`] model with buttons, a combo, and colour
+//! pickers. (Excel's tabbed ribbon is the eventual shape; one strip is
+//! right for the current feature set.)
+//!
+//! [`ribbon`] is egui rendering, verified by the build and a physical
+//! run. The pure helpers — [`number_format_label`] and [`NUMBER_FORMATS`]
+//! — are ordinary `cargo test` material. The strip never mutates state
+//! directly: it returns a [`RibbonAction`] for `app.rs` to apply, so the
+//! interaction's *result* stays a plain, inspectable value.
+
+use egui::Color32;
+
+use crate::format::{CellFormat, HAlign, NumberFormat};
+
+/// A formatting change the user triggered on the ribbon.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RibbonAction {
+    ToggleBold,
+    ToggleItalic,
+    SetAlign(HAlign),
+    SetNumber(NumberFormat),
+    SetTextColor(Option<Color32>),
+    SetFill(Option<Color32>),
+    /// Reset the selected cell to the default (unstyled) format.
+    ClearFormat,
+}
+
+/// The number formats the ribbon's combo offers, with display labels. The
+/// `decimals` here are the combo's starting point — General first, as
+/// spreadsheets list it.
+pub const NUMBER_FORMATS: &[(NumberFormat, &str)] = &[
+    (NumberFormat::General, "General"),
+    (NumberFormat::Number { decimals: 2 }, "Number"),
+    (NumberFormat::Percent { decimals: 0 }, "Percent"),
+    (NumberFormat::Currency, "Currency"),
+];
+
+/// A short label for a number format — used for the combo's selected
+/// text. Decimal-place differences collapse to the same label.
+pub fn number_format_label(format: NumberFormat) -> &'static str {
+    match format {
+        NumberFormat::General => "General",
+        NumberFormat::Number { .. } => "Number",
+        NumberFormat::Percent { .. } => "Percent",
+        NumberFormat::Currency => "Currency",
+    }
+}
+
+/// Draw the formatting toolbar for the selected cell's `current` format.
+/// Returns the action the user triggered this frame, if any.
+pub fn ribbon(ui: &mut egui::Ui, current: &CellFormat) -> Option<RibbonAction> {
+    let mut action = None;
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("Tescellate").strong());
+        ui.separator();
+
+        // Bold / italic — `selectable_label` shows the button pressed-in
+        // when the selected cell already has that style.
+        if ui
+            .selectable_label(current.bold, egui::RichText::new("B").strong())
+            .on_hover_text("Bold (Ctrl+B)")
+            .clicked()
+        {
+            action = Some(RibbonAction::ToggleBold);
+        }
+        if ui
+            .selectable_label(current.italic, egui::RichText::new("I").italics())
+            .on_hover_text("Italic (Ctrl+I)")
+            .clicked()
+        {
+            action = Some(RibbonAction::ToggleItalic);
+        }
+        ui.separator();
+
+        // Alignment — a three-way segmented control.
+        for (align, label) in [
+            (HAlign::Left, "Left"),
+            (HAlign::Center, "Center"),
+            (HAlign::Right, "Right"),
+        ] {
+            if ui.selectable_label(current.align == align, label).clicked() {
+                action = Some(RibbonAction::SetAlign(align));
+            }
+        }
+        ui.separator();
+
+        // Number format.
+        egui::ComboBox::from_label("Number")
+            .selected_text(number_format_label(current.number))
+            .show_ui(ui, |ui| {
+                let current_label = number_format_label(current.number);
+                for &(format, label) in NUMBER_FORMATS {
+                    if ui.selectable_label(current_label == label, label).clicked() {
+                        action = Some(RibbonAction::SetNumber(format));
+                    }
+                }
+            });
+        ui.separator();
+
+        // Colours. The picker yields a concrete colour; the action wraps
+        // it in `Some`. `Clear` (below) is how a colour is removed.
+        ui.label("Text");
+        let mut text_color = current.text_color.unwrap_or(Color32::BLACK);
+        if ui.color_edit_button_srgba(&mut text_color).changed() {
+            action = Some(RibbonAction::SetTextColor(Some(text_color)));
+        }
+        ui.label("Fill");
+        let mut fill = current.fill.unwrap_or(Color32::WHITE);
+        if ui.color_edit_button_srgba(&mut fill).changed() {
+            action = Some(RibbonAction::SetFill(Some(fill)));
+        }
+        ui.separator();
+
+        if ui
+            .button("Clear")
+            .on_hover_text("Reset this cell to the default format")
+            .clicked()
+        {
+            action = Some(RibbonAction::ClearFormat);
+        }
+    });
+    action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn number_format_label_ignores_decimal_places() {
+        assert_eq!(number_format_label(NumberFormat::General), "General");
+        assert_eq!(
+            number_format_label(NumberFormat::Number { decimals: 2 }),
+            "Number",
+        );
+        assert_eq!(
+            number_format_label(NumberFormat::Number { decimals: 5 }),
+            "Number",
+        );
+        assert_eq!(
+            number_format_label(NumberFormat::Percent { decimals: 0 }),
+            "Percent",
+        );
+        assert_eq!(number_format_label(NumberFormat::Currency), "Currency");
+    }
+
+    #[test]
+    fn number_formats_list_starts_with_general() {
+        assert_eq!(NUMBER_FORMATS.len(), 4);
+        assert_eq!(NUMBER_FORMATS[0].0, NumberFormat::General);
+    }
+
+    #[test]
+    fn every_listed_format_matches_its_label() {
+        for &(format, label) in NUMBER_FORMATS {
+            assert_eq!(number_format_label(format), label);
+        }
+    }
+}
