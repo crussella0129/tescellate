@@ -108,9 +108,10 @@ A version does not merge until both gates pass. Versions are not calendar-bound.
 > tessellation lattices (geometric invariants fuzzed across square and hex), and of
 > `.tscl` persistence (save/open round-trip fidelity across random workbooks), capped
 > by an end-to-end smoke test driving the real `tescellate-core` binary over its
-> JSON-RPC stdio protocol, then scale/stress tests that surfaced and fixed an
-> unbounded-recursion crash on pathologically deep formulas — all taken ahead of
-> Track A. The UI rustification (v7–v9 above) is still
+> JSON-RPC stdio protocol, scale/stress tests that surfaced and fixed an
+> unbounded-recursion crash on pathologically deep formulas, and a cross-engine
+> differential proving the Carbide and Python formula engines agree — all taken
+> ahead of Track A. The UI rustification (v7–v9 above) is still
 > the plan, but its *actual-behavior* gate needs a running GUI, so it is deferred to a
 > session where that can be driven and verified interactively.
 
