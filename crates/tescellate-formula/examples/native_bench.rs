@@ -6,14 +6,20 @@
 //! ```
 //!
 //! The interpreter walks the AST on every evaluation; the native tier bakes
-//! the structure into compiled machine code. The leaf operations —
-//! `apply_*_op`, the function registry, `ctx.cell` — are the *same* on both
-//! paths, so the native tier's win is bounded: it removes the AST-walk
-//! dispatch, not the work the dispatch leads to. See the recorded result at
-//! the bottom of this file.
+//! the structure into compiled machine code. Two formulas are measured:
+//!
+//! 1. *Cell-bound* — arithmetic over cell references. Every leaf is a
+//!    `ctx.cell` dynamic dispatch plus a map lookup, shared by both paths,
+//!    so the native win is bounded to removing the AST-walk dispatch.
+//! 2. *Constant-bearing* — the same shape but carrying constant
+//!    sub-expressions (compound-growth factors). v9's transpiler folds
+//!    those at compile time, so the native path skips arithmetic the
+//!    interpreter repeats on every single evaluation.
+//!
+//! See the recorded result at the bottom of this file.
 
 use std::hint::black_box;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tescellate_formula::excellite::eval::eval;
 use tescellate_formula::excellite::parse::parse;
@@ -21,24 +27,17 @@ use tescellate_formula::transpile::native::compile_program;
 use tescellate_formula::transpile::rt::CellValue;
 use tescellate_formula::transpile::MapCtx;
 
-fn main() {
-    // Pure arithmetic over cell references — no function calls, so the
-    // native tier genuinely compiles the AST walk away.
-    let formula = "((A1 + A2) * B1 - A3) / B2 + A1 * A2 - A3 ^ 2";
-    let expr = parse(formula).expect("parse the benchmark formula");
-    let ctx = MapCtx::from_pairs(&[
-        ("A1", CellValue::Number(10.0)),
-        ("A2", CellValue::Number(2.5)),
-        ("A3", CellValue::Number(7.0)),
-        ("B1", CellValue::Number(3.0)),
-        ("B2", CellValue::Number(100.0)),
-    ]);
-    const ITERS: u32 = 2_000_000;
+const ITERS: u32 = 2_000_000;
 
-    // Interpreted tier.
+/// Time `ITERS` interpreted and native evaluations of `formula`, print the
+/// per-eval cost and the speedup, and return the one-time compile cost.
+fn bench(label: &str, formula: &str, ctx: &MapCtx) -> Duration {
+    let expr = parse(formula).expect("parse the benchmark formula");
+
+    // Interpreted tier: walk the AST every iteration.
     let start = Instant::now();
     for _ in 0..ITERS {
-        black_box(eval(black_box(&expr), &ctx).unwrap());
+        black_box(eval(black_box(&expr), ctx).unwrap());
     }
     let interpreted = start.elapsed();
 
@@ -48,37 +47,65 @@ fn main() {
     let compile = start.elapsed();
     let start = Instant::now();
     for _ in 0..ITERS {
-        black_box(program.eval(0, &ctx).unwrap());
+        black_box(program.eval(0, ctx).unwrap());
     }
     let native = start.elapsed();
 
     let interp_ns = interpreted.as_nanos() as f64 / f64::from(ITERS);
     let native_ns = native.as_nanos() as f64 / f64::from(ITERS);
 
-    println!("formula      : {formula}");
-    println!("iterations   : {ITERS}");
-    println!("interpreted  : {interp_ns:8.1} ns / eval");
-    println!("native       : {native_ns:8.1} ns / eval");
-    println!("speedup      : {:.2}x", interp_ns / native_ns);
+    println!("{label}");
+    println!("  formula     : {formula}");
+    println!("  interpreted : {interp_ns:8.1} ns / eval");
+    println!("  native      : {native_ns:8.1} ns / eval");
+    println!("  speedup     : {:.2}x", interp_ns / native_ns);
+    compile
+}
+
+fn main() {
+    let ctx = MapCtx::from_pairs(&[
+        ("A1", CellValue::Number(10.0)),
+        ("A2", CellValue::Number(2.5)),
+        ("A3", CellValue::Number(7.0)),
+        ("B1", CellValue::Number(3.0)),
+        ("B2", CellValue::Number(100.0)),
+    ]);
+    println!("iterations   : {ITERS}\n");
+
+    // Cell-bound: every leaf is a cell read, a cost both paths share.
+    let cold = bench(
+        "[cell-bound]",
+        "((A1 + A2) * B1 - A3) / B2 + A1 * A2 - A3 ^ 2",
+        &ctx,
+    );
+    println!();
+    // Constant-bearing: `(1 + 0.07) ^ 5` and `(1 + 0.07) ^ 3` are pure
+    // constants — v9 folds each to one literal at transpile time, so the
+    // native path never recomputes the compound-growth factors.
+    let warm = bench(
+        "[constant-bearing]",
+        "A1 * (1 + 0.07) ^ 5 + A2 * (1 + 0.07) ^ 3 - B1",
+        &ctx,
+    );
+
     println!(
-        "compile cost : {:.0} ms (one-time; ~12 s on a cold cdylib build)",
-        compile.as_secs_f64() * 1000.0,
+        "\ncompile cost : {:.0} ms total, two formulas (one-time; \
+         ~12 s on a cold cdylib build, second build reuses the cargo cache)",
+        (cold + warm).as_secs_f64() * 1000.0,
     );
 }
 
 // ---------------------------------------------------------------------------
 // Representative result (release, x86-64 Windows):
 //
-//   interpreted  : ~618 ns / eval
-//   native       : ~540 ns / eval   (1.14x faster)
-//   compile cost : ~12 s cold (first cdylib build), ~0.4 s warm (cargo reuse)
+//   [cell-bound]        interpreted ~612 ns, native ~532 ns  (~1.15x)
+//   [constant-bearing]  interpreted ~411 ns, native ~187 ns  (~2.19x)
 //
-// The native tier is modestly faster per evaluation. The transpiler is
-// "thin" — it lowers the AST walk into straight-line calls but reuses the
-// interpreter's leaf primitives (`apply_*_op`, the function registry,
-// `ctx.cell` via dynamic dispatch), which dominate the cost and are shared
-// by both paths. A larger win would need type-specialized codegen — emitting
-// raw `f64` arithmetic when operand types are statically known — a
-// deliberate future optimization, distinct from the correctness-first
-// v1-v6 transpiler.
+// The cell-bound formula is dominated by `ctx.cell` dynamic dispatch and
+// map lookups — work both paths share — so removing the AST-walk dispatch
+// is a modest win. The constant-bearing formula is where v9 pays off: the
+// transpiler folds the `(1 + 0.07) ^ n` growth factors to literals, so the
+// native path does two multiplies, one add, one subtract and three cell
+// reads, while the interpreter re-walks (and re-computes) the constant
+// `Pow`/`Add` subtrees on every evaluation — better than a 2x speedup.
 // ---------------------------------------------------------------------------
