@@ -44,6 +44,21 @@ pub enum EvalError {
 #[derive(Debug, Clone)]
 pub enum CompiledFormula {
     ExcelLite(excellite::Expr),
+    /// A Python formula — the raw source, run by the embedded interpreter
+    /// on each eval (see `python::PythonEngine`).
+    #[cfg(feature = "python")]
+    Python(String),
+}
+
+impl CompiledFormula {
+    /// The Excel-lite AST, if this is an Excel-lite formula.
+    pub fn as_excellite(&self) -> Option<&excellite::Expr> {
+        match self {
+            CompiledFormula::ExcelLite(expr) => Some(expr),
+            #[cfg(feature = "python")]
+            CompiledFormula::Python(_) => None,
+        }
+    }
 }
 
 /// What every formula engine needs to read from the surrounding workbook.
