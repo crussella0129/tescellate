@@ -116,6 +116,17 @@ A version does not merge until both gates pass. Versions are not calendar-bound.
 > the plan, but its *actual-behavior* gate needs a running GUI, so it is deferred to a
 > session where that can be driven and verified interactively.
 
+> **Execution note (front-end rebuild, post-v18).** A physical test of the Electron app
+> confirmed the engine works but the front-end was a rough prototype. The decision:
+> rather than polish the Electron renderer or take the Tauri (L1) step, rebuild the
+> front-end directly as a pure-Rust application — `apps/tescellate-ui`, an egui/eframe
+> app compiled to WebAssembly. This supersedes Track A (v7–v9) and `rust-native.md`'s
+> "L1 then spike L2" recommendation: egui builds the *same* codebase to both WASM and
+> native, so 100% Rust is reached now, without translation debt. A new self-paced loop
+> drives it in numbered versions; v1 scaffolded the crate — eframe and the whole engine
+> (`tescellate-core`/`tess`/`store`/`formula`) compile to `wasm32-unknown-unknown` —
+> with a working grid that renders engine-computed cell values.
+
 ### v0 — Roadmap + CI pipeline *(this version)*
 
 - This document.

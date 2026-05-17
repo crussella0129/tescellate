@@ -89,3 +89,29 @@ jobs:
         run: cargo clippy -p tescellate-formula --features python --all-targets -- -D warnings
       - name: cargo test --features python
         run: cargo test -p tescellate-formula --features python
+
+  webui:
+    name: web front-end (wasm + native)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/tescellate-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/tescellate-ui
+      - name: install eframe build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev
+      - name: cargo fmt --check
+        run: cargo fmt --check
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test
+      - name: cargo build (wasm32)
+        run: cargo build --target wasm32-unknown-unknown
