@@ -1,12 +1,11 @@
 //! The Tescellate application — an `eframe::App` that owns a
 //! `WorkbookEngine` and draws the spreadsheet with egui.
 //!
-//! v2: keyboard navigation + in-cell editing. v3: row/column sizing.
-//! v4: cell formatting. v5: the formatting ribbon. v6: the hex view — a
-//! second sheet rendered as a real hexagonal tessellation, consuming
-//! `tescellate-tess`'s `HexLattice` for every bit of geometry (the
-//! engine owns and exhaustively tests the hex math; the front-end only
-//! paints it).
+//! The square sheet has keyboard navigation, in-cell editing, row/column
+//! sizing, cell formatting and a formatting ribbon (v2–v5). The hex sheet
+//! (v6) renders `tescellate-tess`'s `HexLattice` as a real tessellation;
+//! v7 makes it interactive too — axial-arrow navigation and in-cell
+//! editing, routed through the same pure `keymap` command layer.
 
 use eframe::egui;
 use tescellate_core::{CellValue, SheetId};
@@ -106,7 +105,7 @@ pub struct TescellateApp {
     selected: (u32, u32),
     /// Axial coord selected on the hex sheet.
     hex_selected: HexCoord,
-    /// `Some` while a square cell is being edited.
+    /// `Some` while a cell is being edited (on whichever sheet is active).
     edit: Option<EditState>,
     /// Per-column widths and per-row heights of the square sheet.
     metrics: GridMetrics,
@@ -214,28 +213,33 @@ impl TescellateApp {
             .unwrap_or_default()
     }
 
+    /// The raw source of the selected cell on whichever sheet is active.
+    fn active_cell_source(&self) -> String {
+        match self.active {
+            ActiveSheet::Square => self.selected_source(),
+            ActiveSheet::Hex => self
+                .engine
+                .get_cell(self.hex_sheet, &hex_address(self.hex_selected))
+                .and_then(|s| s.source)
+                .unwrap_or_default(),
+        }
+    }
+
     /// The selected cell's address and source text on the active sheet,
     /// for the formula bar.
     fn active_address_and_source(&self) -> (String, String) {
-        match self.active {
+        let addr = match self.active {
             ActiveSheet::Square => {
                 let (col, row) = self.selected;
-                let source = match &self.edit {
-                    Some(edit) => edit.buffer.clone(),
-                    None => self.selected_source(),
-                };
-                (grid::cell_address(col, row), source)
+                grid::cell_address(col, row)
             }
-            ActiveSheet::Hex => {
-                let addr = hex_address(self.hex_selected);
-                let source = self
-                    .engine
-                    .get_cell(self.hex_sheet, &addr)
-                    .and_then(|s| s.source)
-                    .unwrap_or_default();
-                (addr, source)
-            }
-        }
+            ActiveSheet::Hex => hex_address(self.hex_selected),
+        };
+        let source = match &self.edit {
+            Some(edit) => edit.buffer.clone(),
+            None => self.active_cell_source(),
+        };
+        (addr, source)
     }
 
     /// Read key events and turn them into commands through `keymap`. Keys
@@ -280,25 +284,25 @@ impl TescellateApp {
 
     fn apply(&mut self, command: Command) {
         match command {
-            Command::Move(dir) => self.move_selection(dir),
-            Command::MoveToRowStart => self.selected.0 = 0,
-            Command::MoveToOrigin => self.selected = (0, 0),
+            Command::Move(dir) => self.move_active(dir),
+            Command::MoveToRowStart => match self.active {
+                ActiveSheet::Square => self.selected.0 = 0,
+                ActiveSheet::Hex => self.hex_selected = HexCoord::new(0, 0),
+            },
+            Command::MoveToOrigin => match self.active {
+                ActiveSheet::Square => self.selected = (0, 0),
+                ActiveSheet::Hex => self.hex_selected = HexCoord::new(0, 0),
+            },
             Command::BeginEdit { replace_with } => self.begin_edit(replace_with),
             Command::Commit(dir) => {
                 self.commit_edit();
-                self.move_selection(dir);
+                self.move_active(dir);
             }
             Command::Cancel => self.edit = None,
-            Command::Clear => self.clear_selected(),
-            Command::ToggleBold => {
-                self.formats.update(self.selected, |f| f.bold = !f.bold);
-            }
-            Command::ToggleItalic => {
-                self.formats.update(self.selected, |f| f.italic = !f.italic);
-            }
-            Command::SetAlign(align) => {
-                self.formats.update(self.selected, |f| f.align = align);
-            }
+            Command::Clear => self.clear_active(),
+            Command::ToggleBold => self.format_selected(|f| f.bold = !f.bold),
+            Command::ToggleItalic => self.format_selected(|f| f.italic = !f.italic),
+            Command::SetAlign(align) => self.format_selected(|f| f.align = align),
         }
     }
 
@@ -316,6 +320,22 @@ impl TescellateApp {
         }
     }
 
+    /// Mutate the selected square cell's format. A no-op on the hex
+    /// sheet, which carries no formatting yet.
+    fn format_selected(&mut self, edit: impl FnOnce(&mut CellFormat)) {
+        if self.active == ActiveSheet::Square {
+            self.formats.update(self.selected, edit);
+        }
+    }
+
+    /// Move the selection on whichever sheet is active.
+    fn move_active(&mut self, dir: Dir) {
+        match self.active {
+            ActiveSheet::Square => self.move_selection(dir),
+            ActiveSheet::Hex => self.move_hex_selection(dir),
+        }
+    }
+
     fn move_selection(&mut self, dir: Dir) {
         let (col, row) = self.selected;
         self.selected = match dir {
@@ -326,10 +346,19 @@ impl TescellateApp {
         };
     }
 
+    /// Step the hex selection one axial cell, ignoring a move that would
+    /// leave the visible disc.
+    fn move_hex_selection(&mut self, dir: Dir) {
+        let next = hex_step(self.hex_selected, dir);
+        if HexCoord::new(0, 0).distance(next) <= HEX_VIEW_RADIUS {
+            self.hex_selected = next;
+        }
+    }
+
     fn begin_edit(&mut self, replace_with: Option<char>) {
         let buffer = match replace_with {
             Some(ch) => ch.to_string(),
-            None => self.selected_source(),
+            None => self.active_cell_source(),
         };
         self.edit = Some(EditState {
             buffer,
@@ -337,27 +366,46 @@ impl TescellateApp {
         });
     }
 
-    /// Write the in-progress edit to the engine and leave editing mode. An
-    /// all-whitespace buffer clears the cell.
+    /// Write the in-progress edit to the active sheet and leave editing
+    /// mode. An all-whitespace buffer clears the cell.
     fn commit_edit(&mut self) {
         let Some(edit) = self.edit.take() else {
             return;
         };
-        let (col, row) = self.selected;
-        let addr = grid::cell_address(col, row);
         let source = if edit.buffer.trim().is_empty() {
             None
         } else {
             Some(edit.buffer.as_str())
         };
-        let _ = self.engine.set_cell(self.square_sheet, &addr, source);
+        match self.active {
+            ActiveSheet::Square => {
+                let (col, row) = self.selected;
+                let _ =
+                    self.engine
+                        .set_cell(self.square_sheet, &grid::cell_address(col, row), source);
+            }
+            ActiveSheet::Hex => {
+                let addr = hex_address(self.hex_selected);
+                let _ = self.engine.set_cell(self.hex_sheet, &addr, source);
+            }
+        }
     }
 
-    fn clear_selected(&mut self) {
-        let (col, row) = self.selected;
-        let _ = self
-            .engine
-            .set_cell(self.square_sheet, &grid::cell_address(col, row), None);
+    /// Clear the selected cell on whichever sheet is active.
+    fn clear_active(&mut self) {
+        match self.active {
+            ActiveSheet::Square => {
+                let (col, row) = self.selected;
+                let _ =
+                    self.engine
+                        .set_cell(self.square_sheet, &grid::cell_address(col, row), None);
+            }
+            ActiveSheet::Hex => {
+                let _ = self
+                    .engine
+                    .set_cell(self.hex_sheet, &hex_address(self.hex_selected), None);
+            }
+        }
     }
 
     /// Resize the header border under an in-progress drag.
@@ -503,8 +551,8 @@ impl TescellateApp {
         }
     }
 
-    /// Paint one hexagon — its polygon plus any cell value — using
-    /// vertices and a centroid straight from the engine's `HexLattice`.
+    /// Paint one hexagon — its polygon and cell value — using vertices
+    /// and a centroid straight from the engine's lattice.
     fn paint_hex(
         &self,
         painter: &egui::Painter,
@@ -546,6 +594,7 @@ impl TescellateApp {
                 let local = Point2::new(p.x - origin.x, p.y - origin.y);
                 if let Some(coord) = self.hex_lattice.cell_at(local) {
                     if HexCoord::new(0, 0).distance(coord) <= HEX_VIEW_RADIUS {
+                        self.commit_edit();
                         self.hex_selected = coord;
                     }
                 }
@@ -566,7 +615,8 @@ impl TescellateApp {
             self.paint_hex(&painter, origin, coord, cell_bg, line, text_color);
         }
         // The selected hex is painted last so its ring sits above every
-        // neighbour's shared border.
+        // neighbour's shared border. While editing, the text editor
+        // overlay (drawn below) covers the cell's painted value.
         self.paint_hex(
             &painter,
             origin,
@@ -575,15 +625,36 @@ impl TescellateApp {
             sel_stroke,
             text_color,
         );
+
+        // The in-cell editor overlay, sized to sit within the hexagon.
+        if let Some(edit) = &mut self.edit {
+            let centroid = self.hex_lattice.centroid(self.hex_selected);
+            let center = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+            let rect = egui::Rect::from_center_size(center, egui::vec2(1.6 * HEX_SIZE, 24.0));
+            let response = ui.put(
+                rect,
+                egui::TextEdit::singleline(&mut edit.buffer)
+                    .frame(true)
+                    .font(egui::TextStyle::Monospace),
+            );
+            if std::mem::take(&mut edit.fresh) {
+                response.request_focus();
+                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), response.id) {
+                    let end = egui::text::CCursor::new(edit.buffer.chars().count());
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                    egui::TextEdit::store_state(ui.ctx(), response.id, state);
+                }
+            }
+        }
     }
 }
 
 impl eframe::App for TescellateApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.active == ActiveSheet::Square {
-            for command in self.collect_commands(ctx) {
-                self.apply(command);
-            }
+        for command in self.collect_commands(ctx) {
+            self.apply(command);
         }
 
         egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| match self.active {
@@ -597,7 +668,7 @@ impl eframe::App for TescellateApp {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Tescellate").strong());
                     ui.separator();
-                    ui.label("Hex demo — a pointy-top tessellation. Click a cell to select it.");
+                    ui.label("Hex demo — arrows move along the q/r axes; type or F2 to edit.");
                 });
             }
         });
@@ -683,6 +754,18 @@ fn draw_cell_text(
     }
 }
 
+/// One axial step from a hex coord. On the pointy-top lattice, left/right
+/// run along the q-axis (pure horizontal on screen) and up/down along the
+/// r-axis. Any combination reaches every hex.
+fn hex_step(coord: HexCoord, dir: Dir) -> HexCoord {
+    match dir {
+        Dir::Left => HexCoord::new(coord.q - 1, coord.r),
+        Dir::Right => HexCoord::new(coord.q + 1, coord.r),
+        Dir::Up => HexCoord::new(coord.q, coord.r - 1),
+        Dir::Down => HexCoord::new(coord.q, coord.r + 1),
+    }
+}
+
 /// Render a cell value with the engine's natural formatting — no number
 /// format applied. Used for the hex sheet and as the square sheet's
 /// fallback for non-numeric values.
@@ -746,5 +829,29 @@ mod tests {
         assert_eq!(hex_address(HexCoord::new(0, 0)), "H(0,0)");
         assert_eq!(hex_address(HexCoord::new(2, -3)), "H(2,-3)");
         assert_eq!(hex_address(HexCoord::new(-1, 4)), "H(-1,4)");
+    }
+
+    #[test]
+    fn hex_step_moves_along_the_axial_axes() {
+        let origin = HexCoord::new(0, 0);
+        assert_eq!(hex_step(origin, Dir::Right), HexCoord::new(1, 0));
+        assert_eq!(hex_step(origin, Dir::Left), HexCoord::new(-1, 0));
+        assert_eq!(hex_step(origin, Dir::Down), HexCoord::new(0, 1));
+        assert_eq!(hex_step(origin, Dir::Up), HexCoord::new(0, -1));
+    }
+
+    #[test]
+    fn hex_step_opposite_directions_cancel() {
+        let c = HexCoord::new(2, -3);
+        assert_eq!(hex_step(hex_step(c, Dir::Right), Dir::Left), c);
+        assert_eq!(hex_step(hex_step(c, Dir::Down), Dir::Up), c);
+    }
+
+    #[test]
+    fn hex_step_is_always_a_unit_move() {
+        let c = HexCoord::new(1, 1);
+        for dir in [Dir::Up, Dir::Down, Dir::Left, Dir::Right] {
+            assert_eq!(c.distance(hex_step(c, dir)), 1);
+        }
     }
 }
