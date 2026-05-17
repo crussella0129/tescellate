@@ -1,24 +1,34 @@
 //! The Tescellate application — an `eframe::App` that owns a
 //! `WorkbookEngine` and draws the spreadsheet grid with egui.
 //!
-//! v2: Excel/Sheets-grade keyboard navigation and in-cell editing — key
-//! presses are routed through the pure [`crate::keymap`] layer.
-//! v3: per-column / per-row sizing — drag a header border to resize.
+//! v2: keyboard navigation and in-cell editing via the pure `keymap`
+//! layer. v3: per-column / per-row sizing. v4: cell formatting — bold,
+//! italic, alignment, colours, and number formats from the pure `format`
+//! layer.
 
 use eframe::egui;
 use tescellate_core::{CellValue, SheetId};
 use tescellate_formula::WorkbookEngine;
 use tescellate_tess::LatticeKind;
 
+use crate::format::{self, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
 use crate::keymap::{self, Command, Dir, Mode};
 
 const COLS: u32 = 16;
 const ROWS: u32 = 32;
 
+/// Ctrl+Shift, for the alignment shortcuts.
+const CTRL_SHIFT: egui::Modifiers = egui::Modifiers {
+    alt: false,
+    ctrl: true,
+    shift: true,
+    mac_cmd: false,
+    command: false,
+};
+
 /// Key combos handled while navigating. Each is checked with
-/// `consume_key`, so egui's own widgets never also see them (Tab would
-/// otherwise move widget focus).
+/// `consume_key`, so egui's own widgets never also see them.
 const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::NONE, egui::Key::ArrowUp),
     (egui::Modifiers::NONE, egui::Key::ArrowDown),
@@ -33,6 +43,11 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::NONE, egui::Key::F2),
     (egui::Modifiers::NONE, egui::Key::Delete),
     (egui::Modifiers::NONE, egui::Key::Backspace),
+    (egui::Modifiers::CTRL, egui::Key::B),
+    (egui::Modifiers::CTRL, egui::Key::I),
+    (CTRL_SHIFT, egui::Key::L),
+    (CTRL_SHIFT, egui::Key::E),
+    (CTRL_SHIFT, egui::Key::R),
 ];
 
 /// Key combos handled while editing. Arrows and text are deliberately
@@ -72,6 +87,8 @@ pub struct TescellateApp {
     metrics: GridMetrics,
     /// `Some` while a header border is being dragged.
     resizing: Option<Resize>,
+    /// Per-cell visual formatting.
+    formats: FormatMap,
 }
 
 impl TescellateApp {
@@ -100,6 +117,7 @@ impl TescellateApp {
             edit: None,
             metrics: GridMetrics::new(),
             resizing: None,
+            formats: FormatMap::new(),
         }
     }
 
@@ -111,16 +129,22 @@ impl TescellateApp {
         }
     }
 
-    /// The display text for a cell, read from the engine.
+    /// The display text for a cell, read from the engine and rendered
+    /// under the cell's number format.
     fn cell_text(&self, col: u32, row: u32) -> String {
         let addr = grid::cell_address(col, row);
         let Some(snapshot) = self.engine.get_cell(self.sheet, &addr) else {
             return String::new();
         };
+        let number = self.formats.get((col, row)).number;
         match snapshot.value {
             CellValue::Empty => String::new(),
-            CellValue::Number(n) => format_number(n),
-            CellValue::Integer(i) => i.to_string(),
+            CellValue::Number(n) => {
+                format::render_number(n, number).unwrap_or_else(|| format_number(n))
+            }
+            CellValue::Integer(i) => {
+                format::render_number(i as f64, number).unwrap_or_else(|| i.to_string())
+            }
             CellValue::Bool(b) => if b { "TRUE" } else { "FALSE" }.to_string(),
             CellValue::Text(t) => t,
             CellValue::Error(_) => "#ERROR".to_string(),
@@ -190,6 +214,15 @@ impl TescellateApp {
             }
             Command::Cancel => self.edit = None,
             Command::Clear => self.clear_selected(),
+            Command::ToggleBold => {
+                self.formats.update(self.selected, |f| f.bold = !f.bold);
+            }
+            Command::ToggleItalic => {
+                self.formats.update(self.selected, |f| f.italic = !f.italic);
+            }
+            Command::SetAlign(align) => {
+                self.formats.update(self.selected, |f| f.align = align);
+            }
         }
     }
 
@@ -275,7 +308,6 @@ impl TescellateApp {
         let (response, painter) = ui.allocate_painter(size, egui::Sense::click_and_drag());
         let origin = response.rect.min;
 
-        // A resize cursor when hovering a header border.
         if let Some(p) = response.hover_pos() {
             if self.metrics.col_border_at(origin, p, COLS).is_some() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
@@ -285,9 +317,6 @@ impl TescellateApp {
         }
         self.handle_resize(&response, origin);
 
-        // A click commits any in-progress edit, then moves the selection.
-        // A border drag reports `dragged()`, not `clicked()`, so resizing
-        // never selects a cell.
         if response.clicked() {
             if let Some(p) = response.interact_pointer_pos() {
                 if let Some(cell) = self.metrics.cell_at(origin, p, COLS, ROWS) {
@@ -336,26 +365,21 @@ impl TescellateApp {
                 text_color,
             );
         }
-        // Cells and their values. The cell being edited is left blank —
-        // the `TextEdit` overlay below stands in for it.
+        // Cells: fill, border, and the formatted value. The cell being
+        // edited is left blank for the `TextEdit` overlay below.
         let editing_cell = self.edit.as_ref().map(|_| self.selected);
         for r in 0..ROWS {
             for c in 0..COLS {
                 let rect = self.metrics.cell_rect(origin, c, r);
-                painter.rect_filled(rect, 0.0, cell_bg);
+                let fmt = self.formats.get((c, r));
+                painter.rect_filled(rect, 0.0, fmt.fill.unwrap_or(cell_bg));
                 painter.rect_stroke(rect, 0.0, grid_line);
                 if editing_cell == Some((c, r)) {
                     continue;
                 }
                 let text = self.cell_text(c, r);
                 if !text.is_empty() {
-                    painter.text(
-                        rect.left_center() + egui::vec2(5.0, 0.0),
-                        egui::Align2::LEFT_CENTER,
-                        text,
-                        font.clone(),
-                        text_color,
-                    );
+                    draw_cell_text(&painter, &text, rect, &fmt, text_color);
                 }
             }
         }
@@ -399,7 +423,7 @@ impl eframe::App for TescellateApp {
         egui::TopBottomPanel::top("tescellate_toolbar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Tescellate");
-                ui.label(egui::RichText::new("pure-Rust front-end · v3").weak());
+                ui.label(egui::RichText::new("pure-Rust front-end · v4").weak());
             });
         });
         egui::TopBottomPanel::top("tescellate_formula_bar").show(ctx, |ui| {
@@ -425,6 +449,44 @@ impl eframe::App for TescellateApp {
                     self.draw_grid(ui);
                 });
         });
+    }
+}
+
+/// Draw a cell's value with its formatting — colour, alignment, italic,
+/// and faux-bold (a second offset pass, since egui's default font has no
+/// bold weight).
+fn draw_cell_text(
+    painter: &egui::Painter,
+    text: &str,
+    rect: egui::Rect,
+    fmt: &CellFormat,
+    default_color: egui::Color32,
+) {
+    let color = fmt.text_color.unwrap_or(default_color);
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        text,
+        0.0,
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(13.0),
+            color,
+            italics: fmt.italic,
+            ..Default::default()
+        },
+    );
+    let galley = painter.layout_job(job);
+    let pad = 5.0;
+    let size = galley.size();
+    let y = rect.center().y - size.y / 2.0;
+    let x = match fmt.align {
+        HAlign::Left => rect.left() + pad,
+        HAlign::Center => rect.center().x - size.x / 2.0,
+        HAlign::Right => rect.right() - pad - size.x,
+    };
+    let pos = egui::pos2(x, y);
+    painter.galley(pos, galley.clone(), color);
+    if fmt.bold {
+        painter.galley(pos + egui::vec2(0.55, 0.0), galley, color);
     }
 }
 

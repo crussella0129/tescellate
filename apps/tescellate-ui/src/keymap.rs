@@ -7,6 +7,7 @@
 //! consumes the matching key events and routes them through this module,
 //! so these tests genuinely pin the app's behaviour.
 
+use crate::format::HAlign;
 use egui::Key;
 
 /// A movement direction on the grid.
@@ -44,6 +45,12 @@ pub enum Command {
     Cancel,
     /// Clear the selected cell (Delete / Backspace while navigating).
     Clear,
+    /// Toggle bold on the selected cell (Ctrl+B).
+    ToggleBold,
+    /// Toggle italic on the selected cell (Ctrl+I).
+    ToggleItalic,
+    /// Set the selected cell's horizontal alignment (Ctrl+Shift+L/E/R).
+    SetAlign(HAlign),
 }
 
 /// Interpret a non-text key press.
@@ -67,6 +74,13 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::Home => Command::MoveToRowStart,
         Key::F2 => Command::BeginEdit { replace_with: None },
         Key::Delete | Key::Backspace => Command::Clear,
+        // Formatting shortcuts. Plain B/I/L/E/R are not commands — typed
+        // text begins an edit instead — so each is guarded on Ctrl.
+        Key::B if ctrl => Command::ToggleBold,
+        Key::I if ctrl => Command::ToggleItalic,
+        Key::L if ctrl && shift => Command::SetAlign(HAlign::Left),
+        Key::E if ctrl && shift => Command::SetAlign(HAlign::Center),
+        Key::R if ctrl && shift => Command::SetAlign(HAlign::Right),
         _ => return None,
     })
 }
@@ -204,5 +218,32 @@ mod tests {
         assert_eq!(command_for_text("a", Mode::Editing), None);
         assert_eq!(command_for_text("", Mode::Navigating), None);
         assert_eq!(command_for_text("\t", Mode::Navigating), None);
+    }
+
+    #[test]
+    fn ctrl_shortcuts_toggle_bold_and_italic() {
+        assert_eq!(nav(Key::B, false, true), Some(Command::ToggleBold));
+        assert_eq!(nav(Key::I, false, true), Some(Command::ToggleItalic));
+        // Without Ctrl they are ordinary typed characters, not commands.
+        assert_eq!(nav(Key::B, false, false), None);
+        assert_eq!(nav(Key::I, false, false), None);
+    }
+
+    #[test]
+    fn ctrl_shift_letters_set_alignment() {
+        assert_eq!(
+            nav(Key::L, true, true),
+            Some(Command::SetAlign(HAlign::Left)),
+        );
+        assert_eq!(
+            nav(Key::E, true, true),
+            Some(Command::SetAlign(HAlign::Center)),
+        );
+        assert_eq!(
+            nav(Key::R, true, true),
+            Some(Command::SetAlign(HAlign::Right)),
+        );
+        // Ctrl alone (no Shift) is not an alignment command.
+        assert_eq!(nav(Key::L, false, true), None);
     }
 }
