@@ -29,8 +29,11 @@ pub enum Mode {
 /// A spreadsheet command — the interpreted result of a key press.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// Move the selection one cell.
+    /// Move the selection one cell, collapsing any range to a single cell.
     Move(Dir),
+    /// Extend the selection one cell — Shift+arrow. Moves the cursor and
+    /// keeps the anchor, growing or shrinking the selected range.
+    Extend(Dir),
     /// Move to the first column of the current row (Home).
     MoveToRowStart,
     /// Move to the top-left cell (Ctrl+Home).
@@ -63,10 +66,11 @@ pub fn command_for_key(key: Key, shift: bool, ctrl: bool, mode: Mode) -> Option<
 
 fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
     Some(match key {
-        Key::ArrowUp => Command::Move(Dir::Up),
-        Key::ArrowDown => Command::Move(Dir::Down),
-        Key::ArrowLeft => Command::Move(Dir::Left),
-        Key::ArrowRight => Command::Move(Dir::Right),
+        // Shift turns an arrow into a range extension rather than a move.
+        Key::ArrowUp => move_or_extend(Dir::Up, shift),
+        Key::ArrowDown => move_or_extend(Dir::Down, shift),
+        Key::ArrowLeft => move_or_extend(Dir::Left, shift),
+        Key::ArrowRight => move_or_extend(Dir::Right, shift),
         // Tab/Enter move the selection; Shift reverses the axis direction.
         Key::Tab => Command::Move(if shift { Dir::Left } else { Dir::Right }),
         Key::Enter => Command::Move(if shift { Dir::Up } else { Dir::Down }),
@@ -83,6 +87,15 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::R if ctrl && shift => Command::SetAlign(HAlign::Right),
         _ => return None,
     })
+}
+
+/// Shift turns an arrow-key move into a range extension.
+fn move_or_extend(dir: Dir, shift: bool) -> Command {
+    if shift {
+        Command::Extend(dir)
+    } else {
+        Command::Move(dir)
+    }
 }
 
 fn editing(key: Key, shift: bool) -> Option<Command> {
@@ -245,5 +258,26 @@ mod tests {
         );
         // Ctrl alone (no Shift) is not an alignment command.
         assert_eq!(nav(Key::L, false, true), None);
+    }
+
+    #[test]
+    fn shift_arrows_extend_the_selection() {
+        assert_eq!(
+            nav(Key::ArrowUp, true, false),
+            Some(Command::Extend(Dir::Up))
+        );
+        assert_eq!(
+            nav(Key::ArrowRight, true, false),
+            Some(Command::Extend(Dir::Right)),
+        );
+        // Without Shift the same keys move (and collapse) the selection.
+        assert_eq!(
+            nav(Key::ArrowUp, false, false),
+            Some(Command::Move(Dir::Up))
+        );
+        assert_eq!(
+            nav(Key::ArrowRight, false, false),
+            Some(Command::Move(Dir::Right)),
+        );
     }
 }

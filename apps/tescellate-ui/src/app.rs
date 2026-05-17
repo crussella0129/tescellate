@@ -2,10 +2,10 @@
 //! `WorkbookEngine` and draws the spreadsheet with egui.
 //!
 //! The square sheet has keyboard navigation, in-cell editing, row/column
-//! sizing, cell formatting and a formatting ribbon (v2–v5). The hex sheet
-//! (v6) renders `tescellate-tess`'s `HexLattice` as a real tessellation;
-//! v7 makes it interactive too — axial-arrow navigation and in-cell
-//! editing, routed through the same pure `keymap` command layer.
+//! sizing, cell formatting, a formatting ribbon, and (v8) multi-cell
+//! range selection. The hex sheet renders `tescellate-tess`'s
+//! `HexLattice` as a real tessellation and is interactive too — both
+//! sheets are driven by the same pure `keymap` command layer.
 
 use eframe::egui;
 use tescellate_core::{CellValue, SheetId};
@@ -17,6 +17,7 @@ use crate::format::{self, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
 use crate::keymap::{self, Command, Dir, Mode};
 use crate::ribbon::{self, RibbonAction};
+use crate::selection::Selection;
 
 const COLS: u32 = 16;
 const ROWS: u32 = 32;
@@ -42,6 +43,10 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::NONE, egui::Key::ArrowDown),
     (egui::Modifiers::NONE, egui::Key::ArrowLeft),
     (egui::Modifiers::NONE, egui::Key::ArrowRight),
+    (egui::Modifiers::SHIFT, egui::Key::ArrowUp),
+    (egui::Modifiers::SHIFT, egui::Key::ArrowDown),
+    (egui::Modifiers::SHIFT, egui::Key::ArrowLeft),
+    (egui::Modifiers::SHIFT, egui::Key::ArrowRight),
     (egui::Modifiers::NONE, egui::Key::Tab),
     (egui::Modifiers::SHIFT, egui::Key::Tab),
     (egui::Modifiers::NONE, egui::Key::Enter),
@@ -101,8 +106,8 @@ pub struct TescellateApp {
     hex_lattice: HexLattice,
     /// Which sheet is on screen.
     active: ActiveSheet,
-    /// Zero-indexed `(column, row)` selected on the square sheet.
-    selected: (u32, u32),
+    /// The selected cell range on the square sheet.
+    selection: Selection,
     /// Axial coord selected on the hex sheet.
     hex_selected: HexCoord,
     /// `Some` while a cell is being edited (on whichever sheet is active).
@@ -159,7 +164,7 @@ impl TescellateApp {
             hex_sheet,
             hex_lattice: HexLattice::pointy(HEX_SIZE),
             active: ActiveSheet::Square,
-            selected: (0, 0),
+            selection: Selection::single((0, 0)),
             hex_selected: HexCoord::new(0, 0),
             edit: None,
             metrics: GridMetrics::new(),
@@ -204,16 +209,16 @@ impl TescellateApp {
             .unwrap_or_default()
     }
 
-    /// The raw source of the selected square cell.
+    /// The raw source of the active square cell (the selection cursor).
     fn selected_source(&self) -> String {
-        let (col, row) = self.selected;
+        let (col, row) = self.selection.cursor;
         self.engine
             .get_cell(self.square_sheet, &grid::cell_address(col, row))
             .and_then(|s| s.source)
             .unwrap_or_default()
     }
 
-    /// The raw source of the selected cell on whichever sheet is active.
+    /// The raw source of the active cell on whichever sheet is active.
     fn active_cell_source(&self) -> String {
         match self.active {
             ActiveSheet::Square => self.selected_source(),
@@ -225,12 +230,12 @@ impl TescellateApp {
         }
     }
 
-    /// The selected cell's address and source text on the active sheet,
+    /// The active cell's address and source text on the active sheet,
     /// for the formula bar.
     fn active_address_and_source(&self) -> (String, String) {
         let addr = match self.active {
             ActiveSheet::Square => {
-                let (col, row) = self.selected;
+                let (col, row) = self.selection.cursor;
                 grid::cell_address(col, row)
             }
             ActiveSheet::Hex => hex_address(self.hex_selected),
@@ -285,12 +290,16 @@ impl TescellateApp {
     fn apply(&mut self, command: Command) {
         match command {
             Command::Move(dir) => self.move_active(dir),
+            Command::Extend(dir) => self.extend_active(dir),
             Command::MoveToRowStart => match self.active {
-                ActiveSheet::Square => self.selected.0 = 0,
+                ActiveSheet::Square => {
+                    let row = self.selection.cursor.1;
+                    self.selection.collapse_to((0, row));
+                }
                 ActiveSheet::Hex => self.hex_selected = HexCoord::new(0, 0),
             },
             Command::MoveToOrigin => match self.active {
-                ActiveSheet::Square => self.selected = (0, 0),
+                ActiveSheet::Square => self.selection.collapse_to((0, 0)),
                 ActiveSheet::Hex => self.hex_selected = HexCoord::new(0, 0),
             },
             Command::BeginEdit { replace_with } => self.begin_edit(replace_with),
@@ -306,9 +315,9 @@ impl TescellateApp {
         }
     }
 
-    /// Apply a formatting action from the ribbon to the selected cell.
+    /// Apply a formatting action from the ribbon to the active cell.
     fn apply_ribbon(&mut self, action: RibbonAction) {
-        let sel = self.selected;
+        let sel = self.selection.cursor;
         match action {
             RibbonAction::ToggleBold => self.formats.update(sel, |f| f.bold = !f.bold),
             RibbonAction::ToggleItalic => self.formats.update(sel, |f| f.italic = !f.italic),
@@ -320,30 +329,36 @@ impl TescellateApp {
         }
     }
 
-    /// Mutate the selected square cell's format. A no-op on the hex
-    /// sheet, which carries no formatting yet.
+    /// Mutate the active square cell's format. A no-op on the hex sheet,
+    /// which carries no formatting yet.
     fn format_selected(&mut self, edit: impl FnOnce(&mut CellFormat)) {
         if self.active == ActiveSheet::Square {
-            self.formats.update(self.selected, edit);
+            self.formats.update(self.selection.cursor, edit);
         }
     }
 
-    /// Move the selection on whichever sheet is active.
+    /// Move the selection on whichever sheet is active, collapsing any
+    /// square-sheet range to a single cell.
     fn move_active(&mut self, dir: Dir) {
         match self.active {
-            ActiveSheet::Square => self.move_selection(dir),
+            ActiveSheet::Square => {
+                let next = step_square(self.selection.cursor, dir);
+                self.selection.collapse_to(next);
+            }
             ActiveSheet::Hex => self.move_hex_selection(dir),
         }
     }
 
-    fn move_selection(&mut self, dir: Dir) {
-        let (col, row) = self.selected;
-        self.selected = match dir {
-            Dir::Up => (col, row.saturating_sub(1)),
-            Dir::Down => (col, (row + 1).min(ROWS - 1)),
-            Dir::Left => (col.saturating_sub(1), row),
-            Dir::Right => ((col + 1).min(COLS - 1), row),
-        };
+    /// Extend the selection one cell — Shift+arrow. On the hex sheet,
+    /// which has no range model yet, this is a plain move.
+    fn extend_active(&mut self, dir: Dir) {
+        match self.active {
+            ActiveSheet::Square => {
+                let next = step_square(self.selection.cursor, dir);
+                self.selection.extend_to(next);
+            }
+            ActiveSheet::Hex => self.move_hex_selection(dir),
+        }
     }
 
     /// Step the hex selection one axial cell, ignoring a move that would
@@ -356,6 +371,11 @@ impl TescellateApp {
     }
 
     fn begin_edit(&mut self, replace_with: Option<char>) {
+        // An edit acts on a single cell — collapse any range to its cursor.
+        if self.active == ActiveSheet::Square {
+            let cursor = self.selection.cursor;
+            self.selection.collapse_to(cursor);
+        }
         let buffer = match replace_with {
             Some(ch) => ch.to_string(),
             None => self.active_cell_source(),
@@ -379,7 +399,7 @@ impl TescellateApp {
         };
         match self.active {
             ActiveSheet::Square => {
-                let (col, row) = self.selected;
+                let (col, row) = self.selection.cursor;
                 let _ =
                     self.engine
                         .set_cell(self.square_sheet, &grid::cell_address(col, row), source);
@@ -391,14 +411,18 @@ impl TescellateApp {
         }
     }
 
-    /// Clear the selected cell on whichever sheet is active.
+    /// Clear the selection on whichever sheet is active — the whole range
+    /// on the square sheet, the single selected cell on the hex sheet.
     fn clear_active(&mut self) {
         match self.active {
             ActiveSheet::Square => {
-                let (col, row) = self.selected;
-                let _ =
-                    self.engine
-                        .set_cell(self.square_sheet, &grid::cell_address(col, row), None);
+                for (col, row) in self.selection.cells() {
+                    let _ = self.engine.set_cell(
+                        self.square_sheet,
+                        &grid::cell_address(col, row),
+                        None,
+                    );
+                }
             }
             ActiveSheet::Hex => {
                 let _ = self
@@ -438,6 +462,13 @@ impl TescellateApp {
         }
     }
 
+    /// The square cell under a pointer position, if any.
+    fn cell_under(&self, response: &egui::Response, origin: egui::Pos2) -> Option<(u32, u32)> {
+        response
+            .interact_pointer_pos()
+            .and_then(|p| self.metrics.cell_at(origin, p, COLS, ROWS))
+    }
+
     fn draw_grid(&mut self, ui: &mut egui::Ui) {
         let size = egui::vec2(
             self.metrics.total_width(COLS),
@@ -455,11 +486,27 @@ impl TescellateApp {
         }
         self.handle_resize(&response, origin);
 
-        if response.clicked() {
-            if let Some(p) = response.interact_pointer_pos() {
-                if let Some(cell) = self.metrics.cell_at(origin, p, COLS, ROWS) {
+        // A drag that didn't start on a header border sweeps a selection.
+        if self.resizing.is_none() {
+            if response.drag_started() {
+                if let Some(cell) = self.cell_under(&response, origin) {
                     self.commit_edit();
-                    self.selected = cell;
+                    self.selection.collapse_to(cell);
+                }
+            } else if response.dragged() {
+                if let Some(cell) = self.cell_under(&response, origin) {
+                    self.selection.extend_to(cell);
+                }
+            }
+        }
+        if response.clicked() {
+            if let Some(cell) = self.cell_under(&response, origin) {
+                self.commit_edit();
+                // Shift-click extends the range; a plain click resets it.
+                if ui.input(|i| i.modifiers.shift) {
+                    self.selection.extend_to(cell);
+                } else {
+                    self.selection.collapse_to(cell);
                 }
             }
         }
@@ -469,6 +516,9 @@ impl TescellateApp {
         let header_bg = visuals.faint_bg_color;
         let cell_bg = visuals.extreme_bg_color;
         let text_color = visuals.text_color();
+        let sel_color = visuals.selection.stroke.color;
+        let sel = visuals.selection.bg_fill;
+        let sel_tint = egui::Color32::from_rgba_unmultiplied(sel.r(), sel.g(), sel.b(), 64);
         let font = egui::FontId::proportional(13.0);
 
         // Column-letter headers.
@@ -503,14 +553,20 @@ impl TescellateApp {
                 text_color,
             );
         }
-        // Cells: fill, border, and the formatted value. The cell being
-        // edited is left blank for the `TextEdit` overlay below.
-        let editing_cell = self.edit.as_ref().map(|_| self.selected);
+        // Cells: fill, the selection tint, border, and the formatted
+        // value. The cell being edited is left blank for the overlay.
+        let cursor = self.selection.cursor;
+        let editing_cell = self.edit.as_ref().map(|_| cursor);
         for r in 0..ROWS {
             for c in 0..COLS {
                 let rect = self.metrics.cell_rect(origin, c, r);
                 let fmt = self.formats.get((c, r));
                 painter.rect_filled(rect, 0.0, fmt.fill.unwrap_or(cell_bg));
+                // The active cell stays untinted; the rest of the range
+                // gets a translucent wash, the way Excel/Sheets show it.
+                if (c, r) != cursor && self.selection.contains((c, r)) {
+                    painter.rect_filled(rect, 0.0, sel_tint);
+                }
                 painter.rect_stroke(rect, 0.0, grid_line);
                 if editing_cell == Some((c, r)) {
                     continue;
@@ -521,12 +577,23 @@ impl TescellateApp {
                 }
             }
         }
-        // The selection ring.
-        let (sc, sr) = self.selected;
+        // The range border, when the selection spans more than one cell.
+        if self.selection.is_range() {
+            let ((min_c, min_r), (max_c, max_r)) = self.selection.bounds();
+            let tl = self.metrics.cell_rect(origin, min_c, min_r);
+            let br = self.metrics.cell_rect(origin, max_c, max_r);
+            painter.rect_stroke(
+                egui::Rect::from_min_max(tl.min, br.max),
+                0.0,
+                egui::Stroke::new(1.5, sel_color),
+            );
+        }
+        // The active-cell ring.
+        let (sc, sr) = cursor;
         painter.rect_stroke(
             self.metrics.cell_rect(origin, sc, sr),
             0.0,
-            egui::Stroke::new(2.0, visuals.selection.stroke.color),
+            egui::Stroke::new(2.0, sel_color),
         );
 
         // The in-cell editor overlay.
@@ -659,7 +726,7 @@ impl eframe::App for TescellateApp {
 
         egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| match self.active {
             ActiveSheet::Square => {
-                let current = self.formats.get(self.selected);
+                let current = self.formats.get(self.selection.cursor);
                 if let Some(action) = ribbon::ribbon(ui, &current) {
                     self.apply_ribbon(action);
                 }
@@ -677,6 +744,10 @@ impl eframe::App for TescellateApp {
             ui.horizontal(|ui| {
                 let (addr, source) = self.active_address_and_source();
                 ui.monospace(addr);
+                if self.active == ActiveSheet::Square && self.selection.is_range() {
+                    let (cols, rows) = self.selection.dimensions();
+                    ui.label(egui::RichText::new(format!("{cols}C × {rows}R")).weak());
+                }
                 ui.separator();
                 ui.label(if source.is_empty() {
                     egui::RichText::new("(empty)").weak()
@@ -751,6 +822,17 @@ fn draw_cell_text(
     painter.galley(pos, galley.clone(), color);
     if fmt.bold {
         painter.galley(pos + egui::vec2(0.55, 0.0), galley, color);
+    }
+}
+
+/// One step from a square cell, clamped to the grid.
+fn step_square(cell: (u32, u32), dir: Dir) -> (u32, u32) {
+    let (col, row) = cell;
+    match dir {
+        Dir::Up => (col, row.saturating_sub(1)),
+        Dir::Down => (col, (row + 1).min(ROWS - 1)),
+        Dir::Left => (col.saturating_sub(1), row),
+        Dir::Right => ((col + 1).min(COLS - 1), row),
     }
 }
 
@@ -853,5 +935,29 @@ mod tests {
         for dir in [Dir::Up, Dir::Down, Dir::Left, Dir::Right] {
             assert_eq!(c.distance(hex_step(c, dir)), 1);
         }
+    }
+
+    #[test]
+    fn step_square_clamps_at_the_grid_edges() {
+        // The top-left corner can't move further up or left.
+        assert_eq!(step_square((0, 0), Dir::Up), (0, 0));
+        assert_eq!(step_square((0, 0), Dir::Left), (0, 0));
+        // The bottom-right corner can't move further down or right.
+        assert_eq!(
+            step_square((COLS - 1, ROWS - 1), Dir::Right),
+            (COLS - 1, ROWS - 1)
+        );
+        assert_eq!(
+            step_square((COLS - 1, ROWS - 1), Dir::Down),
+            (COLS - 1, ROWS - 1)
+        );
+    }
+
+    #[test]
+    fn step_square_moves_within_the_grid() {
+        assert_eq!(step_square((3, 4), Dir::Right), (4, 4));
+        assert_eq!(step_square((3, 4), Dir::Down), (3, 5));
+        assert_eq!(step_square((3, 4), Dir::Left), (2, 4));
+        assert_eq!(step_square((3, 4), Dir::Up), (3, 3));
     }
 }
