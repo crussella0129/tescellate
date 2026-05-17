@@ -72,3 +72,20 @@ jobs:
         run: cargo clippy -p tescellate-formula --features native --all-targets -- -D warnings
       - name: cargo test --features native
         run: cargo test -p tescellate-formula --features native
+
+  python:
+    name: python engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy --features python
+        run: cargo clippy -p tescellate-formula --features python --all-targets -- -D warnings
+      - name: cargo test --features python
+        run: cargo test -p tescellate-formula --features python

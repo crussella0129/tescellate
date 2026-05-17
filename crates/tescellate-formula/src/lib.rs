@@ -8,6 +8,9 @@ pub mod engine;
 pub mod excellite;
 pub mod transpile;
 
+#[cfg(feature = "python")]
+pub mod python;
+
 pub use engine::{CellSnapshot, WorkbookEngine};
 
 #[derive(Debug, Error)]
