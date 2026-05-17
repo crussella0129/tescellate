@@ -8,5 +8,6 @@
 
 mod app;
 pub mod grid;
+pub mod keymap;
 
 pub use app::TescellateApp;
