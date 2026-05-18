@@ -14,6 +14,7 @@ pub mod format;
 pub mod grid;
 pub mod history;
 pub mod keymap;
+pub mod note;
 pub mod ribbon;
 pub mod selection;
 pub mod stats;

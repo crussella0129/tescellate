@@ -20,6 +20,7 @@ use crate::format::{self, BorderMode, Borders, CellFormat, FormatMap, HAlign, He
 use crate::grid::{self, GridMetrics};
 use crate::history::History;
 use crate::keymap::{self, Command, Dir, Mode};
+use crate::note::NoteMap;
 use crate::ribbon::{self, RibbonAction};
 use crate::selection::{FillDir, HexSelection, Selection};
 use crate::stats;
@@ -309,6 +310,14 @@ pub struct TescellateApp {
     find_just_opened: bool,
     /// Whether the keyboard-shortcuts help overlay is open.
     help_open: bool,
+    /// Free-text notes on square-sheet cells.
+    notes: NoteMap<(u32, u32)>,
+    /// Whether the cell-note editor window is open.
+    note_open: bool,
+    /// The cell the note editor is editing.
+    note_cell: (u32, u32),
+    /// The note editor's text buffer.
+    note_draft: String,
     /// The Name box's edit buffer — the active cell's address, editable
     /// to jump the selection (square sheet).
     name_box: String,
@@ -399,6 +408,10 @@ impl TescellateApp {
             find_open: false,
             find_just_opened: false,
             help_open: false,
+            notes: NoteMap::new(),
+            note_open: false,
+            note_cell: (0, 0),
+            note_draft: String::new(),
             name_box: String::new(),
         }
     }
@@ -978,6 +991,40 @@ impl TescellateApp {
                     });
             });
         self.help_open = open;
+    }
+
+    /// The cell-note editor — a small window with a multiline field for
+    /// the note on `note_cell`, opened from the right-click menu.
+    fn note_window(&mut self, ctx: &egui::Context) {
+        if !self.note_open {
+            return;
+        }
+        let mut open = self.note_open;
+        let cell = self.note_cell;
+        egui::Window::new("Cell note")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.label(format!("Note for {}", grid::cell_address(cell.0, cell.1)));
+                ui.add(
+                    egui::TextEdit::multiline(&mut self.note_draft)
+                        .desired_rows(4)
+                        .desired_width(260.0),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        self.notes.set(cell, self.note_draft.clone());
+                        self.note_open = false;
+                    }
+                    if ui.button("Clear").clicked() {
+                        self.notes.set(cell, "");
+                        self.note_open = false;
+                    }
+                });
+            });
+        // The window's [x] clears `open`; a Save/Clear button may have
+        // already closed it.
+        self.note_open &= open;
     }
 
     /// Replace the query with the replacement in the current match's
@@ -1666,6 +1713,21 @@ impl TescellateApp {
         }
         self.handle_resize(&response, origin);
 
+        // A noted cell shows its note as a tooltip while it is hovered.
+        if let Some(p) = response.hover_pos() {
+            if let Some(cell) = self.metrics.cell_at(origin, p, COLS, ROWS) {
+                if self.notes.has(cell) {
+                    let note = self.notes.get(cell).to_string();
+                    egui::show_tooltip_at_pointer(
+                        ui.ctx(),
+                        ui.layer_id(),
+                        egui::Id::new("cell_note_tooltip"),
+                        |ui| ui.label(note),
+                    );
+                }
+            }
+        }
+
         // Double-clicking a column's border autofits it to its content.
         if response.double_clicked() {
             if let Some(p) = response.interact_pointer_pos() {
@@ -1783,6 +1845,13 @@ impl TescellateApp {
                 self.toggle_widget_cells();
                 ui.close_menu();
             }
+            if ui.button("Edit note…").clicked() {
+                let cell = self.selection.cursor;
+                self.note_cell = cell;
+                self.note_draft = self.notes.get(cell).to_string();
+                self.note_open = true;
+                ui.close_menu();
+            }
         });
 
         let visuals = ui.visuals();
@@ -1864,6 +1933,9 @@ impl TescellateApp {
                 let text = self.cell_text(c, r);
                 if !text.is_empty() {
                     draw_cell_text(&painter, &text, rect, &fmt, text_color);
+                }
+                if self.notes.has((c, r)) {
+                    draw_note_marker(&painter, rect);
                 }
             }
         }
@@ -2254,12 +2326,30 @@ impl eframe::App for TescellateApp {
         self.conditional_window(ctx);
         self.find_window(ctx);
         self.help_window(ctx);
+        self.note_window(ctx);
     }
 }
 
 /// Draw a square cell's value with its formatting — colour, alignment,
 /// italic, and faux-bold (a second offset pass, since egui's default font
 /// has no bold weight).
+/// A small triangle in a cell's top-right corner, marking that the cell
+/// carries a note.
+fn draw_note_marker(painter: &egui::Painter, rect: egui::Rect) {
+    let size = 7.0;
+    let tr = rect.right_top();
+    let marker = vec![
+        egui::pos2(tr.x - size, tr.y),
+        egui::pos2(tr.x, tr.y),
+        egui::pos2(tr.x, tr.y + size),
+    ];
+    painter.add(egui::Shape::convex_polygon(
+        marker,
+        egui::Color32::from_rgb(220, 90, 70),
+        egui::Stroke::NONE,
+    ));
+}
+
 fn draw_cell_text(
     painter: &egui::Painter,
     text: &str,
