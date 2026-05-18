@@ -314,6 +314,15 @@ pub fn jump_target(start: u32, max: u32, forward: bool, occupied: impl Fn(u32) -
     block_jump(start, step, occupied)
 }
 
+/// The extent — a column width or row height — that fits a set of
+/// measured content sizes: the largest plus `padding`, never below
+/// `min`. An empty iterator yields `min`, so a blank column autofits to
+/// its minimum width.
+pub fn fit_extent(measured: impl Iterator<Item = f32>, padding: f32, min: f32) -> f32 {
+    let widest = measured.fold(0.0_f32, f32::max);
+    (widest + padding).max(min)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,5 +585,19 @@ mod tests {
         let occ = |_: u32| true;
         assert_eq!(jump_target(9, 9, true, occ), 9);
         assert_eq!(jump_target(0, 9, false, occ), 0);
+    }
+
+    #[test]
+    fn fit_extent_takes_the_widest_plus_padding() {
+        // 55 (the widest) + 10 padding = 65.
+        assert_eq!(fit_extent([20.0, 55.0, 30.0].into_iter(), 10.0, 32.0), 65.0);
+    }
+
+    #[test]
+    fn fit_extent_clamps_to_the_minimum() {
+        // Narrow content still leaves the column at least `min` wide.
+        assert_eq!(fit_extent([4.0, 2.0].into_iter(), 10.0, 32.0), 32.0);
+        // An empty column (nothing measured) fits to the minimum.
+        assert_eq!(fit_extent(std::iter::empty::<f32>(), 10.0, 32.0), 32.0);
     }
 }
