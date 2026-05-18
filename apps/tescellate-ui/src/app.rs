@@ -312,10 +312,12 @@ pub struct TescellateApp {
     help_open: bool,
     /// Free-text notes on square-sheet cells.
     notes: NoteMap<(u32, u32)>,
+    /// Free-text notes on hex-sheet cells.
+    hex_notes: NoteMap<HexCoord>,
     /// Whether the cell-note editor window is open.
     note_open: bool,
-    /// The cell the note editor is editing.
-    note_cell: (u32, u32),
+    /// The cell the note editor is editing — on either sheet.
+    note_cell: CellId,
     /// The note editor's text buffer.
     note_draft: String,
     /// The Name box's edit buffer — the active cell's address, editable
@@ -409,8 +411,9 @@ impl TescellateApp {
             find_just_opened: false,
             help_open: false,
             notes: NoteMap::new(),
+            hex_notes: NoteMap::new(),
             note_open: false,
-            note_cell: (0, 0),
+            note_cell: CellId::Square((0, 0)),
             note_draft: String::new(),
             name_box: String::new(),
         }
@@ -1001,11 +1004,15 @@ impl TescellateApp {
         }
         let mut open = self.note_open;
         let cell = self.note_cell;
+        let address = match cell {
+            CellId::Square((c, r)) => grid::cell_address(c, r),
+            CellId::Hex(h) => hex_address(h),
+        };
         egui::Window::new("Cell note")
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.label(format!("Note for {}", grid::cell_address(cell.0, cell.1)));
+                ui.label(format!("Note for {address}"));
                 ui.add(
                     egui::TextEdit::multiline(&mut self.note_draft)
                         .desired_rows(4)
@@ -1013,11 +1020,11 @@ impl TescellateApp {
                 );
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
-                        self.notes.set(cell, self.note_draft.clone());
+                        self.set_note(cell, self.note_draft.clone());
                         self.note_open = false;
                     }
                     if ui.button("Clear").clicked() {
-                        self.notes.set(cell, "");
+                        self.set_note(cell, String::new());
                         self.note_open = false;
                     }
                 });
@@ -1025,6 +1032,15 @@ impl TescellateApp {
         // The window's [x] clears `open`; a Save/Clear button may have
         // already closed it.
         self.note_open &= open;
+    }
+
+    /// Write a note to whichever sheet `cell` belongs to. Blank text
+    /// clears the note (see [`NoteMap::set`]).
+    fn set_note(&mut self, cell: CellId, text: String) {
+        match cell {
+            CellId::Square(c) => self.notes.set(c, text),
+            CellId::Hex(h) => self.hex_notes.set(h, text),
+        }
     }
 
     /// Replace the query with the replacement in the current match's
@@ -1847,7 +1863,7 @@ impl TescellateApp {
             }
             if ui.button("Edit note…").clicked() {
                 let cell = self.selection.cursor;
-                self.note_cell = cell;
+                self.note_cell = CellId::Square(cell);
                 self.note_draft = self.notes.get(cell).to_string();
                 self.note_open = true;
                 ui.close_menu();
@@ -2072,6 +2088,12 @@ impl TescellateApp {
                 painter.text(egui::pos2(pos.x + 0.5, pos.y), anchor, &text, font, color);
             }
         }
+        // A note marker — a small dot near the hexagon's top.
+        if self.hex_notes.has(coord) {
+            let centre = self.hex_lattice.centroid(coord);
+            let dot = egui::pos2(origin.x + centre.x, origin.y + centre.y - HEX_SIZE * 0.52);
+            painter.circle_filled(dot, 3.0, egui::Color32::from_rgb(220, 90, 70));
+        }
     }
 
     fn draw_hex_grid(&mut self, ui: &mut egui::Ui) {
@@ -2093,6 +2115,61 @@ impl TescellateApp {
                             self.hex_selection.collapse_to(coord);
                         }
                     }
+                }
+            }
+        }
+
+        // Right-click selects the hex under the pointer (unless it is
+        // already selected), then opens the cell-actions menu.
+        if response.secondary_clicked() {
+            if let Some(p) = response.interact_pointer_pos() {
+                let local = Point2::new(p.x - origin.x, p.y - origin.y);
+                if let Some(coord) = self.hex_lattice.cell_at(local) {
+                    if hex_in_view(coord) && !self.hex_selection.contains(coord) {
+                        self.commit_edit();
+                        self.hex_selection.collapse_to(coord);
+                    }
+                }
+            }
+        }
+        response.context_menu(|ui| {
+            if ui.button("Copy").clicked() {
+                self.copy_selection(ui.ctx());
+                ui.close_menu();
+            }
+            if ui.button("Cut").clicked() {
+                self.cut_selection(ui.ctx());
+                ui.close_menu();
+            }
+            if ui.button("Paste").clicked() {
+                self.paste();
+                ui.close_menu();
+            }
+            if ui.button("Clear").clicked() {
+                self.clear_active();
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("Edit note…").clicked() {
+                let coord = self.hex_selection.cursor;
+                self.note_cell = CellId::Hex(coord);
+                self.note_draft = self.hex_notes.get(coord).to_string();
+                self.note_open = true;
+                ui.close_menu();
+            }
+        });
+        // A noted hex shows its note as a tooltip while it is hovered.
+        if let Some(p) = response.hover_pos() {
+            let local = Point2::new(p.x - origin.x, p.y - origin.y);
+            if let Some(coord) = self.hex_lattice.cell_at(local) {
+                if hex_in_view(coord) && self.hex_notes.has(coord) {
+                    let note = self.hex_notes.get(coord).to_string();
+                    egui::show_tooltip_at_pointer(
+                        ui.ctx(),
+                        ui.layer_id(),
+                        egui::Id::new("hex_note_tooltip"),
+                        |ui| ui.label(note),
+                    );
                 }
             }
         }
