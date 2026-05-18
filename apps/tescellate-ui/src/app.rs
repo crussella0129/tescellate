@@ -15,6 +15,7 @@ use tescellate_tess::{Lattice, LatticeKind, Point2};
 
 use crate::clipboard::{Clipboard, CopiedCell};
 use crate::conditional::{self, Condition, Rule};
+use crate::find::FindState;
 use crate::format::{self, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
 use crate::history::History;
@@ -76,6 +77,7 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::CTRL, egui::Key::Y),
     (egui::Modifiers::CTRL, egui::Key::D),
     (egui::Modifiers::CTRL, egui::Key::R),
+    (egui::Modifiers::CTRL, egui::Key::F),
     (CTRL_SHIFT, egui::Key::L),
     (CTRL_SHIFT, egui::Key::E),
     (CTRL_SHIFT, egui::Key::R),
@@ -266,6 +268,12 @@ pub struct TescellateApp {
     /// The formula bar's edit buffer — mirrors the active cell's source
     /// except while the bar itself is being edited.
     formula_bar: String,
+    /// Find-panel state — the query and its matching cells.
+    find: FindState,
+    /// Whether the Find window is open.
+    find_open: bool,
+    /// Set when Find is opened by Ctrl+F so the query field grabs focus.
+    find_just_opened: bool,
 }
 
 impl TescellateApp {
@@ -338,6 +346,9 @@ impl TescellateApp {
                 w
             },
             formula_bar: String::new(),
+            find: FindState::default(),
+            find_open: false,
+            find_just_opened: false,
         }
     }
 
@@ -541,6 +552,10 @@ impl TescellateApp {
             Command::Redo => self.redo(),
             Command::FillDown => self.fill(FillDir::Down),
             Command::FillRight => self.fill(FillDir::Right),
+            Command::OpenFind => {
+                self.find_open = true;
+                self.find_just_opened = true;
+            }
         }
     }
 
@@ -631,6 +646,81 @@ impl TescellateApp {
                 });
             });
         self.cond_window_open = open;
+    }
+
+    /// The Find panel — a floating window with a query box, prev/next,
+    /// and a match count. Ctrl+F opens it.
+    fn find_window(&mut self, ctx: &egui::Context) {
+        if !self.find_open {
+            return;
+        }
+        let mut open = self.find_open;
+        egui::Window::new("Find")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut self.find.query)
+                            .desired_width(180.0)
+                            .hint_text("find in cells"),
+                    );
+                    if self.find_just_opened {
+                        response.request_focus();
+                        self.find_just_opened = false;
+                    }
+                    if response.changed() {
+                        self.refresh_find();
+                    }
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        response.request_focus();
+                        self.find_step(true);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("◀ Prev").clicked() {
+                        self.find_step(false);
+                    }
+                    if ui.button("Next ▶").clicked() {
+                        self.find_step(true);
+                    }
+                    let count = self.find.match_count();
+                    let label = if count > 0 {
+                        format!("{} of {}", self.find.current_index(), count)
+                    } else if self.find.query.is_empty() {
+                        String::new()
+                    } else {
+                        "no matches".to_string()
+                    };
+                    ui.label(egui::RichText::new(label).weak());
+                });
+            });
+        let was_open = self.find_open;
+        self.find_open = open;
+        // Closing Find drops the query so its grid highlights clear.
+        if was_open && !self.find_open {
+            self.find.clear();
+        }
+    }
+
+    /// Rebuild the Find matches from the square sheet's current contents
+    /// and jump the selection to the first match.
+    fn refresh_find(&mut self) {
+        let cells: Vec<((u32, u32), String)> = (0..ROWS)
+            .flat_map(|r| (0..COLS).map(move |c| (c, r)))
+            .map(|(c, r)| ((c, r), self.cell_text(c, r)))
+            .collect();
+        self.find.refresh(cells.into_iter());
+        if let Some(cell) = self.find.current_match() {
+            self.selection.collapse_to(cell);
+        }
+    }
+
+    /// Step Find to the next/previous match and move the selection to it.
+    fn find_step(&mut self, forward: bool) {
+        if let Some(cell) = self.find.step(forward) {
+            self.selection.collapse_to(cell);
+        }
     }
 
     /// Apply a formatting change to every cell of the selection, recorded
@@ -1149,6 +1239,7 @@ impl TescellateApp {
         let sel_color = visuals.selection.stroke.color;
         let sel = visuals.selection.bg_fill;
         let sel_tint = egui::Color32::from_rgba_unmultiplied(sel.r(), sel.g(), sel.b(), 64);
+        let find_tint = egui::Color32::from_rgba_unmultiplied(255, 200, 0, 80);
         let font = egui::FontId::proportional(13.0);
 
         // Column-letter headers.
@@ -1202,6 +1293,9 @@ impl TescellateApp {
                 // gets a translucent wash, the way Excel/Sheets show it.
                 if (c, r) != cursor && self.selection.contains((c, r)) {
                     painter.rect_filled(rect, 0.0, sel_tint);
+                }
+                if self.find.is_match((c, r)) {
+                    painter.rect_filled(rect, 0.0, find_tint);
                 }
                 painter.rect_stroke(rect, 0.0, grid_line);
                 if editing_cell == Some((c, r)) {
@@ -1557,6 +1651,7 @@ impl eframe::App for TescellateApp {
         });
 
         self.conditional_window(ctx);
+        self.find_window(ctx);
     }
 }
 

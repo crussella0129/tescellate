@@ -69,6 +69,8 @@ pub enum Command {
     FillDown,
     /// Fill the selection's left column rightward into it (Ctrl+R).
     FillRight,
+    /// Open the Find panel (Ctrl+F).
+    OpenFind,
 }
 
 /// Interpret a non-text key press.
@@ -109,6 +111,7 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::D if ctrl => Command::FillDown,
         // Ctrl+Shift+R is alignment (matched above); plain Ctrl+R fills.
         Key::R if ctrl => Command::FillRight,
+        Key::F if ctrl => Command::OpenFind,
         _ => return None,
     })
 }
@@ -336,5 +339,12 @@ mod tests {
         );
         // Plain D/R are typed characters, not commands.
         assert_eq!(nav(Key::D, false, false), None);
+    }
+
+    #[test]
+    fn ctrl_f_opens_find() {
+        assert_eq!(nav(Key::F, false, true), Some(Command::OpenFind));
+        // Plain F is an ordinary typed character, not a command.
+        assert_eq!(nav(Key::F, false, false), None);
     }
 }
