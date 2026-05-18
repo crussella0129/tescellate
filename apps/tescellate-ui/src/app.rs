@@ -22,6 +22,7 @@ use crate::keymap::{self, Command, Dir, Mode};
 use crate::ribbon::{self, RibbonAction};
 use crate::selection::{FillDir, HexSelection, Selection};
 use crate::stats;
+use crate::widget::{self, Widgets};
 
 const COLS: u32 = 16;
 const ROWS: u32 = 32;
@@ -260,6 +261,8 @@ pub struct TescellateApp {
     cond_window_open: bool,
     /// The in-progress new rule in that editor.
     cond_draft: CondDraft,
+    /// Square-sheet cells that render as interactive boolean toggles.
+    widgets: Widgets,
 }
 
 impl TescellateApp {
@@ -326,6 +329,11 @@ impl TescellateApp {
             }],
             cond_window_open: false,
             cond_draft: CondDraft::default(),
+            widgets: {
+                let mut w = Widgets::default();
+                w.set_toggle((3, 1), true);
+                w
+            },
         }
     }
 
@@ -542,6 +550,21 @@ impl TescellateApp {
             RibbonAction::Cut => self.cut_selection(ctx),
             RibbonAction::Paste => self.paste(),
             RibbonAction::OpenConditional => self.cond_window_open = true,
+            RibbonAction::ToggleWidget => self.toggle_widget_cells(),
+        }
+    }
+
+    /// Turn the selected square-sheet cells into boolean checkbox cells,
+    /// or back into ordinary cells if they all already are. A no-op on
+    /// the hex sheet, which has no widgets yet.
+    fn toggle_widget_cells(&mut self) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let cells: Vec<(u32, u32)> = self.selection.cells().collect();
+        let all_on = cells.iter().all(|&c| self.widgets.is_toggle(c));
+        for cell in cells {
+            self.widgets.set_toggle(cell, !all_on);
         }
     }
 
@@ -1178,6 +1201,10 @@ impl TescellateApp {
                 if editing_cell == Some((c, r)) {
                     continue;
                 }
+                // Toggle cells are drawn as a checkbox in a later pass.
+                if self.widgets.is_toggle((c, r)) {
+                    continue;
+                }
                 let text = self.cell_text(c, r);
                 if !text.is_empty() {
                     draw_cell_text(&painter, &text, rect, &fmt, text_color);
@@ -1226,6 +1253,30 @@ impl TescellateApp {
                     4.0,
                     3.0,
                 ));
+            }
+        }
+
+        // Boolean toggle cells render as a clickable checkbox.
+        if !self.widgets.is_empty() {
+            let mut flipped = None;
+            for r in 0..ROWS {
+                for c in 0..COLS {
+                    if !self.widgets.is_toggle((c, r)) || editing_cell == Some((c, r)) {
+                        continue;
+                    }
+                    let rect = self.metrics.cell_rect(origin, c, r);
+                    let mut checked = widget::bool_state(&self.cell_value(c, r));
+                    if ui
+                        .put(rect, egui::Checkbox::new(&mut checked, ""))
+                        .changed()
+                    {
+                        flipped = Some((grid::cell_address(c, r), checked));
+                    }
+                }
+            }
+            if let Some((addr, checked)) = flipped {
+                let source = widget::bool_source(checked).to_string();
+                self.apply_edits(self.square_sheet, vec![(addr, Some(source))]);
             }
         }
 

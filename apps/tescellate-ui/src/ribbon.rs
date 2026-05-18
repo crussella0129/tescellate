@@ -36,6 +36,8 @@ pub enum RibbonAction {
     Paste,
     /// Open the conditional-formatting rule editor.
     OpenConditional,
+    /// Turn the selection into (or out of) boolean checkbox cells.
+    ToggleWidget,
 }
 
 /// The number formats the ribbon's combo offers, with display labels. The
@@ -176,6 +178,13 @@ pub fn ribbon(
             .clicked()
         {
             action = Some(RibbonAction::OpenConditional);
+        }
+        if ui
+            .button("Checkbox")
+            .on_hover_text("Turn the selected cells into boolean checkboxes")
+            .clicked()
+        {
+            action = Some(RibbonAction::ToggleWidget);
         }
     });
     action
