@@ -378,7 +378,7 @@ impl TescellateApp {
     }
 
     /// Apply a formatting action from the ribbon across the selection.
-    fn apply_ribbon(&mut self, action: RibbonAction) {
+    fn apply_ribbon(&mut self, action: RibbonAction, ctx: &egui::Context) {
         match action {
             RibbonAction::ToggleBold => self.toggle_range(|f| f.bold, |f, v| f.bold = v),
             RibbonAction::ToggleItalic => self.toggle_range(|f| f.italic, |f, v| f.italic = v),
@@ -387,6 +387,11 @@ impl TescellateApp {
             RibbonAction::SetTextColor(color) => self.format_range(|f| f.text_color = color),
             RibbonAction::SetFill(fill) => self.format_range(|f| f.fill = fill),
             RibbonAction::ClearFormat => self.format_range(|f| *f = CellFormat::default()),
+            RibbonAction::Undo => self.undo(),
+            RibbonAction::Redo => self.redo(),
+            RibbonAction::Copy => self.copy_selection(ctx),
+            RibbonAction::Cut => self.cut_selection(ctx),
+            RibbonAction::Paste => self.paste(),
         }
     }
 
@@ -991,8 +996,10 @@ impl eframe::App for TescellateApp {
         egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| match self.active {
             ActiveSheet::Square => {
                 let current = self.formats.get(self.selection.cursor);
-                if let Some(action) = ribbon::ribbon(ui, &current) {
-                    self.apply_ribbon(action);
+                let can_undo = self.history.can_undo();
+                let can_redo = self.history.can_redo();
+                if let Some(action) = ribbon::ribbon(ui, &current, can_undo, can_redo) {
+                    self.apply_ribbon(action, ctx);
                 }
             }
             ActiveSheet::Hex => {
