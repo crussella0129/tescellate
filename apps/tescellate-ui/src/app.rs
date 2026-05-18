@@ -675,6 +675,9 @@ impl TescellateApp {
             RibbonAction::ToggleItalic => self.toggle_range(|f| f.italic, |f, v| f.italic = v),
             RibbonAction::SetAlign(align) => self.format_range(|f| f.align = align),
             RibbonAction::SetNumber(number) => self.format_range(|f| f.number = number),
+            RibbonAction::AdjustDecimals(delta) => {
+                self.format_range(|f| f.number = format::adjust_decimals(f.number, delta))
+            }
             RibbonAction::SetTextColor(color) => self.format_range(|f| f.text_color = color),
             RibbonAction::SetFill(fill) => self.format_range(|f| f.fill = fill),
             RibbonAction::ClearFormat => self.format_range(|f| *f = CellFormat::default()),
