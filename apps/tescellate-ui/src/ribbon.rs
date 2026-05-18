@@ -40,6 +40,8 @@ pub enum RibbonAction {
     OpenConditional,
     /// Turn the selection into (or out of) boolean checkbox cells.
     ToggleWidget,
+    /// Write `=SUM(...)` of the selection into the cell below it.
+    AutoSum,
     /// Apply a border mode across the selection.
     SetBorders(BorderMode),
     /// Open the keyboard-shortcuts help overlay.
@@ -210,6 +212,13 @@ pub fn ribbon(
             .clicked()
         {
             action = Some(RibbonAction::ToggleWidget);
+        }
+        if ui
+            .button("AutoSum")
+            .on_hover_text("Sum the selection into the cell below it")
+            .clicked()
+        {
+            action = Some(RibbonAction::AutoSum);
         }
         ui.separator();
 
