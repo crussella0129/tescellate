@@ -614,6 +614,7 @@ impl TescellateApp {
             Command::Move(dir) => self.move_active(dir),
             Command::Extend(dir) => self.extend_active(dir),
             Command::SelectAll => self.select_all(),
+            Command::Jump(dir) => self.jump_active(dir),
             Command::MoveToRowStart => match self.active {
                 ActiveSheet::Square => {
                     let row = self.selection.cursor.1;
@@ -1154,6 +1155,44 @@ impl TescellateApp {
             }
             ActiveSheet::Hex => self.move_hex_selection(dir),
         }
+    }
+
+    /// Jump the cursor to the data edge — Ctrl+arrow. On the square sheet
+    /// `grid::jump_target` scans the cursor's row or column for the block
+    /// edge; the hex sheet has no row/column runs, so it falls back to a
+    /// one-cell move.
+    fn jump_active(&mut self, dir: Dir) {
+        match self.active {
+            ActiveSheet::Square => {
+                let (c, r) = self.selection.cursor;
+                let next = match dir {
+                    Dir::Left => (
+                        grid::jump_target(c, COLS - 1, false, |i| self.square_occupied(i, r)),
+                        r,
+                    ),
+                    Dir::Right => (
+                        grid::jump_target(c, COLS - 1, true, |i| self.square_occupied(i, r)),
+                        r,
+                    ),
+                    Dir::Up => (
+                        c,
+                        grid::jump_target(r, ROWS - 1, false, |i| self.square_occupied(c, i)),
+                    ),
+                    Dir::Down => (
+                        c,
+                        grid::jump_target(r, ROWS - 1, true, |i| self.square_occupied(c, i)),
+                    ),
+                };
+                self.selection.collapse_to(next);
+            }
+            ActiveSheet::Hex => self.move_hex_selection(dir),
+        }
+    }
+
+    /// Whether a square-sheet cell holds content — the predicate
+    /// `grid::jump_target` scans for Ctrl+arrow.
+    fn square_occupied(&self, col: u32, row: u32) -> bool {
+        !matches!(self.cell_value(col, row), CellValue::Empty)
     }
 
     /// Extend the selection one cell — Shift+arrow, on either sheet.
