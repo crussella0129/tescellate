@@ -615,6 +615,7 @@ impl TescellateApp {
             Command::Extend(dir) => self.extend_active(dir),
             Command::SelectAll => self.select_all(),
             Command::Jump(dir) => self.jump_active(dir),
+            Command::JumpExtend(dir) => self.jump_extend_active(dir),
             Command::MoveToRowStart => match self.active {
                 ActiveSheet::Square => {
                     let row = self.selection.cursor.1;
@@ -1157,35 +1158,52 @@ impl TescellateApp {
         }
     }
 
-    /// Jump the cursor to the data edge — Ctrl+arrow. On the square sheet
-    /// `grid::jump_target` scans the cursor's row or column for the block
-    /// edge; the hex sheet has no row/column runs, so it falls back to a
-    /// one-cell move.
+    /// The square-sheet cell a Ctrl+arrow jump lands on from the cursor —
+    /// the block edge along `dir`'s row or column, via `grid::jump_target`.
+    fn square_jump(&self, dir: Dir) -> (u32, u32) {
+        let (c, r) = self.selection.cursor;
+        match dir {
+            Dir::Left => (
+                grid::jump_target(c, COLS - 1, false, |i| self.square_occupied(i, r)),
+                r,
+            ),
+            Dir::Right => (
+                grid::jump_target(c, COLS - 1, true, |i| self.square_occupied(i, r)),
+                r,
+            ),
+            Dir::Up => (
+                c,
+                grid::jump_target(r, ROWS - 1, false, |i| self.square_occupied(c, i)),
+            ),
+            Dir::Down => (
+                c,
+                grid::jump_target(r, ROWS - 1, true, |i| self.square_occupied(c, i)),
+            ),
+        }
+    }
+
+    /// Jump the cursor to the data edge — Ctrl+arrow. The hex sheet has
+    /// no row/column runs, so it falls back to a one-cell move.
     fn jump_active(&mut self, dir: Dir) {
         match self.active {
             ActiveSheet::Square => {
-                let (c, r) = self.selection.cursor;
-                let next = match dir {
-                    Dir::Left => (
-                        grid::jump_target(c, COLS - 1, false, |i| self.square_occupied(i, r)),
-                        r,
-                    ),
-                    Dir::Right => (
-                        grid::jump_target(c, COLS - 1, true, |i| self.square_occupied(i, r)),
-                        r,
-                    ),
-                    Dir::Up => (
-                        c,
-                        grid::jump_target(r, ROWS - 1, false, |i| self.square_occupied(c, i)),
-                    ),
-                    Dir::Down => (
-                        c,
-                        grid::jump_target(r, ROWS - 1, true, |i| self.square_occupied(c, i)),
-                    ),
-                };
+                let next = self.square_jump(dir);
                 self.selection.collapse_to(next);
             }
             ActiveSheet::Hex => self.move_hex_selection(dir),
+        }
+    }
+
+    /// Extend the selection to the data edge — Ctrl+Shift+arrow. Keeps
+    /// the anchor and jumps the cursor; the hex sheet falls back to a
+    /// one-cell extend.
+    fn jump_extend_active(&mut self, dir: Dir) {
+        match self.active {
+            ActiveSheet::Square => {
+                let next = self.square_jump(dir);
+                self.selection.extend_to(next);
+            }
+            ActiveSheet::Hex => self.extend_hex_selection(dir),
         }
     }
 
