@@ -724,20 +724,29 @@ impl TescellateApp {
         }
     }
 
-    /// AutoSum — write `=SUM(...)` of the square selection into the cell
-    /// directly below it, then move there. A no-op on the hex sheet,
-    /// whose range syntax differs, or when there is no row below.
+    /// AutoSum — write `=SUM(...)` of the selection into the cell
+    /// directly below it, then move there. A no-op when that cell would
+    /// fall off the sheet — past the last row, or outside the hex disc.
     fn autosum(&mut self) {
-        if self.active != ActiveSheet::Square {
-            return;
+        match self.active {
+            ActiveSheet::Square => {
+                let Some((target, formula)) = grid::autosum(self.selection.bounds(), ROWS) else {
+                    return;
+                };
+                self.commit_edit();
+                let addr = grid::cell_address(target.0, target.1);
+                self.apply_edits(self.square_sheet, vec![(addr, Some(formula))]);
+                self.selection.collapse_to(target);
+            }
+            ActiveSheet::Hex => {
+                let Some((target, formula)) = hex_autosum(self.hex_selection.bounds()) else {
+                    return;
+                };
+                self.commit_edit();
+                self.apply_edits(self.hex_sheet, vec![(hex_address(target), Some(formula))]);
+                self.hex_selection.collapse_to(target);
+            }
         }
-        let Some((target, formula)) = grid::autosum(self.selection.bounds(), ROWS) else {
-            return;
-        };
-        self.commit_edit();
-        let addr = grid::cell_address(target.0, target.1);
-        self.apply_edits(self.square_sheet, vec![(addr, Some(formula))]);
-        self.selection.collapse_to(target);
     }
 
     /// Apply a border mode across the selection — one undo step. Both
@@ -2522,6 +2531,28 @@ fn hex_jump(
     grid::block_jump(start, step, occupied)
 }
 
+/// The hex AutoSum action for a selection whose inclusive axial corners
+/// are `bounds`: the hex directly below the selection's bottom row that
+/// should hold the total, and the `=SUM(...)` formula. `None` when that
+/// hex falls outside the visible disc.
+fn hex_autosum(bounds: ((i32, i32), (i32, i32))) -> Option<(HexCoord, String)> {
+    let ((min_q, min_r), (max_q, max_r)) = bounds;
+    let target = HexCoord::new(min_q, max_r + 1);
+    if !hex_in_view(target) {
+        return None;
+    }
+    let range = if (min_q, min_r) == (max_q, max_r) {
+        hex_address(HexCoord::new(min_q, min_r))
+    } else {
+        format!(
+            "{}:{}",
+            hex_address(HexCoord::new(min_q, min_r)),
+            hex_address(HexCoord::new(max_q, max_r)),
+        )
+    };
+    Some((target, format!("=SUM({range})")))
+}
+
 /// Render a cell value with the engine's natural formatting — no number
 /// format applied. Used for the hex sheet and as the square sheet's
 /// fallback for non-numeric values.
@@ -2796,6 +2827,29 @@ mod tests {
         // H(3,0) is the last in-view cell going right; jumping right stays.
         let target = hex_jump(HexCoord::new(3, 0), Dir::Right, hex_in_view, |_| true);
         assert_eq!(target, HexCoord::new(3, 0));
+    }
+
+    #[test]
+    fn hex_autosum_sums_into_the_hex_below() {
+        // The column H(0,-1):H(0,1) totals into H(0,2).
+        assert_eq!(
+            hex_autosum(((0, -1), (0, 1))),
+            Some((HexCoord::new(0, 2), "=SUM(H(0,-1):H(0,1))".to_string())),
+        );
+    }
+
+    #[test]
+    fn hex_autosum_single_cell() {
+        assert_eq!(
+            hex_autosum(((1, 0), (1, 0))),
+            Some((HexCoord::new(1, 1), "=SUM(H(1,0))".to_string())),
+        );
+    }
+
+    #[test]
+    fn hex_autosum_is_none_outside_the_view() {
+        // The total hex would land past the radius-3 view disc.
+        assert_eq!(hex_autosum(((0, 2), (0, 3))), None);
     }
 
     #[test]
