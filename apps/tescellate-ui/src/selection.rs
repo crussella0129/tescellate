@@ -40,18 +40,33 @@ impl Selection {
     /// active cell is the column's top, `(col, 0)`, as spreadsheets
     /// place it.
     pub fn column(col: u32, rows: u32) -> Self {
+        Self::column_range(col, col, rows)
+    }
+
+    /// A selection spanning the full height of the columns between `c0`
+    /// and `c1` inclusive, in either order — what a drag across column
+    /// headers sweeps. The active cell is the top of column `c1`, the
+    /// end the drag last reached.
+    pub fn column_range(c0: u32, c1: u32, rows: u32) -> Self {
         Self {
-            anchor: (col, rows.saturating_sub(1)),
-            cursor: (col, 0),
+            anchor: (c0, rows.saturating_sub(1)),
+            cursor: (c1, 0),
         }
     }
 
     /// A selection spanning an entire row — every column `0..cols`. The
     /// active cell is the row's leftmost cell, `(0, row)`.
     pub fn row(row: u32, cols: u32) -> Self {
+        Self::row_range(row, row, cols)
+    }
+
+    /// A selection spanning the full width of the rows between `r0` and
+    /// `r1` inclusive, in either order. The active cell is the left of
+    /// row `r1`.
+    pub fn row_range(r0: u32, r1: u32, cols: u32) -> Self {
         Self {
-            anchor: (cols.saturating_sub(1), row),
-            cursor: (0, row),
+            anchor: (cols.saturating_sub(1), r0),
+            cursor: (0, r1),
         }
     }
 
@@ -307,6 +322,38 @@ mod tests {
         assert_eq!(Selection::column(2, 0).bounds(), ((2, 0), (2, 0)));
         assert_eq!(Selection::row(0, 0).bounds(), ((0, 0), (0, 0)));
         assert_eq!(Selection::all(0, 0).bounds(), ((0, 0), (0, 0)));
+    }
+
+    #[test]
+    fn column_range_spans_the_columns_between_its_ends() {
+        let s = Selection::column_range(1, 4, 32);
+        assert_eq!(s.bounds(), ((1, 0), (4, 31)));
+        assert_eq!(s.dimensions(), (4, 32));
+        // The active cell is the top of the drag's end column.
+        assert_eq!(s.cursor, (4, 0));
+    }
+
+    #[test]
+    fn column_range_normalises_reversed_ends() {
+        // Dragging right-to-left yields the same rectangle.
+        let s = Selection::column_range(5, 2, 32);
+        assert_eq!(s.bounds(), ((2, 0), (5, 31)));
+        assert_eq!(s.cursor, (2, 0));
+    }
+
+    #[test]
+    fn row_range_spans_the_rows_between_its_ends() {
+        let s = Selection::row_range(3, 6, 16);
+        assert_eq!(s.bounds(), ((0, 3), (15, 6)));
+        assert_eq!(s.dimensions(), (16, 4));
+        assert_eq!(s.cursor, (0, 6));
+    }
+
+    #[test]
+    fn single_ended_ranges_match_the_whole_column_and_row() {
+        // column / row are the degenerate one-index ranges.
+        assert_eq!(Selection::column_range(7, 7, 32), Selection::column(7, 32));
+        assert_eq!(Selection::row_range(2, 2, 16), Selection::row(2, 16));
     }
 
     #[test]

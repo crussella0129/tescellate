@@ -123,6 +123,14 @@ enum Resize {
     Row(u32),
 }
 
+/// A column or row header being dragged to sweep a range selection. The
+/// index is the column/row where the drag began.
+#[derive(Debug, Clone, Copy)]
+enum HeaderDrag {
+    Column(u32),
+    Row(u32),
+}
+
 /// The kind of condition picked in the conditional-formatting editor — a
 /// [`Condition`] without its threshold, which the editor's text field
 /// supplies separately.
@@ -257,6 +265,9 @@ pub struct TescellateApp {
     metrics: GridMetrics,
     /// `Some` while a header border is being dragged.
     resizing: Option<Resize>,
+    /// `Some` while a column or row header is being dragged to sweep a
+    /// range selection.
+    header_drag: Option<HeaderDrag>,
     /// Per-cell visual formatting of the square sheet.
     formats: FormatMap<(u32, u32)>,
     /// Per-cell visual formatting of the hex sheet.
@@ -352,6 +363,7 @@ impl TescellateApp {
             edit: None,
             metrics: GridMetrics::new(),
             resizing: None,
+            header_drag: None,
             formats: FormatMap::new(),
             hex_formats: {
                 let mut m = FormatMap::new();
@@ -1560,18 +1572,46 @@ impl TescellateApp {
         }
         self.handle_resize(&response, origin);
 
-        // A drag that didn't start on a header border sweeps a selection.
+        // A drag that didn't start on a header border sweeps a selection:
+        // a cell drag a cell range, a header drag a column/row range.
         if self.resizing.is_none() {
             if response.drag_started() {
-                if let Some(cell) = self.cell_under(&response, origin) {
-                    self.commit_edit();
-                    self.selection.collapse_to(cell);
+                if let Some(p) = response.interact_pointer_pos() {
+                    if let Some(col) = self.metrics.col_header_at(origin, p, COLS) {
+                        self.commit_edit();
+                        self.header_drag = Some(HeaderDrag::Column(col));
+                        self.selection = Selection::column(col, ROWS);
+                    } else if let Some(row) = self.metrics.row_header_at(origin, p, ROWS) {
+                        self.commit_edit();
+                        self.header_drag = Some(HeaderDrag::Row(row));
+                        self.selection = Selection::row(row, COLS);
+                    } else if let Some(cell) = self.metrics.cell_at(origin, p, COLS, ROWS) {
+                        self.commit_edit();
+                        self.selection.collapse_to(cell);
+                    }
                 }
             } else if response.dragged() {
-                if let Some(cell) = self.cell_under(&response, origin) {
-                    self.selection.extend_to(cell);
+                if let Some(p) = response.interact_pointer_pos() {
+                    match self.header_drag {
+                        Some(HeaderDrag::Column(c0)) => {
+                            let c1 = self.metrics.col_at_x(origin, p, COLS);
+                            self.selection = Selection::column_range(c0, c1, ROWS);
+                        }
+                        Some(HeaderDrag::Row(r0)) => {
+                            let r1 = self.metrics.row_at_y(origin, p, ROWS);
+                            self.selection = Selection::row_range(r0, r1, COLS);
+                        }
+                        None => {
+                            if let Some(cell) = self.metrics.cell_at(origin, p, COLS, ROWS) {
+                                self.selection.extend_to(cell);
+                            }
+                        }
+                    }
                 }
             }
+        }
+        if response.drag_stopped() {
+            self.header_drag = None;
         }
         if response.clicked() {
             if let Some(cell) = self.cell_under(&response, origin) {
@@ -1583,14 +1623,24 @@ impl TescellateApp {
                     self.selection.collapse_to(cell);
                 }
             } else if let Some(p) = response.interact_pointer_pos() {
-                // A click on a header selects a whole column or row; the
-                // header corner selects the sheet.
+                // A click on a header selects a whole column or row — with
+                // Shift, the range from the current anchor. The header
+                // corner selects the sheet.
+                let shift = ui.input(|i| i.modifiers.shift);
                 if let Some(col) = self.metrics.col_header_at(origin, p, COLS) {
                     self.commit_edit();
-                    self.selection = Selection::column(col, ROWS);
+                    self.selection = if shift {
+                        Selection::column_range(self.selection.anchor.0, col, ROWS)
+                    } else {
+                        Selection::column(col, ROWS)
+                    };
                 } else if let Some(row) = self.metrics.row_header_at(origin, p, ROWS) {
                     self.commit_edit();
-                    self.selection = Selection::row(row, COLS);
+                    self.selection = if shift {
+                        Selection::row_range(self.selection.anchor.1, row, COLS)
+                    } else {
+                        Selection::row(row, COLS)
+                    };
                 } else if grid::in_header_corner(origin, p) {
                     self.commit_edit();
                     self.selection = Selection::all(COLS, ROWS);
