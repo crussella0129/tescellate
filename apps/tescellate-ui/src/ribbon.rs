@@ -48,8 +48,10 @@ pub enum RibbonAction {
 pub const NUMBER_FORMATS: &[(NumberFormat, &str)] = &[
     (NumberFormat::General, "General"),
     (NumberFormat::Number { decimals: 2 }, "Number"),
+    (NumberFormat::Thousands { decimals: 2 }, "Thousands"),
     (NumberFormat::Percent { decimals: 0 }, "Percent"),
     (NumberFormat::Currency, "Currency"),
+    (NumberFormat::Scientific { decimals: 2 }, "Scientific"),
 ];
 
 /// A short label for a number format — used for the combo's selected
@@ -60,6 +62,8 @@ pub fn number_format_label(format: NumberFormat) -> &'static str {
         NumberFormat::Number { .. } => "Number",
         NumberFormat::Percent { .. } => "Percent",
         NumberFormat::Currency => "Currency",
+        NumberFormat::Thousands { .. } => "Thousands",
+        NumberFormat::Scientific { .. } => "Scientific",
     }
 }
 
@@ -241,7 +245,7 @@ mod tests {
 
     #[test]
     fn number_formats_list_starts_with_general() {
-        assert_eq!(NUMBER_FORMATS.len(), 4);
+        assert_eq!(NUMBER_FORMATS.len(), 6);
         assert_eq!(NUMBER_FORMATS[0].0, NumberFormat::General);
     }
 
