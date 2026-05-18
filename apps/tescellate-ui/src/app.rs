@@ -16,7 +16,7 @@ use tescellate_tess::{Lattice, LatticeKind, Point2};
 use crate::clipboard::{Clipboard, CopiedCell};
 use crate::conditional::{self, Condition, Rule};
 use crate::find::{self, FindState};
-use crate::format::{self, CellFormat, FormatMap, HAlign};
+use crate::format::{self, BorderMode, Borders, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
 use crate::history::History;
 use crate::keymap::{self, Command, Dir, Mode};
@@ -589,6 +589,7 @@ impl TescellateApp {
             RibbonAction::Paste => self.paste(),
             RibbonAction::OpenConditional => self.cond_window_open = true,
             RibbonAction::ToggleWidget => self.toggle_widget_cells(),
+            RibbonAction::SetBorders(mode) => self.apply_border(mode),
         }
     }
 
@@ -603,6 +604,34 @@ impl TescellateApp {
         let all_on = cells.iter().all(|&c| self.widgets.is_toggle(c));
         for cell in cells {
             self.widgets.set_toggle(cell, !all_on);
+        }
+    }
+
+    /// Apply a border mode across the selection — one undo step. Square
+    /// sheet only.
+    fn apply_border(&mut self, mode: BorderMode) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let bounds = self.selection.bounds();
+        let cells: Vec<(u32, u32)> = self.selection.cells().collect();
+        let mut edits = Vec::new();
+        for cell in cells {
+            let before = self.formats.get(cell);
+            let mut after = before.clone();
+            after.borders = format::border_sides(cell, bounds, mode);
+            if before == after {
+                continue;
+            }
+            self.formats.update(cell, |f| *f = after.clone());
+            edits.push(FormatEdit {
+                cell,
+                before,
+                after,
+            });
+        }
+        if !edits.is_empty() {
+            self.history.record(Action::Formats(edits));
         }
     }
 
@@ -1347,6 +1376,7 @@ impl TescellateApp {
         let sel = visuals.selection.bg_fill;
         let sel_tint = egui::Color32::from_rgba_unmultiplied(sel.r(), sel.g(), sel.b(), 64);
         let find_tint = egui::Color32::from_rgba_unmultiplied(255, 200, 0, 80);
+        let border_stroke = egui::Stroke::new(2.0, text_color);
         let font = egui::FontId::proportional(13.0);
 
         // Column-letter headers.
@@ -1405,6 +1435,7 @@ impl TescellateApp {
                     painter.rect_filled(rect, 0.0, find_tint);
                 }
                 painter.rect_stroke(rect, 0.0, grid_line);
+                draw_borders(&painter, rect, &fmt.borders, border_stroke);
                 if editing_cell == Some((c, r)) {
                     continue;
                 }
@@ -1885,6 +1916,27 @@ fn commit_source(buffer: &str) -> Option<String> {
         None
     } else {
         Some(buffer.to_string())
+    }
+}
+
+/// Draw a cell's set border sides as line segments over the grid line.
+fn draw_borders(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    borders: &Borders,
+    stroke: egui::Stroke,
+) {
+    if borders.top {
+        painter.line_segment([rect.left_top(), rect.right_top()], stroke);
+    }
+    if borders.bottom {
+        painter.line_segment([rect.left_bottom(), rect.right_bottom()], stroke);
+    }
+    if borders.left {
+        painter.line_segment([rect.left_top(), rect.left_bottom()], stroke);
+    }
+    if borders.right {
+        painter.line_segment([rect.right_top(), rect.right_bottom()], stroke);
     }
 }
 

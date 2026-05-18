@@ -11,7 +11,7 @@
 
 use egui::Color32;
 
-use crate::format::{CellFormat, HAlign, NumberFormat};
+use crate::format::{BorderMode, CellFormat, HAlign, NumberFormat};
 
 /// A formatting change the user triggered on the ribbon.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -38,6 +38,8 @@ pub enum RibbonAction {
     OpenConditional,
     /// Turn the selection into (or out of) boolean checkbox cells.
     ToggleWidget,
+    /// Apply a border mode across the selection.
+    SetBorders(BorderMode),
 }
 
 /// The number formats the ribbon's combo offers, with display labels. The
@@ -185,6 +187,31 @@ pub fn ribbon(
             .clicked()
         {
             action = Some(RibbonAction::ToggleWidget);
+        }
+        ui.separator();
+
+        // Borders — one-shot commands across the selection.
+        ui.label("Borders");
+        if ui
+            .button("All")
+            .on_hover_text("Border every selected cell")
+            .clicked()
+        {
+            action = Some(RibbonAction::SetBorders(BorderMode::All));
+        }
+        if ui
+            .button("Outer")
+            .on_hover_text("Border the selection's outer edge")
+            .clicked()
+        {
+            action = Some(RibbonAction::SetBorders(BorderMode::Outer));
+        }
+        if ui
+            .button("None")
+            .on_hover_text("Remove borders from the selection")
+            .clicked()
+        {
+            action = Some(RibbonAction::SetBorders(BorderMode::None));
         }
     });
     action
