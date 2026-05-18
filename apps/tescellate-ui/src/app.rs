@@ -23,6 +23,7 @@ use crate::keymap::{self, Command, Dir, Mode};
 use crate::note::NoteMap;
 use crate::ribbon::{self, RibbonAction};
 use crate::selection::{FillDir, HexSelection, Selection};
+use crate::sort;
 use crate::stats;
 use crate::widget::{self, Widgets};
 
@@ -814,6 +815,40 @@ impl TescellateApp {
                 }
             }
         }
+    }
+
+    /// Sort the cursor's column over the selected row span by evaluated
+    /// value — ascending, or descending when `ascending` is false. The
+    /// cell sources move with their values. One undo step; square sheet
+    /// only.
+    fn sort_selection(&mut self, ascending: bool) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let ((_, min_r), (_, max_r)) = self.selection.bounds();
+        let col = self.selection.cursor.0;
+        let mut pairs: Vec<(CellValue, String)> = (min_r..=max_r)
+            .map(|r| (self.cell_value(col, r), self.cell_source(col, r)))
+            .collect();
+        pairs.sort_by(|a, b| {
+            let ord = sort::compare_values(&a.0, &b.0);
+            if ascending {
+                ord
+            } else {
+                ord.reverse()
+            }
+        });
+        let targets: Vec<(String, Option<String>)> = pairs
+            .into_iter()
+            .enumerate()
+            .map(|(i, (_, source))| {
+                let r = min_r + i as u32;
+                let cell = (!source.is_empty()).then_some(source);
+                (grid::cell_address(col, r), cell)
+            })
+            .collect();
+        self.commit_edit();
+        self.apply_edits(self.square_sheet, targets);
     }
 
     /// Apply a border mode across the selection — one undo step. Both
@@ -1958,6 +1993,16 @@ impl TescellateApp {
                 self.fill_series();
                 ui.close_menu();
             }
+            ui.menu_button("Sort", |ui| {
+                if ui.button("Ascending").clicked() {
+                    self.sort_selection(true);
+                    ui.close_menu();
+                }
+                if ui.button("Descending").clicked() {
+                    self.sort_selection(false);
+                    ui.close_menu();
+                }
+            });
             if ui.button("Edit note…").clicked() {
                 let cell = self.selection.cursor;
                 self.note_cell = CellId::Square(cell);
