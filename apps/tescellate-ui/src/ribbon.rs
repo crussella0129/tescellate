@@ -46,6 +46,8 @@ pub enum RibbonAction {
     SetBorders(BorderMode),
     /// Open the keyboard-shortcuts help overlay.
     OpenHelp,
+    /// Switch between the light and dark colour themes.
+    ToggleTheme,
 }
 
 /// The number formats the ribbon's combo offers, with display labels. The
@@ -254,6 +256,13 @@ pub fn ribbon(
             .clicked()
         {
             action = Some(RibbonAction::OpenHelp);
+        }
+        if ui
+            .button("Theme")
+            .on_hover_text("Toggle the light / dark theme")
+            .clicked()
+        {
+            action = Some(RibbonAction::ToggleTheme);
         }
     });
     action
