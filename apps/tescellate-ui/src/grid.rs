@@ -351,6 +351,21 @@ pub fn autosum(
     Some(((min_c, target_row), format!("={func}({range})")))
 }
 
+/// The values for a "fill series" over `total` cells, extrapolating an
+/// arithmetic progression from `seed` — the cells that already hold
+/// numbers. The step is the gap between the first two seed values, or
+/// `1.0` when there are fewer than two; the run starts at the first
+/// seed value (or `0.0` when the seed is empty). The result restates
+/// the seed cells and continues the progression through the rest.
+pub fn series_fill(seed: &[f64], total: usize) -> Vec<f64> {
+    let start = seed.first().copied().unwrap_or(0.0);
+    let step = match seed {
+        [a, b, ..] => b - a,
+        _ => 1.0,
+    };
+    (0..total).map(|i| start + step * i as f64).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,5 +679,25 @@ mod tests {
             autosum(((0, 0), (0, 4)), 32, "AVERAGE"),
             Some(((0, 5), "=AVERAGE(A1:A5)".to_string())),
         );
+    }
+
+    #[test]
+    fn series_fill_continues_an_arithmetic_progression() {
+        // Seed 1,2 over 5 cells -> 1..5.
+        assert_eq!(series_fill(&[1.0, 2.0], 5), vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+        // The step is the first gap.
+        assert_eq!(series_fill(&[10.0, 20.0], 4), vec![10.0, 20.0, 30.0, 40.0]);
+        // A descending step.
+        assert_eq!(series_fill(&[9.0, 6.0], 4), vec![9.0, 6.0, 3.0, 0.0]);
+    }
+
+    #[test]
+    fn series_fill_from_one_seed_steps_by_one() {
+        assert_eq!(series_fill(&[5.0], 4), vec![5.0, 6.0, 7.0, 8.0]);
+    }
+
+    #[test]
+    fn series_fill_with_no_seed_counts_from_zero() {
+        assert_eq!(series_fill(&[], 3), vec![0.0, 1.0, 2.0]);
     }
 }
