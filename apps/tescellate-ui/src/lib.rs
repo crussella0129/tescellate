@@ -8,6 +8,7 @@
 
 mod app;
 pub mod clipboard;
+pub mod conditional;
 pub mod format;
 pub mod grid;
 pub mod history;

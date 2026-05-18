@@ -14,6 +14,7 @@ use tescellate_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
 use tescellate_tess::{Lattice, LatticeKind, Point2};
 
 use crate::clipboard::{Clipboard, CopiedCell};
+use crate::conditional::{self, Condition, Rule};
 use crate::format::{self, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
 use crate::history::History;
@@ -111,6 +112,85 @@ enum Resize {
     Row(u32),
 }
 
+/// The kind of condition picked in the conditional-formatting editor — a
+/// [`Condition`] without its threshold, which the editor's text field
+/// supplies separately.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CondKind {
+    Greater,
+    Less,
+    Equal,
+    IsTrue,
+    IsFalse,
+    NonEmpty,
+}
+
+impl CondKind {
+    const ALL: [CondKind; 6] = [
+        CondKind::Greater,
+        CondKind::Less,
+        CondKind::Equal,
+        CondKind::IsTrue,
+        CondKind::IsFalse,
+        CondKind::NonEmpty,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            CondKind::Greater => "greater than",
+            CondKind::Less => "less than",
+            CondKind::Equal => "equal to",
+            CondKind::IsTrue => "is TRUE",
+            CondKind::IsFalse => "is FALSE",
+            CondKind::NonEmpty => "non-empty",
+        }
+    }
+
+    /// Whether this kind needs the numeric threshold field.
+    fn needs_threshold(self) -> bool {
+        matches!(self, CondKind::Greater | CondKind::Less | CondKind::Equal)
+    }
+}
+
+/// The in-progress new rule in the conditional-formatting editor.
+struct CondDraft {
+    kind: CondKind,
+    threshold: String,
+    fill: egui::Color32,
+}
+
+impl Default for CondDraft {
+    fn default() -> Self {
+        Self {
+            kind: CondKind::Greater,
+            threshold: "100".to_string(),
+            fill: egui::Color32::from_rgb(255, 235, 156),
+        }
+    }
+}
+
+impl CondDraft {
+    /// Build a [`Rule`] from the draft, or `None` when a numeric
+    /// threshold is required but the field doesn't parse.
+    fn build(&self) -> Option<Rule> {
+        let condition = match self.kind {
+            CondKind::Greater => Condition::GreaterThan(self.threshold.trim().parse().ok()?),
+            CondKind::Less => Condition::LessThan(self.threshold.trim().parse().ok()?),
+            CondKind::Equal => Condition::EqualTo(self.threshold.trim().parse().ok()?),
+            CondKind::IsTrue => Condition::IsTrue,
+            CondKind::IsFalse => Condition::IsFalse,
+            CondKind::NonEmpty => Condition::NonEmpty,
+        };
+        Some(Rule {
+            condition,
+            format: CellFormat {
+                fill: Some(self.fill),
+                ..CellFormat::default()
+            },
+        })
+    }
+}
+
 /// One cell's source before and after a change.
 #[derive(Debug, Clone)]
 struct CellEdit {
@@ -173,6 +253,13 @@ pub struct TescellateApp {
     /// undo step, not one per frame.
     last_format_time: f64,
     last_format_cells: Vec<(u32, u32)>,
+    /// Conditional-formatting rules for the square sheet, evaluated each
+    /// frame and layered over a cell's manual format.
+    cond_rules: Vec<Rule>,
+    /// Whether the conditional-formatting rule editor window is open.
+    cond_window_open: bool,
+    /// The in-progress new rule in that editor.
+    cond_draft: CondDraft,
 }
 
 impl TescellateApp {
@@ -230,6 +317,15 @@ impl TescellateApp {
             frame_time: 0.0,
             last_format_time: 0.0,
             last_format_cells: Vec::new(),
+            cond_rules: vec![Rule {
+                condition: Condition::GreaterThan(1000.0),
+                format: CellFormat {
+                    fill: Some(egui::Color32::from_rgb(201, 237, 203)),
+                    ..CellFormat::default()
+                },
+            }],
+            cond_window_open: false,
+            cond_draft: CondDraft::default(),
         }
     }
 
@@ -258,6 +354,15 @@ impl TescellateApp {
             }
             other => natural_text(other),
         }
+    }
+
+    /// The raw evaluated value of a square-sheet cell — used by
+    /// conditional formatting. `Empty` when the cell holds nothing.
+    fn cell_value(&self, col: u32, row: u32) -> CellValue {
+        self.engine
+            .get_cell(self.square_sheet, &grid::cell_address(col, row))
+            .map(|snapshot| snapshot.value)
+            .unwrap_or_default()
     }
 
     /// The display text for a hex-sheet cell — no number format, since
@@ -436,7 +541,63 @@ impl TescellateApp {
             RibbonAction::Copy => self.copy_selection(ctx),
             RibbonAction::Cut => self.cut_selection(ctx),
             RibbonAction::Paste => self.paste(),
+            RibbonAction::OpenConditional => self.cond_window_open = true,
         }
+    }
+
+    /// The conditional-formatting rule editor — a floating window listing
+    /// the square sheet's rules, with a row to add another.
+    fn conditional_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.cond_window_open;
+        egui::Window::new("Conditional formatting")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                if self.cond_rules.is_empty() {
+                    ui.label(egui::RichText::new("No rules yet — add one below.").weak());
+                }
+                let mut remove = None;
+                for (i, rule) in self.cond_rules.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if let Some(fill) = rule.format.fill {
+                            let (rect, _) = ui
+                                .allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                            ui.painter().rect_filled(rect, 2.0, fill);
+                        }
+                        ui.label(describe_condition(&rule.condition));
+                        if ui.small_button("Remove").clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                }
+                if let Some(i) = remove {
+                    self.cond_rules.remove(i);
+                }
+                ui.separator();
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_label("when value")
+                        .selected_text(self.cond_draft.kind.label())
+                        .show_ui(ui, |ui| {
+                            for kind in CondKind::ALL {
+                                ui.selectable_value(&mut self.cond_draft.kind, kind, kind.label());
+                            }
+                        });
+                    if self.cond_draft.kind.needs_threshold() {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.cond_draft.threshold)
+                                .desired_width(56.0),
+                        );
+                    }
+                    ui.label("fill");
+                    ui.color_edit_button_srgba(&mut self.cond_draft.fill);
+                    if ui.button("Add rule").clicked() {
+                        if let Some(rule) = self.cond_draft.build() {
+                            self.cond_rules.push(rule);
+                        }
+                    }
+                });
+            });
+        self.cond_window_open = open;
     }
 
     /// Apply a formatting change to every cell of the selection, recorded
@@ -1000,7 +1161,13 @@ impl TescellateApp {
         for r in 0..ROWS {
             for c in 0..COLS {
                 let rect = self.metrics.cell_rect(origin, c, r);
-                let fmt = self.formats.get((c, r));
+                let base = self.formats.get((c, r));
+                let fmt = if self.cond_rules.is_empty() {
+                    base
+                } else {
+                    let value = self.cell_value(c, r);
+                    conditional::effective_format(&base, &value, &self.cond_rules)
+                };
                 painter.rect_filled(rect, 0.0, fmt.fill.unwrap_or(cell_bg));
                 // The active cell stays untinted; the rest of the range
                 // gets a translucent wash, the way Excel/Sheets show it.
@@ -1319,6 +1486,8 @@ impl eframe::App for TescellateApp {
             }
             ActiveSheet::Hex => self.draw_hex_grid(ui),
         });
+
+        self.conditional_window(ctx);
     }
 }
 
@@ -1401,6 +1570,18 @@ fn natural_text(value: CellValue) -> String {
         CellValue::Error(_) => "#ERROR".to_string(),
         CellValue::Array(_) => "{array}".to_string(),
         _ => String::new(),
+    }
+}
+
+/// A short human description of a condition, for the rule editor's list.
+fn describe_condition(condition: &Condition) -> String {
+    match condition {
+        Condition::GreaterThan(t) => format!("value > {}", format_number(*t)),
+        Condition::LessThan(t) => format!("value < {}", format_number(*t)),
+        Condition::EqualTo(t) => format!("value = {}", format_number(*t)),
+        Condition::IsTrue => "value is TRUE".to_string(),
+        Condition::IsFalse => "value is FALSE".to_string(),
+        Condition::NonEmpty => "cell is non-empty".to_string(),
     }
 }
 
