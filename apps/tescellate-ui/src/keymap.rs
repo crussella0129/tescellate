@@ -58,6 +58,10 @@ pub enum Command {
     Copy,
     /// Paste the clipboard at the active cell (Ctrl+V).
     Paste,
+    /// Undo the most recent action (Ctrl+Z).
+    Undo,
+    /// Redo the most recently undone action (Ctrl+Y / Ctrl+Shift+Z).
+    Redo,
 }
 
 /// Interpret a non-text key press.
@@ -91,6 +95,9 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::R if ctrl && shift => Command::SetAlign(HAlign::Right),
         Key::C if ctrl => Command::Copy,
         Key::V if ctrl => Command::Paste,
+        Key::Z if ctrl && shift => Command::Redo,
+        Key::Z if ctrl => Command::Undo,
+        Key::Y if ctrl => Command::Redo,
         _ => return None,
     })
 }
@@ -294,5 +301,15 @@ mod tests {
         // Plain C/V are ordinary typed characters, not commands.
         assert_eq!(nav(Key::C, false, false), None);
         assert_eq!(nav(Key::V, false, false), None);
+    }
+
+    #[test]
+    fn ctrl_z_and_y_undo_and_redo() {
+        assert_eq!(nav(Key::Z, false, true), Some(Command::Undo));
+        assert_eq!(nav(Key::Y, false, true), Some(Command::Redo));
+        // Ctrl+Shift+Z is the alternate redo.
+        assert_eq!(nav(Key::Z, true, true), Some(Command::Redo));
+        // Plain Z/Y are typed characters, not commands.
+        assert_eq!(nav(Key::Z, false, false), None);
     }
 }
