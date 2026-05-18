@@ -5,7 +5,7 @@
 
 use tescellate_core::CellValue;
 
-/// Summary stats for a set of cell values — Excel's status-bar trio.
+/// Summary stats for a set of cell values — Excel's status-bar set.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Stats {
     /// Sum of the numeric cells.
@@ -14,6 +14,10 @@ pub struct Stats {
     pub count: usize,
     /// Mean of the numeric cells — `None` when none were numeric.
     pub average: Option<f64>,
+    /// Smallest numeric value — `None` when none were numeric.
+    pub min: Option<f64>,
+    /// Largest numeric value — `None` when none were numeric.
+    pub max: Option<f64>,
 }
 
 /// Aggregate the numeric cells among `values`. Non-numeric cells — text,
@@ -21,6 +25,8 @@ pub struct Stats {
 pub fn selection_stats(values: &[CellValue]) -> Stats {
     let mut sum = 0.0;
     let mut count = 0usize;
+    let mut min: Option<f64> = None;
+    let mut max: Option<f64> = None;
     for value in values {
         let number = match value {
             CellValue::Number(n) => Some(*n),
@@ -30,6 +36,8 @@ pub fn selection_stats(values: &[CellValue]) -> Stats {
         if let Some(n) = number {
             sum += n;
             count += 1;
+            min = Some(min.map_or(n, |m| m.min(n)));
+            max = Some(max.map_or(n, |m| m.max(n)));
         }
     }
     let average = if count > 0 {
@@ -41,6 +49,8 @@ pub fn selection_stats(values: &[CellValue]) -> Stats {
         sum,
         count,
         average,
+        min,
+        max,
     }
 }
 
@@ -54,6 +64,8 @@ mod tests {
         assert_eq!(s.count, 0);
         assert_eq!(s.sum, 0.0);
         assert_eq!(s.average, None);
+        assert_eq!(s.min, None);
+        assert_eq!(s.max, None);
     }
 
     #[test]
@@ -66,6 +78,8 @@ mod tests {
         let s = selection_stats(&values);
         assert_eq!(s.count, 0);
         assert_eq!(s.average, None);
+        assert_eq!(s.min, None);
+        assert_eq!(s.max, None);
     }
 
     #[test]
@@ -92,5 +106,22 @@ mod tests {
         assert_eq!(s.sum, 10.0);
         assert_eq!(s.count, 2);
         assert_eq!(s.average, Some(5.0));
+    }
+
+    #[test]
+    fn min_and_max_track_the_numeric_extremes() {
+        let values = [
+            CellValue::Number(7.0),
+            CellValue::Integer(-3),
+            CellValue::Text("skip".to_string()),
+            CellValue::Number(12.5),
+        ];
+        let s = selection_stats(&values);
+        assert_eq!(s.min, Some(-3.0));
+        assert_eq!(s.max, Some(12.5));
+        // A single numeric cell is both the min and the max.
+        let one = selection_stats(&[CellValue::Number(4.0)]);
+        assert_eq!(one.min, Some(4.0));
+        assert_eq!(one.max, Some(4.0));
     }
 }

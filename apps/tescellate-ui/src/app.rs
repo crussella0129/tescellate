@@ -2562,12 +2562,16 @@ impl eframe::App for TescellateApp {
                 if stats.count > 0 {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let avg = stats.average.map(format_number).unwrap_or_default();
+                        let min = stats.min.map(format_number).unwrap_or_default();
+                        let max = stats.max.map(format_number).unwrap_or_default();
                         ui.label(
                             egui::RichText::new(format!(
-                                "Sum {}     Count {}     Avg {}",
+                                "Sum {}     Avg {}     Min {}     Max {}     Count {}",
                                 format_number(stats.sum),
-                                stats.count,
                                 avg,
+                                min,
+                                max,
+                                stats.count,
                             ))
                             .weak(),
                         );
