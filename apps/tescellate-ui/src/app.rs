@@ -65,6 +65,7 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::NONE, egui::Key::Home),
     (egui::Modifiers::CTRL, egui::Key::Home),
     (egui::Modifiers::NONE, egui::Key::F2),
+    (egui::Modifiers::NONE, egui::Key::F1),
     (egui::Modifiers::NONE, egui::Key::Delete),
     (egui::Modifiers::NONE, egui::Key::Backspace),
     (egui::Modifiers::CTRL, egui::Key::B),
@@ -295,6 +296,8 @@ pub struct TescellateApp {
     find_open: bool,
     /// Set when Find is opened by Ctrl+F so the query field grabs focus.
     find_just_opened: bool,
+    /// Whether the keyboard-shortcuts help overlay is open.
+    help_open: bool,
     /// The Name box's edit buffer — the active cell's address, editable
     /// to jump the selection (square sheet).
     name_box: String,
@@ -383,6 +386,7 @@ impl TescellateApp {
             find: FindState::default(),
             find_open: false,
             find_just_opened: false,
+            help_open: false,
             name_box: String::new(),
         }
     }
@@ -629,6 +633,7 @@ impl TescellateApp {
                 self.find_open = true;
                 self.find_just_opened = true;
             }
+            Command::OpenHelp => self.help_open = true,
         }
     }
 
@@ -650,6 +655,7 @@ impl TescellateApp {
             RibbonAction::OpenConditional => self.cond_window_open = true,
             RibbonAction::ToggleWidget => self.toggle_widget_cells(),
             RibbonAction::SetBorders(mode) => self.apply_border(mode),
+            RibbonAction::OpenHelp => self.help_open = true,
         }
     }
 
@@ -890,6 +896,30 @@ impl TescellateApp {
         if let Some(id) = self.find.step(forward) {
             self.jump_to(id);
         }
+    }
+
+    /// The keyboard-shortcuts help overlay — a floating window listing
+    /// `keymap::SHORTCUTS`. Opened by F1 or the ribbon's "?" button.
+    fn help_window(&mut self, ctx: &egui::Context) {
+        if !self.help_open {
+            return;
+        }
+        let mut open = self.help_open;
+        egui::Window::new("Keyboard shortcuts")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                egui::Grid::new("shortcuts_grid")
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for &(keys, desc) in keymap::SHORTCUTS {
+                            ui.monospace(keys);
+                            ui.label(desc);
+                            ui.end_row();
+                        }
+                    });
+            });
+        self.help_open = open;
     }
 
     /// Replace the query with the replacement in the current match's
@@ -2016,6 +2046,7 @@ impl eframe::App for TescellateApp {
 
         self.conditional_window(ctx);
         self.find_window(ctx);
+        self.help_window(ctx);
     }
 }
 
