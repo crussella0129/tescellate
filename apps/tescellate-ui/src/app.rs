@@ -2114,7 +2114,11 @@ impl TescellateApp {
                 }
                 let text = self.cell_text(c, r);
                 if !text.is_empty() {
-                    draw_cell_text(&painter, &text, rect, &fmt, text_color);
+                    let numeric = matches!(
+                        self.cell_value(c, r),
+                        CellValue::Number(_) | CellValue::Integer(_)
+                    );
+                    draw_cell_text(&painter, &text, rect, &fmt, numeric, text_color);
                 }
                 if self.notes.has((c, r)) {
                     draw_note_marker(&painter, rect);
@@ -2243,9 +2247,14 @@ impl TescellateApp {
 
         let text = self.hex_cell_text(coord);
         if !text.is_empty() {
+            let numeric = matches!(
+                self.hex_cell_value(coord),
+                CellValue::Number(_) | CellValue::Integer(_)
+            );
             let c = self.hex_lattice.centroid(coord);
             let centroid = egui::pos2(origin.x + c.x, origin.y + c.y);
-            let (anchor, pos) = hex_text_layout(fmt.align, centroid, HEX_SIZE * 0.6);
+            let align = format::effective_align(fmt.align, numeric);
+            let (anchor, pos) = hex_text_layout(align, centroid, HEX_SIZE * 0.6);
             let color = fmt.text_color.unwrap_or(text_color);
             let font = egui::FontId::proportional(13.0);
             painter.text(pos, anchor, &text, font.clone(), color);
@@ -2621,6 +2630,7 @@ fn draw_cell_text(
     text: &str,
     rect: egui::Rect,
     fmt: &CellFormat,
+    numeric: bool,
     default_color: egui::Color32,
 ) {
     let color = fmt.text_color.unwrap_or(default_color);
@@ -2639,8 +2649,8 @@ fn draw_cell_text(
     let pad = 5.0;
     let size = galley.size();
     let y = rect.center().y - size.y / 2.0;
-    let x = match fmt.align {
-        HAlign::Left => rect.left() + pad,
+    let x = match format::effective_align(fmt.align, numeric) {
+        HAlign::Left | HAlign::Auto => rect.left() + pad,
         HAlign::Center => rect.center().x - size.x / 2.0,
         HAlign::Right => rect.right() - pad - size.x,
     };
@@ -2781,7 +2791,7 @@ fn draw_borders(
 /// the `centroid`; Center sits on it.
 fn hex_text_layout(align: HAlign, centroid: egui::Pos2, inset: f32) -> (egui::Align2, egui::Pos2) {
     match align {
-        HAlign::Left => (
+        HAlign::Left | HAlign::Auto => (
             egui::Align2::LEFT_CENTER,
             egui::pos2(centroid.x - inset, centroid.y),
         ),
