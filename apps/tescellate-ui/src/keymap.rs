@@ -34,6 +34,8 @@ pub enum Command {
     /// Extend the selection one cell — Shift+arrow. Moves the cursor and
     /// keeps the anchor, growing or shrinking the selected range.
     Extend(Dir),
+    /// Select the whole sheet (Ctrl+A).
+    SelectAll,
     /// Move to the first column of the current row (Home).
     MoveToRowStart,
     /// Move to the top-left cell (Ctrl+Home).
@@ -80,6 +82,7 @@ pub enum Command {
 pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Arrow keys", "Move the selection"),
     ("Shift + arrows", "Extend the selection"),
+    ("Ctrl+A", "Select the whole sheet"),
     ("Tab / Shift+Tab", "Move right / left"),
     ("Enter / Shift+Enter", "Move down / up"),
     ("Home", "Jump to the row start"),
@@ -117,6 +120,7 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::Home => Command::MoveToRowStart,
         Key::F2 => Command::BeginEdit { replace_with: None },
         Key::Delete | Key::Backspace => Command::Clear,
+        Key::A if ctrl => Command::SelectAll,
         // Formatting shortcuts. Plain B/I/L/E/R are not commands — typed
         // text begins an edit instead — so each is guarded on Ctrl.
         Key::B if ctrl => Command::ToggleBold,
@@ -369,6 +373,13 @@ mod tests {
         assert_eq!(nav(Key::F, false, true), Some(Command::OpenFind));
         // Plain F is an ordinary typed character, not a command.
         assert_eq!(nav(Key::F, false, false), None);
+    }
+
+    #[test]
+    fn ctrl_a_selects_all() {
+        assert_eq!(nav(Key::A, false, true), Some(Command::SelectAll));
+        // Plain A is an ordinary typed character, not a command.
+        assert_eq!(nav(Key::A, false, false), None);
     }
 
     #[test]
