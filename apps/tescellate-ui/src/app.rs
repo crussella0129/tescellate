@@ -241,7 +241,9 @@ pub struct TescellateApp {
     /// `Some` while a header border is being dragged.
     resizing: Option<Resize>,
     /// Per-cell visual formatting of the square sheet.
-    formats: FormatMap,
+    formats: FormatMap<(u32, u32)>,
+    /// Per-cell visual formatting of the hex sheet.
+    hex_formats: FormatMap<HexCoord>,
     /// The copy / cut / paste object — the captured block, and its cut
     /// origin when it was cut rather than copied.
     clipboard: Clipboard,
@@ -329,6 +331,14 @@ impl TescellateApp {
             metrics: GridMetrics::new(),
             resizing: None,
             formats: FormatMap::new(),
+            hex_formats: {
+                let mut m = FormatMap::new();
+                // A seeded demo so hex formatting is visible at launch.
+                m.update(HexCoord::new(1, 0), |f| {
+                    f.fill = Some(egui::Color32::from_rgb(201, 237, 203));
+                });
+                m
+            },
             clipboard: Clipboard::default(),
             history: History::new(),
             frame_time: 0.0,
@@ -1623,7 +1633,7 @@ impl TescellateApp {
             let fill = if self.hex_selection.contains(coord) {
                 sel_bg
             } else {
-                cell_bg
+                self.hex_formats.get(coord).fill.unwrap_or(cell_bg)
             };
             self.paint_hex(&painter, origin, coord, fill, line, text_color);
         }

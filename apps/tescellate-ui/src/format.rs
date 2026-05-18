@@ -153,26 +153,36 @@ fn group_digits(digits: &str) -> String {
     out
 }
 
-/// Per-cell formatting overrides. A cell absent from the map is unstyled,
-/// so an empty `FormatMap` is a plain sheet.
-#[derive(Debug, Clone, Default)]
-pub struct FormatMap {
-    formats: HashMap<(u32, u32), CellFormat>,
+/// Per-cell formatting overrides, keyed by a lattice's coordinate type
+/// `K` — `(u32, u32)` for the square sheet, `HexCoord` for the hex sheet.
+/// A cell absent from the map is unstyled, so an empty map is a plain
+/// sheet.
+#[derive(Debug, Clone)]
+pub struct FormatMap<K> {
+    formats: HashMap<K, CellFormat>,
 }
 
-impl FormatMap {
+impl<K> Default for FormatMap<K> {
+    fn default() -> Self {
+        Self {
+            formats: HashMap::new(),
+        }
+    }
+}
+
+impl<K: Eq + std::hash::Hash + Copy> FormatMap<K> {
     pub fn new() -> Self {
         Self::default()
     }
 
     /// The format of a cell — its default if never styled.
-    pub fn get(&self, cell: (u32, u32)) -> CellFormat {
+    pub fn get(&self, cell: K) -> CellFormat {
         self.formats.get(&cell).cloned().unwrap_or_default()
     }
 
     /// Mutate a cell's format in place. An entry that ends up back at the
     /// default is dropped, so the map only ever holds real styling.
-    pub fn update(&mut self, cell: (u32, u32), edit: impl FnOnce(&mut CellFormat)) {
+    pub fn update(&mut self, cell: K, edit: impl FnOnce(&mut CellFormat)) {
         let mut format = self.get(cell);
         edit(&mut format);
         if format.is_default() {
@@ -333,5 +343,17 @@ mod tests {
     fn outer_borders_on_a_single_cell_are_all_four() {
         let only = border_sides((5, 5), ((5, 5), (5, 5)), BorderMode::Outer);
         assert!(only.top && only.bottom && only.left && only.right);
+    }
+
+    #[test]
+    fn format_map_works_with_a_hex_key() {
+        use tescellate_tess::hex::HexCoord;
+        let mut map: FormatMap<HexCoord> = FormatMap::new();
+        let cell = HexCoord::new(1, -2);
+        map.update(cell, |f| f.bold = true);
+        assert!(map.get(cell).bold);
+        assert_eq!(map.styled_count(), 1);
+        // An unstyled hex cell reads as the default format.
+        assert!(map.get(HexCoord::new(0, 0)).is_default());
     }
 }
