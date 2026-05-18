@@ -30,6 +30,10 @@ pub enum NumberFormat {
     Percent { decimals: u8 },
     /// A `$` prefix and two decimal places.
     Currency,
+    /// Fixed decimals with comma thousands separators in the integer part.
+    Thousands { decimals: u8 },
+    /// Scientific notation — a mantissa and a power-of-ten exponent.
+    Scientific { decimals: u8 },
 }
 
 /// Which sides of a cell carry a border line.
@@ -111,7 +115,42 @@ pub fn render_number(value: f64, format: NumberFormat) -> Option<String> {
             Some(format!("{:.*}%", decimals as usize, value * 100.0))
         }
         NumberFormat::Currency => Some(format!("${:.2}", value)),
+        NumberFormat::Thousands { decimals } => Some(group_thousands(value, decimals)),
+        NumberFormat::Scientific { decimals } => Some(format!("{:.*e}", decimals as usize, value)),
     }
+}
+
+/// Render `value` with `decimals` decimal places and comma separators
+/// every three digits of the integer part — `1234567.5 -> "1,234,567.5"`.
+fn group_thousands(value: f64, decimals: u8) -> String {
+    let formatted = format!("{:.*}", decimals as usize, value);
+    let (sign, rest) = match formatted.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", formatted.as_str()),
+    };
+    let (integer, fraction) = match rest.split_once('.') {
+        Some((int, frac)) => (int, Some(frac)),
+        None => (rest, None),
+    };
+    let grouped = group_digits(integer);
+    match fraction {
+        Some(frac) => format!("{sign}{grouped}.{frac}"),
+        None => format!("{sign}{grouped}"),
+    }
+}
+
+/// Insert a comma before every group of three digits, counted from the
+/// right — `"1234567" -> "1,234,567"`.
+fn group_digits(digits: &str) -> String {
+    let bytes = digits.as_bytes();
+    let mut out = String::with_capacity(bytes.len() + bytes.len() / 3);
+    for (i, &b) in bytes.iter().enumerate() {
+        if i > 0 && (bytes.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(b as char);
+    }
+    out
 }
 
 /// Per-cell formatting overrides. A cell absent from the map is unstyled,
@@ -187,6 +226,41 @@ mod tests {
         assert_eq!(
             render_number(1200.0, NumberFormat::Currency),
             Some("$1200.00".to_string()),
+        );
+    }
+
+    #[test]
+    fn thousands_groups_the_integer_part() {
+        assert_eq!(
+            render_number(1234567.5, NumberFormat::Thousands { decimals: 1 }),
+            Some("1,234,567.5".to_string()),
+        );
+        // Fewer than four digits get no separator.
+        assert_eq!(
+            render_number(950.0, NumberFormat::Thousands { decimals: 0 }),
+            Some("950".to_string()),
+        );
+        // Exactly four digits get one separator.
+        assert_eq!(
+            render_number(1000.0, NumberFormat::Thousands { decimals: 0 }),
+            Some("1,000".to_string()),
+        );
+        // The sign stays outside the grouping.
+        assert_eq!(
+            render_number(-12345.0, NumberFormat::Thousands { decimals: 0 }),
+            Some("-12,345".to_string()),
+        );
+    }
+
+    #[test]
+    fn scientific_uses_exponent_notation() {
+        assert_eq!(
+            render_number(1234567.0, NumberFormat::Scientific { decimals: 2 }),
+            Some("1.23e6".to_string()),
+        );
+        assert_eq!(
+            render_number(0.0042, NumberFormat::Scientific { decimals: 1 }),
+            Some("4.2e-3".to_string()),
         );
     }
 
