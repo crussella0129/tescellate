@@ -66,6 +66,8 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::SHIFT, egui::Key::Enter),
     (egui::Modifiers::NONE, egui::Key::Home),
     (egui::Modifiers::CTRL, egui::Key::Home),
+    (egui::Modifiers::NONE, egui::Key::End),
+    (egui::Modifiers::CTRL, egui::Key::End),
     (egui::Modifiers::NONE, egui::Key::F2),
     (egui::Modifiers::NONE, egui::Key::F1),
     (egui::Modifiers::NONE, egui::Key::Delete),
@@ -645,6 +647,17 @@ impl TescellateApp {
             },
             Command::MoveToOrigin => match self.active {
                 ActiveSheet::Square => self.selection.collapse_to((0, 0)),
+                ActiveSheet::Hex => self.hex_selection.collapse_to(HexCoord::new(0, 0)),
+            },
+            Command::MoveToRowEnd => match self.active {
+                ActiveSheet::Square => {
+                    let row = self.selection.cursor.1;
+                    self.selection.collapse_to((COLS - 1, row));
+                }
+                ActiveSheet::Hex => self.hex_selection.collapse_to(HexCoord::new(0, 0)),
+            },
+            Command::MoveToSheetEnd => match self.active {
+                ActiveSheet::Square => self.selection.collapse_to((COLS - 1, ROWS - 1)),
                 ActiveSheet::Hex => self.hex_selection.collapse_to(HexCoord::new(0, 0)),
             },
             Command::BeginEdit { replace_with } => self.begin_edit(replace_with),
