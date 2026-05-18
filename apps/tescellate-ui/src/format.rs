@@ -10,13 +10,27 @@ use std::collections::HashMap;
 use egui::Color32;
 use tescellate_tess::hex::HexCoord;
 
-/// Horizontal text alignment within a cell.
+/// Horizontal text alignment within a cell. `Auto` defers to the cell's
+/// value type at render time — see [`effective_align`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HAlign {
+    /// Right for numbers, left for everything else — the default.
     #[default]
+    Auto,
     Left,
     Center,
     Right,
+}
+
+/// The alignment a cell actually renders with. An explicit `Left`,
+/// `Center`, or `Right` is used as-is; `Auto` resolves to `Right` for a
+/// numeric value and `Left` otherwise — the spreadsheet default.
+pub fn effective_align(align: HAlign, numeric: bool) -> HAlign {
+    match align {
+        HAlign::Auto if numeric => HAlign::Right,
+        HAlign::Auto => HAlign::Left,
+        other => other,
+    }
 }
 
 /// How a numeric cell value is rendered.
@@ -436,6 +450,17 @@ mod tests {
         let f = map.get((1, 1));
         assert!(f.italic);
         assert_eq!(f.align, HAlign::Right);
+    }
+
+    #[test]
+    fn effective_align_resolves_auto_by_value_type() {
+        // Auto becomes Right for a number, Left for anything else.
+        assert_eq!(effective_align(HAlign::Auto, true), HAlign::Right);
+        assert_eq!(effective_align(HAlign::Auto, false), HAlign::Left);
+        // An explicit choice is passed through regardless of the value.
+        assert_eq!(effective_align(HAlign::Left, true), HAlign::Left);
+        assert_eq!(effective_align(HAlign::Center, true), HAlign::Center);
+        assert_eq!(effective_align(HAlign::Right, false), HAlign::Right);
     }
 
     #[test]
