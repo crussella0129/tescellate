@@ -14,5 +14,6 @@ pub mod history;
 pub mod keymap;
 pub mod ribbon;
 pub mod selection;
+pub mod stats;
 
 pub use app::TescellateApp;

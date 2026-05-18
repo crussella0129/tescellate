@@ -20,6 +20,7 @@ use crate::history::History;
 use crate::keymap::{self, Command, Dir, Mode};
 use crate::ribbon::{self, RibbonAction};
 use crate::selection::{FillDir, Selection};
+use crate::stats;
 
 const COLS: u32 = 16;
 const ROWS: u32 = 32;
@@ -300,6 +301,31 @@ impl TescellateApp {
             None => self.active_cell_source(),
         };
         (addr, source)
+    }
+
+    /// The engine values of every cell in the active selection — what the
+    /// status bar aggregates.
+    fn selection_values(&self) -> Vec<CellValue> {
+        match self.active {
+            ActiveSheet::Square => self
+                .selection
+                .cells()
+                .map(|(c, r)| {
+                    self.engine
+                        .get_cell(self.square_sheet, &grid::cell_address(c, r))
+                        .map(|s| s.value)
+                        .unwrap_or(CellValue::Empty)
+                })
+                .collect(),
+            ActiveSheet::Hex => {
+                let value = self
+                    .engine
+                    .get_cell(self.hex_sheet, &hex_address(self.hex_selected))
+                    .map(|s| s.value)
+                    .unwrap_or(CellValue::Empty);
+                vec![value]
+            }
+        }
     }
 
     /// Read key events and turn them into commands through `keymap`. Keys
@@ -1043,6 +1069,22 @@ impl eframe::App for TescellateApp {
                 {
                     self.commit_edit();
                     self.active = ActiveSheet::Hex;
+                }
+                // Selection statistics, pushed to the right edge.
+                let stats = stats::selection_stats(&self.selection_values());
+                if stats.count > 0 {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let avg = stats.average.map(format_number).unwrap_or_default();
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Sum {}     Count {}     Avg {}",
+                                format_number(stats.sum),
+                                stats.count,
+                                avg,
+                            ))
+                            .weak(),
+                        );
+                    });
                 }
             });
         });
