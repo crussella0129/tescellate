@@ -221,6 +221,36 @@ impl GridMetrics {
         }
         self.axis_index(local.y, rows, |r| self.row_height(r), HEADER_H)
     }
+
+    /// The column whose band contains `p`'s x-coordinate, clamped into
+    /// `0..cols` — for sweeping a column selection by dragging, where
+    /// the pointer ranges freely past the grid and `y` is irrelevant.
+    /// `0` when `cols` is `0`.
+    pub fn col_at_x(&self, origin: Pos2, p: Pos2, cols: u32) -> u32 {
+        if cols == 0 {
+            return 0;
+        }
+        let x = (p - origin).x;
+        if x < HEADER_W {
+            return 0;
+        }
+        self.axis_index(x, cols, |c| self.col_width(c), HEADER_W)
+            .unwrap_or(cols - 1)
+    }
+
+    /// The row whose band contains `p`'s y-coordinate, clamped into
+    /// `0..rows` — the row analogue of [`GridMetrics::col_at_x`].
+    pub fn row_at_y(&self, origin: Pos2, p: Pos2, rows: u32) -> u32 {
+        if rows == 0 {
+            return 0;
+        }
+        let y = (p - origin).y;
+        if y < HEADER_H {
+            return 0;
+        }
+        self.axis_index(y, rows, |r| self.row_height(r), HEADER_H)
+            .unwrap_or(rows - 1)
+    }
 }
 
 /// Whether `p` lies in the header corner — the box above the row-header
@@ -417,5 +447,36 @@ mod tests {
         ));
         // Above or left of the grid is not the corner.
         assert!(!in_header_corner(origin, pos2(-5.0, -5.0)));
+    }
+
+    #[test]
+    fn col_at_x_clamps_into_range() {
+        let m = GridMetrics::new();
+        let origin = pos2(0.0, 0.0);
+        // Left of the grid clamps to column 0.
+        assert_eq!(m.col_at_x(origin, pos2(-50.0, 100.0), 8), 0);
+        assert_eq!(m.col_at_x(origin, pos2(HEADER_W / 2.0, 100.0), 8), 0);
+        // Mid-grid resolves the column, ignoring y.
+        let x3 = HEADER_W + 3.5 * DEFAULT_COL_W;
+        assert_eq!(m.col_at_x(origin, pos2(x3, 999.0), 8), 3);
+        // Past the last column clamps to the last.
+        let far = HEADER_W + 50.0 * DEFAULT_COL_W;
+        assert_eq!(m.col_at_x(origin, pos2(far, 5.0), 8), 7);
+        // No columns is a safe zero.
+        assert_eq!(m.col_at_x(origin, pos2(x3, 5.0), 0), 0);
+    }
+
+    #[test]
+    fn row_at_y_clamps_into_range() {
+        let m = GridMetrics::new();
+        let origin = pos2(0.0, 0.0);
+        // Above the grid clamps to row 0.
+        assert_eq!(m.row_at_y(origin, pos2(100.0, -50.0), 8), 0);
+        // Mid-grid resolves the row, ignoring x.
+        let y4 = HEADER_H + 4.5 * DEFAULT_ROW_H;
+        assert_eq!(m.row_at_y(origin, pos2(999.0, y4), 8), 4);
+        // Past the last row clamps to the last.
+        let far = HEADER_H + 50.0 * DEFAULT_ROW_H;
+        assert_eq!(m.row_at_y(origin, pos2(5.0, far), 8), 7);
     }
 }
