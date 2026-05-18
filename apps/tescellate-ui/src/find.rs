@@ -2,8 +2,8 @@
 //!
 //! [`FindState`] holds the query, the cells that currently match it, and
 //! which match is "current"; `app.rs` populates the matches by feeding
-//! it each cell's display text. The match predicate and the wrap-around
-//! stepping are pure, so `cargo test` covers them.
+//! it each cell's source text. The match predicate, the replacement, and
+//! the wrap-around stepping are pure, so `cargo test` covers them.
 
 /// Whether `text` contains `query`, case-insensitively. An empty query
 /// matches nothing — Find with a blank box highlights no cells.
@@ -11,11 +11,39 @@ pub fn cell_matches(query: &str, text: &str) -> bool {
     !query.is_empty() && text.to_lowercase().contains(&query.to_lowercase())
 }
 
+/// Replace every case-insensitive occurrence of `query` in `source` with
+/// `replacement`. Returns the rewritten string; equal to `source` when
+/// `query` is empty or absent. Scans char-by-char, so it is correct for
+/// any Unicode rather than byte-slicing a lowercased copy.
+pub fn replace_all(source: &str, query: &str, replacement: &str) -> String {
+    if query.is_empty() {
+        return source.to_string();
+    }
+    let lower_query = query.to_lowercase();
+    let query_len = query.chars().count();
+    let chars: Vec<char> = source.chars().collect();
+    let mut result = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let window: String = chars[i..].iter().take(query_len).collect();
+        if window.chars().count() == query_len && window.to_lowercase() == lower_query {
+            result.push_str(replacement);
+            i += query_len;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
 /// The Find panel's state: the query, the matching cells in row-major
 /// order, and the index of the current match within them.
 #[derive(Debug, Clone, Default)]
 pub struct FindState {
     pub query: String,
+    /// The replacement text for Find & Replace.
+    pub replace: String,
     matches: Vec<(u32, u32)>,
     current: usize,
 }
@@ -33,9 +61,10 @@ impl FindState {
         self.current = 0;
     }
 
-    /// Forget the query and every match.
+    /// Forget the query, the replacement, and every match.
     pub fn clear(&mut self) {
         self.query.clear();
+        self.replace.clear();
         self.matches.clear();
         self.current = 0;
     }
@@ -78,6 +107,11 @@ impl FindState {
     /// Whether `cell` is one of the matches — used to tint it in the grid.
     pub fn is_match(&self, cell: (u32, u32)) -> bool {
         self.matches.contains(&cell)
+    }
+
+    /// Every matching cell, row-major — what Replace All iterates.
+    pub fn matches(&self) -> &[(u32, u32)] {
+        &self.matches
     }
 }
 
@@ -149,5 +183,22 @@ mod tests {
         assert_eq!(f.current_index(), 0);
         assert_eq!(f.step(true), None);
         assert!(!f.is_match((0, 0)));
+    }
+
+    #[test]
+    fn replace_all_is_case_insensitive_and_unicode_safe() {
+        assert_eq!(replace_all("hello world", "o", "0"), "hell0 w0rld");
+        // Case-insensitive find; the replacement is written verbatim.
+        assert_eq!(replace_all("Banana", "A", "_"), "B_n_n_");
+        // No occurrence — unchanged.
+        assert_eq!(replace_all("hello", "zzz", "x"), "hello");
+        // An empty query is a no-op.
+        assert_eq!(replace_all("hello", "", "x"), "hello");
+        // Replacing with empty deletes the matches.
+        assert_eq!(replace_all("a-b-c", "-", ""), "abc");
+        // Multi-char, case-insensitive, non-overlapping.
+        assert_eq!(replace_all("xXxX", "xx", "y"), "yy");
+        // Non-ASCII content is handled per char.
+        assert_eq!(replace_all("café CAFÉ", "café", "tea"), "tea tea");
     }
 }

@@ -15,7 +15,7 @@ use tescellate_tess::{Lattice, LatticeKind, Point2};
 
 use crate::clipboard::{Clipboard, CopiedCell};
 use crate::conditional::{self, Condition, Rule};
-use crate::find::FindState;
+use crate::find::{self, FindState};
 use crate::format::{self, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
 use crate::history::History;
@@ -392,6 +392,15 @@ impl TescellateApp {
             .unwrap_or_default()
     }
 
+    /// The raw source text of a square-sheet cell — empty when the cell
+    /// holds nothing. Find and Replace both work on this.
+    fn cell_source(&self, col: u32, row: u32) -> String {
+        self.engine
+            .get_cell(self.square_sheet, &grid::cell_address(col, row))
+            .and_then(|snapshot| snapshot.source)
+            .unwrap_or_default()
+    }
+
     /// The display text for a hex-sheet cell — no number format, since
     /// formatting is square-only for now.
     fn hex_cell_text(&self, coord: HexCoord) -> String {
@@ -682,6 +691,14 @@ impl TescellateApp {
                     }
                 });
                 ui.horizontal(|ui| {
+                    ui.label("Replace");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.find.replace)
+                            .desired_width(180.0)
+                            .hint_text("replace with"),
+                    );
+                });
+                ui.horizontal(|ui| {
                     if ui.button("◀ Prev").clicked() {
                         self.find_step(false);
                     }
@@ -698,6 +715,21 @@ impl TescellateApp {
                     };
                     ui.label(egui::RichText::new(label).weak());
                 });
+                ui.horizontal(|ui| {
+                    let has_match = self.find.match_count() > 0;
+                    if ui
+                        .add_enabled(has_match, egui::Button::new("Replace"))
+                        .clicked()
+                    {
+                        self.replace_current();
+                    }
+                    if ui
+                        .add_enabled(has_match, egui::Button::new("Replace All"))
+                        .clicked()
+                    {
+                        self.replace_all_matches();
+                    }
+                });
             });
         let was_open = self.find_open;
         self.find_open = open;
@@ -712,7 +744,7 @@ impl TescellateApp {
     fn refresh_find(&mut self) {
         let cells: Vec<((u32, u32), String)> = (0..ROWS)
             .flat_map(|r| (0..COLS).map(move |c| (c, r)))
-            .map(|(c, r)| ((c, r), self.cell_text(c, r)))
+            .map(|(c, r)| ((c, r), self.cell_source(c, r)))
             .collect();
         self.find.refresh(cells.into_iter());
         if let Some(cell) = self.find.current_match() {
@@ -725,6 +757,43 @@ impl TescellateApp {
         if let Some(cell) = self.find.step(forward) {
             self.selection.collapse_to(cell);
         }
+    }
+
+    /// Replace the query with the replacement in the current match's
+    /// source, write it back, then rebuild the match list.
+    fn replace_current(&mut self) {
+        if self.find.query.is_empty() {
+            return;
+        }
+        if let Some((c, r)) = self.find.current_match() {
+            let source = self.cell_source(c, r);
+            let new = find::replace_all(&source, &self.find.query, &self.find.replace);
+            if new != source {
+                let addr = grid::cell_address(c, r);
+                self.apply_edits(self.square_sheet, vec![(addr, commit_source(&new))]);
+            }
+            self.refresh_find();
+        }
+    }
+
+    /// Replace the query with the replacement in every matching cell's
+    /// source — one undo step — then rebuild the match list.
+    fn replace_all_matches(&mut self) {
+        if self.find.query.is_empty() {
+            return;
+        }
+        let query = self.find.query.clone();
+        let replacement = self.find.replace.clone();
+        let mut targets = Vec::new();
+        for &(c, r) in self.find.matches() {
+            let source = self.cell_source(c, r);
+            let new = find::replace_all(&source, &query, &replacement);
+            if new != source {
+                targets.push((grid::cell_address(c, r), commit_source(&new)));
+            }
+        }
+        self.apply_edits(self.square_sheet, targets);
+        self.refresh_find();
     }
 
     /// Apply a formatting change to every cell of the selection, recorded
