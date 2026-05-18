@@ -71,7 +71,29 @@ pub enum Command {
     FillRight,
     /// Open the Find panel (Ctrl+F).
     OpenFind,
+    /// Open the keyboard-shortcuts help overlay (F1).
+    OpenHelp,
 }
+
+/// The keyboard shortcuts, as `(keys, description)` — the data behind
+/// the F1 help overlay.
+pub const SHORTCUTS: &[(&str, &str)] = &[
+    ("Arrow keys", "Move the selection"),
+    ("Shift + arrows", "Extend the selection"),
+    ("Tab / Shift+Tab", "Move right / left"),
+    ("Enter / Shift+Enter", "Move down / up"),
+    ("Home", "Jump to the row start"),
+    ("Ctrl+Home", "Jump to the top-left cell"),
+    ("F2", "Edit the selected cell"),
+    ("Delete / Backspace", "Clear the selection"),
+    ("Ctrl+B / Ctrl+I", "Bold / italic"),
+    ("Ctrl+Shift+L / E / R", "Align left / centre / right"),
+    ("Ctrl+C / X / V", "Copy / cut / paste"),
+    ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
+    ("Ctrl+D / Ctrl+R", "Fill down / right"),
+    ("Ctrl+F", "Find & replace"),
+    ("F1", "This shortcuts list"),
+];
 
 /// Interpret a non-text key press.
 pub fn command_for_key(key: Key, shift: bool, ctrl: bool, mode: Mode) -> Option<Command> {
@@ -112,6 +134,7 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         // Ctrl+Shift+R is alignment (matched above); plain Ctrl+R fills.
         Key::R if ctrl => Command::FillRight,
         Key::F if ctrl => Command::OpenFind,
+        Key::F1 => Command::OpenHelp,
         _ => return None,
     })
 }
@@ -346,5 +369,15 @@ mod tests {
         assert_eq!(nav(Key::F, false, true), Some(Command::OpenFind));
         // Plain F is an ordinary typed character, not a command.
         assert_eq!(nav(Key::F, false, false), None);
+    }
+
+    #[test]
+    fn f1_opens_the_help_overlay() {
+        assert_eq!(nav(Key::F1, false, false), Some(Command::OpenHelp));
+        // The shortcuts list is populated and every entry is well-formed.
+        assert!(!SHORTCUTS.is_empty());
+        assert!(SHORTCUTS
+            .iter()
+            .all(|(k, d)| !k.is_empty() && !d.is_empty()));
     }
 }

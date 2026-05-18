@@ -40,6 +40,8 @@ pub enum RibbonAction {
     ToggleWidget,
     /// Apply a border mode across the selection.
     SetBorders(BorderMode),
+    /// Open the keyboard-shortcuts help overlay.
+    OpenHelp,
 }
 
 /// The number formats the ribbon's combo offers, with display labels. The
@@ -216,6 +218,15 @@ pub fn ribbon(
             .clicked()
         {
             action = Some(RibbonAction::SetBorders(BorderMode::None));
+        }
+        ui.separator();
+
+        if ui
+            .button("?")
+            .on_hover_text("Keyboard shortcuts (F1)")
+            .clicked()
+        {
+            action = Some(RibbonAction::OpenHelp);
         }
     });
     action
