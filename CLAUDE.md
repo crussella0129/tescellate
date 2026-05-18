@@ -53,6 +53,7 @@ The Bash / PowerShell tool starts in the repo root (`C:\Users\charl\Tescellate`)
 
 - `git`, `gh`, and any repo-root command: run bare — no `cd` prefix.
 - `cargo` for the `apps/tescellate-ui` crate (it is its own `[workspace]`): pass `--manifest-path apps/tescellate-ui/Cargo.toml` — e.g. `cargo test --manifest-path apps/tescellate-ui/Cargo.toml` — rather than `cd apps/tescellate-ui && cargo test`.
+- Watching a CI run to completion — a backgrounded `gh run watch --exit-status` — is a routine, expected step of the version loop, not something to confirm each iteration. `.claude/settings.json` allowlists the read-only CI commands (`gh run watch` / `list` / `view`) so they run without a prompt.
 
 ## Repo identity
 
