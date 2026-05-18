@@ -34,6 +34,8 @@ pub enum Command {
     /// Extend the selection one cell — Shift+arrow. Moves the cursor and
     /// keeps the anchor, growing or shrinking the selected range.
     Extend(Dir),
+    /// Jump the cursor to the data edge in a direction — Ctrl+arrow.
+    Jump(Dir),
     /// Select the whole sheet (Ctrl+A).
     SelectAll,
     /// Move to the first column of the current row (Home).
@@ -82,6 +84,7 @@ pub enum Command {
 pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Arrow keys", "Move the selection"),
     ("Shift + arrows", "Extend the selection"),
+    ("Ctrl + arrows", "Jump to the data edge"),
     ("Ctrl+A", "Select the whole sheet"),
     ("Tab / Shift+Tab", "Move right / left"),
     ("Enter / Shift+Enter", "Move down / up"),
@@ -108,11 +111,11 @@ pub fn command_for_key(key: Key, shift: bool, ctrl: bool, mode: Mode) -> Option<
 
 fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
     Some(match key {
-        // Shift turns an arrow into a range extension rather than a move.
-        Key::ArrowUp => move_or_extend(Dir::Up, shift),
-        Key::ArrowDown => move_or_extend(Dir::Down, shift),
-        Key::ArrowLeft => move_or_extend(Dir::Left, shift),
-        Key::ArrowRight => move_or_extend(Dir::Right, shift),
+        // Modifiers refine an arrow: Ctrl jumps, Shift extends, plain moves.
+        Key::ArrowUp => arrow(Dir::Up, shift, ctrl),
+        Key::ArrowDown => arrow(Dir::Down, shift, ctrl),
+        Key::ArrowLeft => arrow(Dir::Left, shift, ctrl),
+        Key::ArrowRight => arrow(Dir::Right, shift, ctrl),
         // Tab/Enter move the selection; Shift reverses the axis direction.
         Key::Tab => Command::Move(if shift { Dir::Left } else { Dir::Right }),
         Key::Enter => Command::Move(if shift { Dir::Up } else { Dir::Down }),
@@ -143,9 +146,12 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
     })
 }
 
-/// Shift turns an arrow-key move into a range extension.
-fn move_or_extend(dir: Dir, shift: bool) -> Command {
-    if shift {
+/// An arrow key, refined by its modifiers: Ctrl jumps to the data edge,
+/// Shift extends the selection, plain moves it. Ctrl wins over Shift.
+fn arrow(dir: Dir, shift: bool, ctrl: bool) -> Command {
+    if ctrl {
+        Command::Jump(dir)
+    } else if shift {
         Command::Extend(dir)
     } else {
         Command::Move(dir)
@@ -332,6 +338,20 @@ mod tests {
         assert_eq!(
             nav(Key::ArrowRight, false, false),
             Some(Command::Move(Dir::Right)),
+        );
+    }
+
+    #[test]
+    fn ctrl_arrows_jump_to_the_data_edge() {
+        assert_eq!(
+            nav(Key::ArrowRight, false, true),
+            Some(Command::Jump(Dir::Right)),
+        );
+        assert_eq!(nav(Key::ArrowUp, false, true), Some(Command::Jump(Dir::Up)));
+        // Ctrl wins over Shift — Ctrl+Shift+arrow still jumps.
+        assert_eq!(
+            nav(Key::ArrowDown, true, true),
+            Some(Command::Jump(Dir::Down)),
         );
     }
 

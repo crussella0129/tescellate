@@ -261,6 +261,38 @@ pub fn in_header_corner(origin: Pos2, p: Pos2) -> bool {
     local.x >= 0.0 && local.x < HEADER_W && local.y >= 0.0 && local.y < HEADER_H
 }
 
+/// The Ctrl+Arrow block-jump target along one axis. `start` is the
+/// current index, `max` the last valid index, `occupied(i)` whether
+/// cell `i` holds content; `forward` jumps toward `max`, else toward 0.
+///
+/// Mirrors a spreadsheet's block-jump: from inside a run of content,
+/// jump to that run's far end; from a run's trailing edge (the next
+/// cell is empty), or from an empty cell, skip to the next content
+/// cell — or to the grid edge when there is no further content.
+pub fn jump_target(start: u32, max: u32, forward: bool, occupied: impl Fn(u32) -> bool) -> u32 {
+    let edge = if forward { max } else { 0 };
+    if start == edge {
+        return start;
+    }
+    let step = |i: u32| if forward { i + 1 } else { i - 1 };
+    let next = step(start);
+    if occupied(start) && occupied(next) {
+        // Inside a run of content — go to its far end.
+        let mut i = next;
+        while i != edge && occupied(step(i)) {
+            i = step(i);
+        }
+        i
+    } else {
+        // Skip the gap to the next content cell, or land on the edge.
+        let mut i = next;
+        while i != edge && !occupied(i) {
+            i = step(i);
+        }
+        i
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,5 +510,50 @@ mod tests {
         // Past the last row clamps to the last.
         let far = HEADER_H + 50.0 * DEFAULT_ROW_H;
         assert_eq!(m.row_at_y(origin, pos2(5.0, far), 8), 7);
+    }
+
+    #[test]
+    fn jump_target_from_inside_a_run_goes_to_its_far_end() {
+        // [X X X . . X], indices 0..=5.
+        let cells = [true, true, true, false, false, true];
+        let occ = |i: u32| cells[i as usize];
+        // Forward from the run's start lands on its last cell.
+        assert_eq!(jump_target(0, 5, true, occ), 2);
+        // Backward from the run's end lands on its first cell.
+        assert_eq!(jump_target(2, 5, false, occ), 0);
+    }
+
+    #[test]
+    fn jump_target_skips_a_gap_to_the_next_content() {
+        let cells = [true, true, true, false, false, true];
+        let occ = |i: u32| cells[i as usize];
+        // Forward from the run's trailing edge skips the gap to index 5.
+        assert_eq!(jump_target(2, 5, true, occ), 5);
+        // Backward from index 5 skips back to the run's end at index 2.
+        assert_eq!(jump_target(5, 5, false, occ), 2);
+    }
+
+    #[test]
+    fn jump_target_from_an_empty_cell_finds_the_next_content() {
+        // [. . X . .].
+        let cells = [false, false, true, false, false];
+        let occ = |i: u32| cells[i as usize];
+        assert_eq!(jump_target(0, 4, true, occ), 2);
+        assert_eq!(jump_target(4, 4, false, occ), 2);
+    }
+
+    #[test]
+    fn jump_target_runs_to_the_edge_when_no_content_remains() {
+        let empty = |_: u32| false;
+        // An all-empty axis jumps straight to the far edge.
+        assert_eq!(jump_target(0, 9, true, empty), 9);
+        assert_eq!(jump_target(9, 9, false, empty), 0);
+    }
+
+    #[test]
+    fn jump_target_at_the_edge_stays_put() {
+        let occ = |_: u32| true;
+        assert_eq!(jump_target(9, 9, true, occ), 9);
+        assert_eq!(jump_target(0, 9, false, occ), 0);
     }
 }
