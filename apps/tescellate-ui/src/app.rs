@@ -156,8 +156,10 @@ pub struct TescellateApp {
     formats: FormatMap,
     /// The last copied block of cell sources.
     clipboard: Clipboard,
-    /// The range armed for cut, if any — the next paste clears it.
+    /// The square range armed for cut, if any — the next paste clears it.
     cut: Option<Selection>,
+    /// The hex range armed for cut, if any.
+    hex_cut: Option<HexSelection>,
     /// Undo/redo history — one entry per action.
     history: History<Action>,
 }
@@ -214,6 +216,7 @@ impl TescellateApp {
             formats: FormatMap::new(),
             clipboard: Clipboard::default(),
             cut: None,
+            hex_cut: None,
             history: History::new(),
         }
     }
@@ -613,8 +616,9 @@ impl TescellateApp {
     /// Works on either sheet — a hex range is a `q × r` block, so it
     /// captures into the same rectangular clipboard.
     fn copy_selection(&mut self, ctx: &egui::Context) {
-        // A plain copy cancels any pending cut marquee.
+        // A plain copy cancels any pending cut marquee — either sheet's.
         self.cut = None;
+        self.hex_cut = None;
         match self.active {
             ActiveSheet::Square => {
                 let ((min_c, min_r), (max_c, max_r)) = self.selection.bounds();
@@ -657,13 +661,13 @@ impl TescellateApp {
     }
 
     /// Cut the selected range — captures it like a copy, then arms the
-    /// range so the next paste clears it. Square sheet only.
+    /// range so the next paste clears it. Works on either sheet.
     fn cut_selection(&mut self, ctx: &egui::Context) {
-        if self.active != ActiveSheet::Square {
-            return;
-        }
         self.copy_selection(ctx);
-        self.cut = Some(self.selection);
+        match self.active {
+            ActiveSheet::Square => self.cut = Some(self.selection),
+            ActiveSheet::Hex => self.hex_cut = Some(self.hex_selection),
+        }
     }
 
     /// Paste the clipboard block with its top-left at the active cell,
@@ -707,6 +711,13 @@ impl TescellateApp {
             ActiveSheet::Hex => {
                 let cursor = self.hex_selection.cursor;
                 let mut targets = Vec::new();
+                // A pending hex cut clears its origin cells — queued
+                // first, so a paste on the same cell overrides the clear.
+                if let Some(cut) = self.hex_cut.take() {
+                    for coord in cut.cells() {
+                        targets.push((hex_address(coord), None));
+                    }
+                }
                 for (rel_c, rel_r, cell) in self.clipboard.entries() {
                     let coord = HexCoord::new(cursor.q + rel_c as i32, cursor.r + rel_r as i32);
                     if !hex_in_view(coord) {
@@ -1073,6 +1084,26 @@ impl TescellateApp {
         // neighbour's shared border. While editing, the text editor
         // overlay (drawn below) covers the cell's painted value.
         self.paint_hex(&painter, origin, cursor, sel_bg, sel_stroke, text_color);
+
+        // The cut marquee — a dashed outline around each armed hex.
+        if let Some(cut) = &self.hex_cut {
+            let dash = egui::Stroke::new(1.5, sel_stroke.color);
+            for coord in cut.cells() {
+                if !hex_in_view(coord) {
+                    continue;
+                }
+                let mut loop_pts: Vec<egui::Pos2> = self
+                    .hex_lattice
+                    .vertices(coord)
+                    .iter()
+                    .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
+                    .collect();
+                if let Some(&first) = loop_pts.first() {
+                    loop_pts.push(first);
+                }
+                painter.extend(egui::Shape::dashed_line(&loop_pts, dash, 4.0, 3.0));
+            }
+        }
 
         // The in-cell editor overlay, sized to sit within the hexagon.
         if let Some(edit) = &mut self.edit {
