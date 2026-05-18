@@ -34,6 +34,8 @@ pub enum RibbonAction {
     Cut,
     /// Paste the clipboard at the active cell.
     Paste,
+    /// Open the conditional-formatting rule editor.
+    OpenConditional,
 }
 
 /// The number formats the ribbon's combo offers, with display labels. The
@@ -165,6 +167,15 @@ pub fn ribbon(
             .clicked()
         {
             action = Some(RibbonAction::ClearFormat);
+        }
+        ui.separator();
+
+        if ui
+            .button("Conditional…")
+            .on_hover_text("Conditional-formatting rules")
+            .clicked()
+        {
+            action = Some(RibbonAction::OpenConditional);
         }
     });
     action
