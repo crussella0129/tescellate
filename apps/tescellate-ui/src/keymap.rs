@@ -48,6 +48,10 @@ pub enum Command {
     MoveToRowEnd,
     /// Move to the bottom-right cell (Ctrl+End).
     MoveToSheetEnd,
+    /// Move the cursor up a page (Page Up).
+    PageUp,
+    /// Move the cursor down a page (Page Down).
+    PageDown,
     /// Begin editing the selected cell. `replace_with` is `Some(c)` when a
     /// character was typed — the cell's content is replaced, starting with
     /// `c` — or `None` for an F2-style edit of the existing content.
@@ -99,6 +103,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+Home", "Jump to the top-left cell"),
     ("End", "Jump to the row end"),
     ("Ctrl+End", "Jump to the bottom-right cell"),
+    ("Page Up / Down", "Move a page up or down"),
     ("F2", "Edit the selected cell"),
     ("Delete / Backspace", "Clear the selection"),
     ("Ctrl+B / Ctrl+I", "Bold / italic"),
@@ -132,6 +137,8 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::Home => Command::MoveToRowStart,
         Key::End if ctrl => Command::MoveToSheetEnd,
         Key::End => Command::MoveToRowEnd,
+        Key::PageUp => Command::PageUp,
+        Key::PageDown => Command::PageDown,
         Key::F2 => Command::BeginEdit { replace_with: None },
         Key::Delete | Key::Backspace => Command::Clear,
         Key::A if ctrl => Command::SelectAll,
@@ -248,6 +255,12 @@ mod tests {
     fn end_jumps_to_row_end_or_sheet_end() {
         assert_eq!(nav(Key::End, false, false), Some(Command::MoveToRowEnd));
         assert_eq!(nav(Key::End, false, true), Some(Command::MoveToSheetEnd));
+    }
+
+    #[test]
+    fn page_keys_move_a_page() {
+        assert_eq!(nav(Key::PageUp, false, false), Some(Command::PageUp));
+        assert_eq!(nav(Key::PageDown, false, false), Some(Command::PageDown));
     }
 
     #[test]

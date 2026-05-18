@@ -366,6 +366,16 @@ pub fn series_fill(seed: &[f64], total: usize) -> Vec<f64> {
     (0..total).map(|i| start + step * i as f64).collect()
 }
 
+/// The row a Page Up / Page Down lands on: `start` shifted by `page`
+/// rows toward `0` (`up`) or toward `max` (down), clamped to `0..=max`.
+pub fn page_step(start: u32, up: bool, page: u32, max: u32) -> u32 {
+    if up {
+        start.saturating_sub(page)
+    } else {
+        (start + page).min(max)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -699,5 +709,17 @@ mod tests {
     #[test]
     fn series_fill_with_no_seed_counts_from_zero() {
         assert_eq!(series_fill(&[], 3), vec![0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn page_step_moves_a_page_and_clamps() {
+        // Down a page from row 2.
+        assert_eq!(page_step(2, false, 16, 31), 18);
+        // Down clamps at the last row.
+        assert_eq!(page_step(20, false, 16, 31), 31);
+        // Up a page.
+        assert_eq!(page_step(20, true, 16, 31), 4);
+        // Up clamps at row 0.
+        assert_eq!(page_step(5, true, 16, 31), 0);
     }
 }
