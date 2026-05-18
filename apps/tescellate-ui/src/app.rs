@@ -62,6 +62,7 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::CTRL, egui::Key::I),
     (egui::Modifiers::CTRL, egui::Key::C),
     (egui::Modifiers::CTRL, egui::Key::V),
+    (egui::Modifiers::CTRL, egui::Key::X),
     (egui::Modifiers::CTRL, egui::Key::Z),
     (CTRL_SHIFT, egui::Key::Z),
     (egui::Modifiers::CTRL, egui::Key::Y),
@@ -138,6 +139,8 @@ pub struct TescellateApp {
     formats: FormatMap,
     /// The last copied block of cell sources.
     clipboard: Clipboard,
+    /// The range armed for cut, if any — the next paste clears it.
+    cut: Option<Selection>,
     /// Undo/redo history — each entry is one action's cell edits.
     history: History<Vec<CellEdit>>,
 }
@@ -193,6 +196,7 @@ impl TescellateApp {
             resizing: None,
             formats: FormatMap::new(),
             clipboard: Clipboard::default(),
+            cut: None,
             history: History::new(),
         }
     }
@@ -348,6 +352,7 @@ impl TescellateApp {
             Command::ToggleItalic => self.format_selected(|f| f.italic = !f.italic),
             Command::SetAlign(align) => self.format_selected(|f| f.align = align),
             Command::Copy => self.copy_selection(ctx),
+            Command::Cut => self.cut_selection(ctx),
             Command::Paste => self.paste(),
             Command::Undo => self.undo(),
             Command::Redo => self.redo(),
@@ -432,7 +437,7 @@ impl TescellateApp {
     /// the cell is dropped, so an undo step never holds a no-op.
     fn apply_edits(&mut self, sheet: SheetId, targets: Vec<(String, Option<String>)>) {
         let mut edits = Vec::new();
-        for (addr, after) in targets {
+        for (addr, after) in dedup_targets(targets) {
             let before = self.engine.get_cell(sheet, &addr).and_then(|s| s.source);
             if before == after {
                 continue;
@@ -489,6 +494,8 @@ impl TescellateApp {
         if self.active != ActiveSheet::Square {
             return;
         }
+        // A plain copy cancels any pending cut marquee.
+        self.cut = None;
         let ((min_c, min_r), (max_c, max_r)) = self.selection.bounds();
         let (width, height) = self.selection.dimensions();
         let mut cells = Vec::with_capacity((width * height) as usize);
@@ -511,6 +518,16 @@ impl TescellateApp {
         ctx.copy_text(tsv);
     }
 
+    /// Cut the selected range — captures it like a copy, then arms the
+    /// range so the next paste clears it. Square sheet only.
+    fn cut_selection(&mut self, ctx: &egui::Context) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        self.copy_selection(ctx);
+        self.cut = Some(self.selection);
+    }
+
     /// Paste the clipboard block with its top-left at the active cell —
     /// square sheet only, recorded as one undo step. Sources are written
     /// verbatim (no relative-reference rewriting yet).
@@ -521,6 +538,13 @@ impl TescellateApp {
         let (target_c, target_r) = self.selection.cursor;
         let (width, height) = self.clipboard.dimensions();
         let mut targets = Vec::new();
+        // A pending cut clears its origin cells — queued first, so a
+        // paste landing on the same cell overrides the clear.
+        if let Some(cut) = self.cut.take() {
+            for (c, r) in cut.cells() {
+                targets.push((grid::cell_address(c, r), None));
+            }
+        }
         for (rel_c, rel_r, src) in self.clipboard.entries() {
             let c = target_c + rel_c;
             let r = target_r + rel_r;
@@ -745,6 +769,27 @@ impl TescellateApp {
             0.0,
             egui::Stroke::new(2.0, sel_color),
         );
+
+        // The cut marquee — a dashed border around the armed range.
+        if let Some(cut) = &self.cut {
+            let ((min_c, min_r), (max_c, max_r)) = cut.bounds();
+            let tl = self.metrics.cell_rect(origin, min_c, min_r);
+            let br = self.metrics.cell_rect(origin, max_c, max_r);
+            let rect = egui::Rect::from_min_max(tl.min, br.max);
+            let corners = [
+                rect.left_top(),
+                rect.right_top(),
+                rect.right_bottom(),
+                rect.left_bottom(),
+                rect.left_top(),
+            ];
+            painter.extend(egui::Shape::dashed_line(
+                &corners,
+                egui::Stroke::new(1.5, sel_color),
+                4.0,
+                3.0,
+            ));
+        }
 
         // The in-cell editor overlay.
         if let Some(edit) = &mut self.edit {
@@ -1030,6 +1075,21 @@ fn hex_address(c: HexCoord) -> String {
     format!("H({},{})", c.q, c.r)
 }
 
+/// Collapse duplicate addresses in an edit batch so one undo step never
+/// holds two edits for the same cell — the last write for an address
+/// wins (e.g. a paste landing on a just-cleared cut cell).
+fn dedup_targets(targets: Vec<(String, Option<String>)>) -> Vec<(String, Option<String>)> {
+    let mut out: Vec<(String, Option<String>)> = Vec::new();
+    for (addr, after) in targets {
+        if let Some(slot) = out.iter_mut().find(|(a, _)| *a == addr) {
+            slot.1 = after;
+        } else {
+            out.push((addr, after));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1109,5 +1169,27 @@ mod tests {
         assert_eq!(step_square((3, 4), Dir::Down), (3, 5));
         assert_eq!(step_square((3, 4), Dir::Left), (2, 4));
         assert_eq!(step_square((3, 4), Dir::Up), (3, 3));
+    }
+
+    #[test]
+    fn dedup_targets_keeps_the_last_write_per_address() {
+        let targets = vec![
+            ("A1".to_string(), None),
+            ("B1".to_string(), Some("x".to_string())),
+            ("A1".to_string(), Some("final".to_string())),
+        ];
+        let out = dedup_targets(targets);
+        assert_eq!(out.len(), 2);
+        let a1 = out.iter().find(|(a, _)| a == "A1").unwrap();
+        assert_eq!(a1.1, Some("final".to_string()));
+    }
+
+    #[test]
+    fn dedup_targets_leaves_distinct_addresses_alone() {
+        let targets = vec![
+            ("A1".to_string(), Some("a".to_string())),
+            ("B2".to_string(), None),
+        ];
+        assert_eq!(dedup_targets(targets).len(), 2);
     }
 }

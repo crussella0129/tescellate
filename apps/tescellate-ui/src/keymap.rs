@@ -56,6 +56,9 @@ pub enum Command {
     SetAlign(HAlign),
     /// Copy the selected range to the clipboard (Ctrl+C).
     Copy,
+    /// Cut the selected range — copies it, and the next paste clears it
+    /// (Ctrl+X).
+    Cut,
     /// Paste the clipboard at the active cell (Ctrl+V).
     Paste,
     /// Undo the most recent action (Ctrl+Z).
@@ -98,6 +101,7 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::E if ctrl && shift => Command::SetAlign(HAlign::Center),
         Key::R if ctrl && shift => Command::SetAlign(HAlign::Right),
         Key::C if ctrl => Command::Copy,
+        Key::X if ctrl => Command::Cut,
         Key::V if ctrl => Command::Paste,
         Key::Z if ctrl && shift => Command::Redo,
         Key::Z if ctrl => Command::Undo,
@@ -302,12 +306,13 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_and_ctrl_v_copy_and_paste() {
+    fn ctrl_c_v_x_copy_paste_cut() {
         assert_eq!(nav(Key::C, false, true), Some(Command::Copy));
         assert_eq!(nav(Key::V, false, true), Some(Command::Paste));
-        // Plain C/V are ordinary typed characters, not commands.
+        assert_eq!(nav(Key::X, false, true), Some(Command::Cut));
+        // Plain C/V/X are ordinary typed characters, not commands.
         assert_eq!(nav(Key::C, false, false), None);
-        assert_eq!(nav(Key::V, false, false), None);
+        assert_eq!(nav(Key::X, false, false), None);
     }
 
     #[test]
