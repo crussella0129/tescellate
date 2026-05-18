@@ -261,36 +261,57 @@ pub fn in_header_corner(origin: Pos2, p: Pos2) -> bool {
     local.x >= 0.0 && local.x < HEADER_W && local.y >= 0.0 && local.y < HEADER_H
 }
 
-/// The Ctrl+Arrow block-jump target along one axis. `start` is the
-/// current index, `max` the last valid index, `occupied(i)` whether
-/// cell `i` holds content; `forward` jumps toward `max`, else toward 0.
-///
-/// Mirrors a spreadsheet's block-jump: from inside a run of content,
-/// jump to that run's far end; from a run's trailing edge (the next
-/// cell is empty), or from an empty cell, skip to the next content
-/// cell — or to the grid edge when there is no further content.
-pub fn jump_target(start: u32, max: u32, forward: bool, occupied: impl Fn(u32) -> bool) -> u32 {
-    let edge = if forward { max } else { 0 };
-    if start == edge {
+/// A block-jump along a 1-D walk — the spreadsheet Ctrl+arrow rule.
+/// From `start`, follow `step` (which yields the next coordinate, or
+/// `None` at the boundary): from inside a run of content (`occupied`),
+/// stop at the run's far end; from a run's trailing edge or an empty
+/// cell, stop at the next content cell; failing that, stop at the last
+/// cell before the boundary. Lattice-agnostic — the square sheet walks
+/// an index, the hex sheet walks axial coordinates.
+pub fn block_jump<C: Copy>(
+    start: C,
+    step: impl Fn(C) -> Option<C>,
+    occupied: impl Fn(C) -> bool,
+) -> C {
+    let Some(next) = step(start) else {
         return start;
-    }
-    let step = |i: u32| if forward { i + 1 } else { i - 1 };
-    let next = step(start);
+    };
     if occupied(start) && occupied(next) {
-        // Inside a run of content — go to its far end.
-        let mut i = next;
-        while i != edge && occupied(step(i)) {
-            i = step(i);
+        // Inside a run of content — advance to its far end.
+        let mut cur = next;
+        while let Some(ahead) = step(cur) {
+            if !occupied(ahead) {
+                break;
+            }
+            cur = ahead;
         }
-        i
+        cur
     } else {
-        // Skip the gap to the next content cell, or land on the edge.
-        let mut i = next;
-        while i != edge && !occupied(i) {
-            i = step(i);
+        // Skip the gap to the next content cell, or stop at the boundary.
+        let mut cur = next;
+        loop {
+            if occupied(cur) {
+                return cur;
+            }
+            match step(cur) {
+                Some(ahead) => cur = ahead,
+                None => return cur,
+            }
         }
-        i
     }
+}
+
+/// The Ctrl+Arrow block-jump target along one grid axis — [`block_jump`]
+/// over an index in `0..=max`. `forward` jumps toward `max`, else 0.
+pub fn jump_target(start: u32, max: u32, forward: bool, occupied: impl Fn(u32) -> bool) -> u32 {
+    let step = |i: u32| {
+        if forward {
+            (i < max).then_some(i + 1)
+        } else {
+            i.checked_sub(1)
+        }
+    };
+    block_jump(start, step, occupied)
 }
 
 #[cfg(test)]

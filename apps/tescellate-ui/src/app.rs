@@ -1182,28 +1182,36 @@ impl TescellateApp {
         }
     }
 
-    /// Jump the cursor to the data edge — Ctrl+arrow. The hex sheet has
-    /// no row/column runs, so it falls back to a one-cell move.
+    /// Jump the cursor to the data edge — Ctrl+arrow, on either sheet.
     fn jump_active(&mut self, dir: Dir) {
         match self.active {
             ActiveSheet::Square => {
                 let next = self.square_jump(dir);
                 self.selection.collapse_to(next);
             }
-            ActiveSheet::Hex => self.move_hex_selection(dir),
+            ActiveSheet::Hex => {
+                let next = hex_jump(self.hex_selection.cursor, dir, hex_in_view, |c| {
+                    self.hex_occupied(c)
+                });
+                self.hex_selection.collapse_to(next);
+            }
         }
     }
 
-    /// Extend the selection to the data edge — Ctrl+Shift+arrow. Keeps
-    /// the anchor and jumps the cursor; the hex sheet falls back to a
-    /// one-cell extend.
+    /// Extend the selection to the data edge — Ctrl+Shift+arrow, on
+    /// either sheet. Keeps the anchor and jumps the cursor.
     fn jump_extend_active(&mut self, dir: Dir) {
         match self.active {
             ActiveSheet::Square => {
                 let next = self.square_jump(dir);
                 self.selection.extend_to(next);
             }
-            ActiveSheet::Hex => self.extend_hex_selection(dir),
+            ActiveSheet::Hex => {
+                let next = hex_jump(self.hex_selection.cursor, dir, hex_in_view, |c| {
+                    self.hex_occupied(c)
+                });
+                self.hex_selection.extend_to(next);
+            }
         }
     }
 
@@ -1211,6 +1219,12 @@ impl TescellateApp {
     /// `grid::jump_target` scans for Ctrl+arrow.
     fn square_occupied(&self, col: u32, row: u32) -> bool {
         !matches!(self.cell_value(col, row), CellValue::Empty)
+    }
+
+    /// Whether a hex-sheet cell holds content — the predicate the hex
+    /// Ctrl+arrow jump scans.
+    fn hex_occupied(&self, coord: HexCoord) -> bool {
+        !matches!(self.hex_cell_value(coord), CellValue::Empty)
     }
 
     /// Extend the selection one cell — Shift+arrow, on either sheet.
@@ -2277,6 +2291,21 @@ fn hex_in_view(coord: HexCoord) -> bool {
     HexCoord::new(0, 0).distance(coord) <= HEX_VIEW_RADIUS
 }
 
+/// The hex cell a Ctrl+arrow jump lands on — [`grid::block_jump`] walking
+/// `dir` from `start` over axial coordinates, bounded by `in_view`.
+fn hex_jump(
+    start: HexCoord,
+    dir: Dir,
+    in_view: impl Fn(HexCoord) -> bool,
+    occupied: impl Fn(HexCoord) -> bool,
+) -> HexCoord {
+    let step = |c: HexCoord| {
+        let n = hex_step(c, dir);
+        in_view(n).then_some(n)
+    };
+    grid::block_jump(start, step, occupied)
+}
+
 /// Render a cell value with the engine's natural formatting — no number
 /// format applied. Used for the hex sheet and as the square sheet's
 /// fallback for non-numeric values.
@@ -2510,6 +2539,47 @@ mod tests {
         assert_eq!(step_square((3, 4), Dir::Down), (3, 5));
         assert_eq!(step_square((3, 4), Dir::Left), (2, 4));
         assert_eq!(step_square((3, 4), Dir::Up), (3, 3));
+    }
+
+    #[test]
+    fn hex_jump_walks_to_a_run_far_end() {
+        // A run along the q-axis at r = 0.
+        let run = [
+            HexCoord::new(0, 0),
+            HexCoord::new(1, 0),
+            HexCoord::new(2, 0),
+        ];
+        let target = hex_jump(HexCoord::new(0, 0), Dir::Right, hex_in_view, |c| {
+            run.contains(&c)
+        });
+        // From the run's start, jump to its far end.
+        assert_eq!(target, HexCoord::new(2, 0));
+    }
+
+    #[test]
+    fn hex_jump_skips_a_gap_to_the_next_content() {
+        // H(0,0) occupied, a gap, then H(3,0) occupied.
+        let content = [HexCoord::new(0, 0), HexCoord::new(3, 0)];
+        let target = hex_jump(HexCoord::new(0, 0), Dir::Right, hex_in_view, |c| {
+            content.contains(&c)
+        });
+        assert_eq!(target, HexCoord::new(3, 0));
+    }
+
+    #[test]
+    fn hex_jump_runs_to_the_view_edge_when_empty() {
+        // No content — jump to the last in-view cell along the axis.
+        let target = hex_jump(HexCoord::new(0, 0), Dir::Right, hex_in_view, |_| false);
+        assert_eq!(target, HexCoord::new(3, 0));
+        assert!(hex_in_view(target));
+        assert!(!hex_in_view(hex_step(target, Dir::Right)));
+    }
+
+    #[test]
+    fn hex_jump_at_the_view_edge_stays_put() {
+        // H(3,0) is the last in-view cell going right; jumping right stays.
+        let target = hex_jump(HexCoord::new(3, 0), Dir::Right, hex_in_view, |_| true);
+        assert_eq!(target, HexCoord::new(3, 0));
     }
 
     #[test]
