@@ -263,6 +263,9 @@ pub struct TescellateApp {
     cond_draft: CondDraft,
     /// Square-sheet cells that render as interactive boolean toggles.
     widgets: Widgets,
+    /// The formula bar's edit buffer — mirrors the active cell's source
+    /// except while the bar itself is being edited.
+    formula_bar: String,
 }
 
 impl TescellateApp {
@@ -334,6 +337,7 @@ impl TescellateApp {
                 w.set_toggle((3, 1), true);
                 w
             },
+            formula_bar: String::new(),
         }
     }
 
@@ -462,6 +466,12 @@ impl TescellateApp {
     /// Read key events and turn them into commands through `keymap`. Keys
     /// that map to a command are consumed so no other widget reacts too.
     fn collect_commands(&self, ctx: &egui::Context) -> Vec<Command> {
+        // A focused text input that is not the in-cell editor — the
+        // formula bar, or a dialog field — owns the keyboard; don't also
+        // read its keystrokes as cell commands.
+        if self.edit.is_none() && ctx.wants_keyboard_input() {
+            return Vec::new();
+        }
         let mode = self.mode();
         let keys = match mode {
             Mode::Editing => EDIT_KEYS,
@@ -781,11 +791,7 @@ impl TescellateApp {
         let Some(edit) = self.edit.take() else {
             return;
         };
-        let source = if edit.buffer.trim().is_empty() {
-            None
-        } else {
-            Some(edit.buffer)
-        };
+        let source = commit_source(&edit.buffer);
         let (sheet, addr) = self.active_target();
         self.apply_edits(sheet, vec![(addr, source)]);
     }
@@ -1486,11 +1492,23 @@ impl eframe::App for TescellateApp {
                     _ => {}
                 }
                 ui.separator();
-                ui.label(if source.is_empty() {
-                    egui::RichText::new("(empty)").weak()
-                } else {
-                    egui::RichText::new(source).monospace()
-                });
+                let width = ui.available_width();
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.formula_bar)
+                        .desired_width(width)
+                        .font(egui::TextStyle::Monospace)
+                        .hint_text("value or =formula"),
+                );
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    // Enter commits the bar to the active cell.
+                    self.edit = None;
+                    let (sheet, addr) = self.active_target();
+                    let new_source = commit_source(&self.formula_bar);
+                    self.apply_edits(sheet, vec![(addr, new_source)]);
+                } else if !response.has_focus() {
+                    // Not being edited — mirror the active cell's source.
+                    self.formula_bar = source;
+                }
             });
         });
 
@@ -1633,6 +1651,17 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::IsTrue => "value is TRUE".to_string(),
         Condition::IsFalse => "value is FALSE".to_string(),
         Condition::NonEmpty => "cell is non-empty".to_string(),
+    }
+}
+
+/// The source to write for an edit buffer — `None` (a cleared cell) when
+/// the buffer is empty or all whitespace, otherwise the buffer verbatim.
+/// Shared by the in-cell editor and the formula bar.
+fn commit_source(buffer: &str) -> Option<String> {
+    if buffer.trim().is_empty() {
+        None
+    } else {
+        Some(buffer.to_string())
     }
 }
 
@@ -1832,5 +1861,19 @@ mod tests {
         // The merged edit spans the whole gesture: default -> blue.
         assert_eq!(merged[0].before, CellFormat::default());
         assert_eq!(merged[0].after, blue);
+    }
+
+    #[test]
+    fn commit_source_clears_on_blank_keeps_content() {
+        assert_eq!(
+            commit_source("=SUM(A1:A3)"),
+            Some("=SUM(A1:A3)".to_string())
+        );
+        assert_eq!(commit_source("42"), Some("42".to_string()));
+        // Empty or all-whitespace clears the cell.
+        assert_eq!(commit_source(""), None);
+        assert_eq!(commit_source("   "), None);
+        // Content with surrounding spaces is kept verbatim.
+        assert_eq!(commit_source("  hi  "), Some("  hi  ".to_string()));
     }
 }
