@@ -1303,6 +1303,40 @@ impl TescellateApp {
                 }
             }
         }
+        // Right-click selects the cell under the cursor — unless it is
+        // already inside the selection, which a right-click keeps — then
+        // opens a context menu of the common cell actions.
+        if response.secondary_clicked() {
+            if let Some(cell) = self.cell_under(&response, origin) {
+                if !self.selection.contains(cell) {
+                    self.commit_edit();
+                    self.selection.collapse_to(cell);
+                }
+            }
+        }
+        response.context_menu(|ui| {
+            if ui.button("Copy").clicked() {
+                self.copy_selection(ui.ctx());
+                ui.close_menu();
+            }
+            if ui.button("Cut").clicked() {
+                self.cut_selection(ui.ctx());
+                ui.close_menu();
+            }
+            if ui.button("Paste").clicked() {
+                self.paste();
+                ui.close_menu();
+            }
+            if ui.button("Clear").clicked() {
+                self.clear_active();
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("Toggle checkbox").clicked() {
+                self.toggle_widget_cells();
+                ui.close_menu();
+            }
+        });
 
         let visuals = ui.visuals();
         let grid_line = egui::Stroke::new(1.0, visuals.weak_text_color());
