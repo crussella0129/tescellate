@@ -794,21 +794,42 @@ impl TescellateApp {
     }
 
     /// Fill the selection's leading edge across the rest of it — Ctrl+D
-    /// (down) / Ctrl+R (right), square sheet only. Sources copy verbatim
+    /// (down) / Ctrl+R (right), on either sheet. Sources copy verbatim
     /// and the whole fill is a single undo step.
     fn fill(&mut self, dir: FillDir) {
-        if self.active != ActiveSheet::Square {
-            return;
-        }
-        let mut targets = Vec::new();
-        for (target, from) in self.selection.fill_targets(dir) {
-            let source = self
-                .engine
-                .get_cell(self.square_sheet, &grid::cell_address(from.0, from.1))
-                .and_then(|s| s.source);
-            targets.push((grid::cell_address(target.0, target.1), source));
-        }
-        self.apply_edits(self.square_sheet, targets);
+        let (sheet, targets) = match self.active {
+            ActiveSheet::Square => {
+                let targets = self
+                    .selection
+                    .fill_targets(dir)
+                    .into_iter()
+                    .map(|(target, from)| {
+                        let source = self
+                            .engine
+                            .get_cell(self.square_sheet, &grid::cell_address(from.0, from.1))
+                            .and_then(|s| s.source);
+                        (grid::cell_address(target.0, target.1), source)
+                    })
+                    .collect();
+                (self.square_sheet, targets)
+            }
+            ActiveSheet::Hex => {
+                let targets = self
+                    .hex_selection
+                    .fill_targets(dir)
+                    .into_iter()
+                    .map(|(target, from)| {
+                        let source = self
+                            .engine
+                            .get_cell(self.hex_sheet, &hex_address(from))
+                            .and_then(|s| s.source);
+                        (hex_address(target), source)
+                    })
+                    .collect();
+                (self.hex_sheet, targets)
+            }
+        };
+        self.apply_edits(sheet, targets);
     }
 
     /// Resize the header border under an in-progress drag.
