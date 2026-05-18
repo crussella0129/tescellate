@@ -819,36 +819,60 @@ impl TescellateApp {
 
     /// Sort the cursor's column over the selected row span by evaluated
     /// value — ascending, or descending when `ascending` is false. The
-    /// cell sources move with their values. One undo step; square sheet
-    /// only.
+    /// cell sources move with their values. One undo step. On the hex
+    /// sheet this sorts the cursor's q-line down the r-axis.
     fn sort_selection(&mut self, ascending: bool) {
-        if self.active != ActiveSheet::Square {
-            return;
-        }
-        let ((_, min_r), (_, max_r)) = self.selection.bounds();
-        let col = self.selection.cursor.0;
-        let mut pairs: Vec<(CellValue, String)> = (min_r..=max_r)
-            .map(|r| (self.cell_value(col, r), self.cell_source(col, r)))
-            .collect();
-        pairs.sort_by(|a, b| {
+        let cmp = |a: &(CellValue, String), b: &(CellValue, String)| {
             let ord = sort::compare_values(&a.0, &b.0);
             if ascending {
                 ord
             } else {
                 ord.reverse()
             }
-        });
-        let targets: Vec<(String, Option<String>)> = pairs
-            .into_iter()
-            .enumerate()
-            .map(|(i, (_, source))| {
-                let r = min_r + i as u32;
-                let cell = (!source.is_empty()).then_some(source);
-                (grid::cell_address(col, r), cell)
-            })
-            .collect();
-        self.commit_edit();
-        self.apply_edits(self.square_sheet, targets);
+        };
+        match self.active {
+            ActiveSheet::Square => {
+                let ((_, min_r), (_, max_r)) = self.selection.bounds();
+                let col = self.selection.cursor.0;
+                let mut pairs: Vec<(CellValue, String)> = (min_r..=max_r)
+                    .map(|r| (self.cell_value(col, r), self.cell_source(col, r)))
+                    .collect();
+                pairs.sort_by(cmp);
+                let targets: Vec<(String, Option<String>)> = pairs
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (_, source))| {
+                        let r = min_r + i as u32;
+                        let cell = (!source.is_empty()).then_some(source);
+                        (grid::cell_address(col, r), cell)
+                    })
+                    .collect();
+                self.commit_edit();
+                self.apply_edits(self.square_sheet, targets);
+            }
+            ActiveSheet::Hex => {
+                let ((_, min_r), (_, max_r)) = self.hex_selection.bounds();
+                let q = self.hex_selection.cursor.q;
+                let mut pairs: Vec<(CellValue, String)> = (min_r..=max_r)
+                    .map(|r| {
+                        let c = HexCoord::new(q, r);
+                        (self.hex_cell_value(c), self.hex_cell_source(c))
+                    })
+                    .collect();
+                pairs.sort_by(cmp);
+                let targets: Vec<(String, Option<String>)> = pairs
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (_, source))| {
+                        let r = min_r + i as i32;
+                        let cell = (!source.is_empty()).then_some(source);
+                        (hex_address(HexCoord::new(q, r)), cell)
+                    })
+                    .collect();
+                self.commit_edit();
+                self.apply_edits(self.hex_sheet, targets);
+            }
+        }
     }
 
     /// Apply a border mode across the selection — one undo step. Both
@@ -2296,6 +2320,16 @@ impl TescellateApp {
                 self.fill_series();
                 ui.close_menu();
             }
+            ui.menu_button("Sort", |ui| {
+                if ui.button("Ascending").clicked() {
+                    self.sort_selection(true);
+                    ui.close_menu();
+                }
+                if ui.button("Descending").clicked() {
+                    self.sort_selection(false);
+                    ui.close_menu();
+                }
+            });
             if ui.button("Edit note…").clicked() {
                 let coord = self.hex_selection.cursor;
                 self.note_cell = CellId::Hex(coord);
