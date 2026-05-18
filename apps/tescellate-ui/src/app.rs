@@ -323,6 +323,8 @@ pub struct TescellateApp {
     /// The Name box's edit buffer — the active cell's address, editable
     /// to jump the selection (square sheet).
     name_box: String,
+    /// Whether the dark colour theme is active (the default).
+    dark_mode: bool,
 }
 
 impl TescellateApp {
@@ -416,6 +418,7 @@ impl TescellateApp {
             note_cell: CellId::Square((0, 0)),
             note_draft: String::new(),
             name_box: String::new(),
+            dark_mode: true,
         }
     }
 
@@ -707,6 +710,7 @@ impl TescellateApp {
             RibbonAction::Aggregate(func) => self.autosum(func),
             RibbonAction::SetBorders(mode) => self.apply_border(mode),
             RibbonAction::OpenHelp => self.help_open = true,
+            RibbonAction::ToggleTheme => self.dark_mode = !self.dark_mode,
         }
     }
 
@@ -2283,6 +2287,11 @@ impl TescellateApp {
 
 impl eframe::App for TescellateApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_visuals(if self.dark_mode {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        });
         self.frame_time = ctx.input(|i| i.time);
         for command in self.collect_commands(ctx) {
             self.apply(command, ctx);
