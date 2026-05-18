@@ -40,8 +40,8 @@ pub enum RibbonAction {
     OpenConditional,
     /// Turn the selection into (or out of) boolean checkbox cells.
     ToggleWidget,
-    /// Write `=SUM(...)` of the selection into the cell below it.
-    AutoSum,
+    /// Aggregate the selection (`SUM`, `AVERAGE`, …) into the cell below it.
+    Aggregate(&'static str),
     /// Apply a border mode across the selection.
     SetBorders(BorderMode),
     /// Open the keyboard-shortcuts help overlay.
@@ -213,13 +213,14 @@ pub fn ribbon(
         {
             action = Some(RibbonAction::ToggleWidget);
         }
-        if ui
-            .button("AutoSum")
-            .on_hover_text("Sum the selection into the cell below it")
-            .clicked()
-        {
-            action = Some(RibbonAction::AutoSum);
-        }
+        ui.menu_button("AutoSum", |ui| {
+            for func in ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"] {
+                if ui.button(func).clicked() {
+                    action = Some(RibbonAction::Aggregate(func));
+                    ui.close_menu();
+                }
+            }
+        });
         ui.separator();
 
         // Borders — one-shot commands across the selection.

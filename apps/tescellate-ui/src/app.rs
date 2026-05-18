@@ -704,7 +704,7 @@ impl TescellateApp {
             RibbonAction::Paste => self.paste(),
             RibbonAction::OpenConditional => self.cond_window_open = true,
             RibbonAction::ToggleWidget => self.toggle_widget_cells(),
-            RibbonAction::AutoSum => self.autosum(),
+            RibbonAction::Aggregate(func) => self.autosum(func),
             RibbonAction::SetBorders(mode) => self.apply_border(mode),
             RibbonAction::OpenHelp => self.help_open = true,
         }
@@ -724,13 +724,15 @@ impl TescellateApp {
         }
     }
 
-    /// AutoSum — write `=SUM(...)` of the selection into the cell
-    /// directly below it, then move there. A no-op when that cell would
-    /// fall off the sheet — past the last row, or outside the hex disc.
-    fn autosum(&mut self) {
+    /// AutoSum — write `=FUNC(...)` of the selection (`func` is an
+    /// aggregate like `"SUM"` or `"AVERAGE"`) into the cell directly
+    /// below it, then move there. A no-op when that cell would fall off
+    /// the sheet — past the last row, or outside the hex disc.
+    fn autosum(&mut self, func: &str) {
         match self.active {
             ActiveSheet::Square => {
-                let Some((target, formula)) = grid::autosum(self.selection.bounds(), ROWS) else {
+                let Some((target, formula)) = grid::autosum(self.selection.bounds(), ROWS, func)
+                else {
                     return;
                 };
                 self.commit_edit();
@@ -739,7 +741,7 @@ impl TescellateApp {
                 self.selection.collapse_to(target);
             }
             ActiveSheet::Hex => {
-                let Some((target, formula)) = hex_autosum(self.hex_selection.bounds()) else {
+                let Some((target, formula)) = hex_autosum(self.hex_selection.bounds(), func) else {
                     return;
                 };
                 self.commit_edit();
@@ -2533,9 +2535,9 @@ fn hex_jump(
 
 /// The hex AutoSum action for a selection whose inclusive axial corners
 /// are `bounds`: the hex directly below the selection's bottom row that
-/// should hold the total, and the `=SUM(...)` formula. `None` when that
-/// hex falls outside the visible disc.
-fn hex_autosum(bounds: ((i32, i32), (i32, i32))) -> Option<(HexCoord, String)> {
+/// should hold the result, and the `=FUNC(...)` formula (`func` is an
+/// aggregate name). `None` when that hex falls outside the visible disc.
+fn hex_autosum(bounds: ((i32, i32), (i32, i32)), func: &str) -> Option<(HexCoord, String)> {
     let ((min_q, min_r), (max_q, max_r)) = bounds;
     let target = HexCoord::new(min_q, max_r + 1);
     if !hex_in_view(target) {
@@ -2550,7 +2552,7 @@ fn hex_autosum(bounds: ((i32, i32), (i32, i32))) -> Option<(HexCoord, String)> {
             hex_address(HexCoord::new(max_q, max_r)),
         )
     };
-    Some((target, format!("=SUM({range})")))
+    Some((target, format!("={func}({range})")))
 }
 
 /// Render a cell value with the engine's natural formatting — no number
@@ -2833,23 +2835,28 @@ mod tests {
     fn hex_autosum_sums_into_the_hex_below() {
         // The column H(0,-1):H(0,1) totals into H(0,2).
         assert_eq!(
-            hex_autosum(((0, -1), (0, 1))),
+            hex_autosum(((0, -1), (0, 1)), "SUM"),
             Some((HexCoord::new(0, 2), "=SUM(H(0,-1):H(0,1))".to_string())),
         );
     }
 
     #[test]
-    fn hex_autosum_single_cell() {
+    fn hex_autosum_single_cell_and_chosen_function() {
         assert_eq!(
-            hex_autosum(((1, 0), (1, 0))),
+            hex_autosum(((1, 0), (1, 0)), "SUM"),
             Some((HexCoord::new(1, 1), "=SUM(H(1,0))".to_string())),
+        );
+        // The chosen aggregate name is used verbatim.
+        assert_eq!(
+            hex_autosum(((0, -1), (0, 1)), "AVERAGE"),
+            Some((HexCoord::new(0, 2), "=AVERAGE(H(0,-1):H(0,1))".to_string())),
         );
     }
 
     #[test]
     fn hex_autosum_is_none_outside_the_view() {
         // The total hex would land past the radius-3 view disc.
-        assert_eq!(hex_autosum(((0, 2), (0, 3))), None);
+        assert_eq!(hex_autosum(((0, 2), (0, 3)), "SUM"), None);
     }
 
     #[test]
