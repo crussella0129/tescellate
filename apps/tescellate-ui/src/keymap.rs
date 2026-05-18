@@ -60,6 +60,8 @@ pub enum Command {
     Commit(Dir),
     /// Discard the in-progress edit (Escape).
     Cancel,
+    /// Clear an armed cut/copy marquee — Escape while navigating.
+    ClearMarquee,
     /// Clear the selected cell (Delete / Backspace while navigating).
     Clear,
     /// Toggle bold on the selected cell (Ctrl+B).
@@ -109,6 +111,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+B / Ctrl+I", "Bold / italic"),
     ("Ctrl+Shift+L / E / R", "Align left / centre / right"),
     ("Ctrl+C / X / V", "Copy / cut / paste"),
+    ("Esc", "Clear the cut marquee"),
     ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
     ("Ctrl+D / Ctrl+R", "Fill down / right"),
     ("Ctrl+F", "Find & replace"),
@@ -160,6 +163,7 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::R if ctrl => Command::FillRight,
         Key::F if ctrl => Command::OpenFind,
         Key::F1 => Command::OpenHelp,
+        Key::Escape => Command::ClearMarquee,
         _ => return None,
     })
 }
@@ -280,7 +284,13 @@ mod tests {
     #[test]
     fn unhandled_navigation_keys_yield_no_command() {
         assert_eq!(nav(Key::A, false, false), None);
-        assert_eq!(nav(Key::Escape, false, false), None);
+    }
+
+    #[test]
+    fn escape_clears_the_marquee_while_navigating() {
+        assert_eq!(nav(Key::Escape, false, false), Some(Command::ClearMarquee));
+        // While editing, Escape still cancels the in-progress edit.
+        assert_eq!(edit(Key::Escape, false), Some(Command::Cancel));
     }
 
     #[test]
