@@ -5,6 +5,8 @@
 //! single cell when they coincide. No egui and no engine here, so the
 //! whole model is exercised by ordinary `cargo test`.
 
+use tescellate_tess::hex::HexCoord;
+
 /// A zero-indexed `(column, row)` cell.
 pub type Cell = (u32, u32);
 
@@ -115,6 +117,81 @@ impl Selection {
             }
         }
         pairs
+    }
+}
+
+/// A rectangular hex selection — an `anchor` hex and a `cursor` hex.
+/// The selected range is the axial parallelogram between them (every
+/// cell whose `q` and `r` lie within the corners), the same shape the
+/// engine's `H(a,b):H(c,d)` range describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HexSelection {
+    pub anchor: HexCoord,
+    pub cursor: HexCoord,
+}
+
+impl HexSelection {
+    /// A one-cell hex selection.
+    pub fn single(coord: HexCoord) -> Self {
+        Self {
+            anchor: coord,
+            cursor: coord,
+        }
+    }
+
+    /// Move the whole selection to one cell — a plain move or click.
+    pub fn collapse_to(&mut self, coord: HexCoord) {
+        self.anchor = coord;
+        self.cursor = coord;
+    }
+
+    /// Move the cursor while keeping the anchor — a shift-extend.
+    pub fn extend_to(&mut self, coord: HexCoord) {
+        self.cursor = coord;
+    }
+
+    /// Whether the selection covers more than one cell.
+    pub fn is_range(&self) -> bool {
+        self.anchor != self.cursor
+    }
+
+    /// The inclusive `(q, r)` min/max corners — normalised, so it holds
+    /// whichever way the anchor and cursor lie.
+    pub fn bounds(&self) -> ((i32, i32), (i32, i32)) {
+        (
+            (
+                self.anchor.q.min(self.cursor.q),
+                self.anchor.r.min(self.cursor.r),
+            ),
+            (
+                self.anchor.q.max(self.cursor.q),
+                self.anchor.r.max(self.cursor.r),
+            ),
+        )
+    }
+
+    /// Whether `coord` falls inside the axial parallelogram.
+    pub fn contains(&self, coord: HexCoord) -> bool {
+        let ((min_q, min_r), (max_q, max_r)) = self.bounds();
+        coord.q >= min_q && coord.q <= max_q && coord.r >= min_r && coord.r <= max_r
+    }
+
+    /// `(q-span, r-span)` of the selection — at least `(1, 1)`.
+    pub fn dimensions(&self) -> (i32, i32) {
+        let ((min_q, min_r), (max_q, max_r)) = self.bounds();
+        (max_q - min_q + 1, max_r - min_r + 1)
+    }
+
+    /// Every cell of the axial parallelogram, in q-then-r order.
+    pub fn cells(&self) -> Vec<HexCoord> {
+        let ((min_q, min_r), (max_q, max_r)) = self.bounds();
+        let mut out = Vec::new();
+        for r in min_r..=max_r {
+            for q in min_q..=max_q {
+                out.push(HexCoord::new(q, r));
+            }
+        }
+        out
     }
 }
 
@@ -235,5 +312,42 @@ mod tests {
             cursor: (3, 4),
         };
         assert!(s.fill_targets(FillDir::Down).is_empty());
+    }
+
+    #[test]
+    fn hex_selection_single_then_extends() {
+        let mut s = HexSelection::single(HexCoord::new(1, 1));
+        assert!(!s.is_range());
+        assert_eq!(s.cells(), vec![HexCoord::new(1, 1)]);
+        s.extend_to(HexCoord::new(2, 3));
+        assert!(s.is_range());
+        assert_eq!(s.dimensions(), (2, 3));
+        s.collapse_to(HexCoord::new(5, 5));
+        assert!(!s.is_range());
+    }
+
+    #[test]
+    fn hex_selection_bounds_normalise_and_contain() {
+        // Cursor below-left of the anchor — bounds are still min/max.
+        let s = HexSelection {
+            anchor: HexCoord::new(3, 4),
+            cursor: HexCoord::new(1, 0),
+        };
+        assert_eq!(s.bounds(), ((1, 0), (3, 4)));
+        assert!(s.contains(HexCoord::new(2, 2)));
+        assert!(!s.contains(HexCoord::new(4, 2)));
+    }
+
+    #[test]
+    fn hex_selection_cells_enumerate_the_parallelogram() {
+        let s = HexSelection {
+            anchor: HexCoord::new(0, 0),
+            cursor: HexCoord::new(1, 2),
+        };
+        let cells = s.cells();
+        assert_eq!(cells.len(), 6);
+        assert!(cells.contains(&HexCoord::new(0, 0)));
+        assert!(cells.contains(&HexCoord::new(1, 2)));
+        assert!(cells.iter().all(|&c| s.contains(c)));
     }
 }
