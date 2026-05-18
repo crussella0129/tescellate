@@ -72,6 +72,7 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::CTRL, egui::Key::End),
     (egui::Modifiers::NONE, egui::Key::PageUp),
     (egui::Modifiers::NONE, egui::Key::PageDown),
+    (egui::Modifiers::NONE, egui::Key::Escape),
     (egui::Modifiers::NONE, egui::Key::F2),
     (egui::Modifiers::NONE, egui::Key::F1),
     (egui::Modifiers::NONE, egui::Key::Delete),
@@ -672,6 +673,11 @@ impl TescellateApp {
                 self.move_active(dir);
             }
             Command::Cancel => self.edit = None,
+            Command::ClearMarquee => {
+                if self.clipboard.cut_origin().is_some() {
+                    self.clipboard.consume_cut();
+                }
+            }
             Command::Clear => self.clear_active(),
             Command::ToggleBold => self.toggle_range(|f| f.bold, |f, v| f.bold = v),
             Command::ToggleItalic => self.toggle_range(|f| f.italic, |f, v| f.italic = v),
