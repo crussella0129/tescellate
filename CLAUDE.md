@@ -47,6 +47,13 @@ npm run dev               # vite + electron in dev mode
 npm run build             # production build
 ```
 
+## Running shell commands
+
+The Bash / PowerShell tool starts in the repo root (`C:\Users\charl\Tescellate`) and its working directory persists between calls — **do not prepend `cd`** to commands. A `cd` combined with output redirection (`>`, `2>&1`) in a compound command trips a sandbox guard ("Compound command contains cd with output redirection — manual approval required to prevent path resolution bypass") and forces a needless approval prompt. Dropping the redundant `cd` avoids the guard entirely (it does not weaken it).
+
+- `git`, `gh`, and any repo-root command: run bare — no `cd` prefix.
+- `cargo` for the `apps/tescellate-ui` crate (it is its own `[workspace]`): pass `--manifest-path apps/tescellate-ui/Cargo.toml` — e.g. `cargo test --manifest-path apps/tescellate-ui/Cargo.toml` — rather than `cd apps/tescellate-ui && cargo test`.
+
 ## Repo identity
 
 - Owner: `crussella0129`
