@@ -20,6 +20,8 @@ pub enum RibbonAction {
     ToggleItalic,
     SetAlign(HAlign),
     SetNumber(NumberFormat),
+    /// Increase (`+1`) or decrease (`-1`) the selected cells' decimal places.
+    AdjustDecimals(i32),
     SetTextColor(Option<Color32>),
     SetFill(Option<Color32>),
     /// Reset the selected cell to the default (unstyled) format.
@@ -155,6 +157,21 @@ pub fn ribbon(
                     }
                 }
             });
+        // Decimal-place steppers, the way a spreadsheet toolbar pairs them.
+        if ui
+            .button("+.0")
+            .on_hover_text("Increase decimal places")
+            .clicked()
+        {
+            action = Some(RibbonAction::AdjustDecimals(1));
+        }
+        if ui
+            .button("-.0")
+            .on_hover_text("Decrease decimal places")
+            .clicked()
+        {
+            action = Some(RibbonAction::AdjustDecimals(-1));
+        }
         ui.separator();
 
         // Colours. The picker yields a concrete colour; the action wraps

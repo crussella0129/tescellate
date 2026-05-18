@@ -197,6 +197,35 @@ fn group_digits(digits: &str) -> String {
     out
 }
 
+/// Increase (`delta > 0`) or decrease (`delta < 0`) a number format's
+/// decimal-place count, clamped to `0..=15`. `Number`, `Percent`,
+/// `Thousands`, and `Scientific` carry a count and shift it; `General`
+/// gains an explicit `Number` count the first time decimals are added;
+/// `Currency` (and `General` with nothing to drop) are returned as-is.
+pub fn adjust_decimals(format: NumberFormat, delta: i32) -> NumberFormat {
+    let bump = |d: u8| (d as i32 + delta).clamp(0, 15) as u8;
+    match format {
+        NumberFormat::Number { decimals } => NumberFormat::Number {
+            decimals: bump(decimals),
+        },
+        NumberFormat::Percent { decimals } => NumberFormat::Percent {
+            decimals: bump(decimals),
+        },
+        NumberFormat::Thousands { decimals } => NumberFormat::Thousands {
+            decimals: bump(decimals),
+        },
+        NumberFormat::Scientific { decimals } => NumberFormat::Scientific {
+            decimals: bump(decimals),
+        },
+        // Adding decimals to General turns it into a fixed Number format.
+        NumberFormat::General if delta > 0 => NumberFormat::Number {
+            decimals: delta.clamp(0, 15) as u8,
+        },
+        // General with nothing to drop, and Currency, are left untouched.
+        other => other,
+    }
+}
+
 /// Per-cell formatting overrides, keyed by a lattice's coordinate type
 /// `K` — `(u32, u32)` for the square sheet, `HexCoord` for the hex sheet.
 /// A cell absent from the map is unstyled, so an empty map is a plain
@@ -315,6 +344,62 @@ mod tests {
         assert_eq!(
             render_number(0.0042, NumberFormat::Scientific { decimals: 1 }),
             Some("4.2e-3".to_string()),
+        );
+    }
+
+    #[test]
+    fn adjust_decimals_bumps_the_count() {
+        assert_eq!(
+            adjust_decimals(NumberFormat::Number { decimals: 2 }, 1),
+            NumberFormat::Number { decimals: 3 },
+        );
+        assert_eq!(
+            adjust_decimals(NumberFormat::Percent { decimals: 2 }, -1),
+            NumberFormat::Percent { decimals: 1 },
+        );
+        assert_eq!(
+            adjust_decimals(NumberFormat::Thousands { decimals: 0 }, 2),
+            NumberFormat::Thousands { decimals: 2 },
+        );
+    }
+
+    #[test]
+    fn adjust_decimals_clamps_to_zero_and_fifteen() {
+        // Can't drop below zero.
+        assert_eq!(
+            adjust_decimals(NumberFormat::Number { decimals: 0 }, -1),
+            NumberFormat::Number { decimals: 0 },
+        );
+        // Can't exceed fifteen.
+        assert_eq!(
+            adjust_decimals(NumberFormat::Scientific { decimals: 15 }, 1),
+            NumberFormat::Scientific { decimals: 15 },
+        );
+    }
+
+    #[test]
+    fn adjust_decimals_gives_general_an_explicit_count() {
+        // Adding a decimal to General turns it into a fixed Number format.
+        assert_eq!(
+            adjust_decimals(NumberFormat::General, 1),
+            NumberFormat::Number { decimals: 1 },
+        );
+        // Removing from General is a no-op — it has no decimals to drop.
+        assert_eq!(
+            adjust_decimals(NumberFormat::General, -1),
+            NumberFormat::General,
+        );
+    }
+
+    #[test]
+    fn adjust_decimals_leaves_currency_alone() {
+        assert_eq!(
+            adjust_decimals(NumberFormat::Currency, 1),
+            NumberFormat::Currency,
+        );
+        assert_eq!(
+            adjust_decimals(NumberFormat::Currency, -1),
+            NumberFormat::Currency,
         );
     }
 
