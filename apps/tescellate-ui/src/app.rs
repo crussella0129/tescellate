@@ -10,7 +10,7 @@
 use eframe::egui;
 use tescellate_core::{CellValue, SheetId};
 use tescellate_formula::WorkbookEngine;
-use tescellate_tess::hex::{self, HexCoord, HexLattice};
+use tescellate_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
 use tescellate_tess::{Lattice, LatticeKind, Point2};
 
 use crate::clipboard::Clipboard;
@@ -1031,6 +1031,17 @@ impl eframe::App for TescellateApp {
             ActiveSheet::Hex => {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Tescellate").strong());
+                    ui.separator();
+                    // Pointy-top / flat-top orientation. Switching changes
+                    // geometry only — axial (q,r) coords are orientation-
+                    // independent, so cell data and selection carry over.
+                    let pointy = matches!(self.hex_lattice.orientation, HexOrientation::Pointy);
+                    if ui.selectable_label(pointy, "Pointy-top").clicked() {
+                        self.hex_lattice = HexLattice::pointy(HEX_SIZE);
+                    }
+                    if ui.selectable_label(!pointy, "Flat-top").clicked() {
+                        self.hex_lattice = HexLattice::flat(HEX_SIZE);
+                    }
                     ui.separator();
                     ui.label("Hex demo — arrows move along the q/r axes; type or F2 to edit.");
                 });
