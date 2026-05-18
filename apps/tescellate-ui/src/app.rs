@@ -13,7 +13,7 @@ use tescellate_formula::WorkbookEngine;
 use tescellate_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
 use tescellate_tess::{Lattice, LatticeKind, Point2};
 
-use crate::clipboard::Clipboard;
+use crate::clipboard::{Clipboard, CopiedCell};
 use crate::format::{self, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
 use crate::history::History;
@@ -593,35 +593,67 @@ impl TescellateApp {
         self.apply_edits(sheet, targets);
     }
 
-    /// Copy the selected range — square sheet only. Captures each cell's
-    /// source into the in-app clipboard, and pushes a tab-separated grid
-    /// of *displayed values* to the system clipboard for interop.
-    fn copy_selection(&mut self, ctx: &egui::Context) {
-        if self.active != ActiveSheet::Square {
-            return;
+    /// Read a cell into a `CopiedCell` — its source plus its value as a
+    /// re-typeable literal (the fallback a cross-lattice paste writes).
+    fn copied_cell(&self, sheet: SheetId, addr: &str) -> CopiedCell {
+        match self.engine.get_cell(sheet, addr) {
+            Some(snapshot) => {
+                let value = natural_text(snapshot.value);
+                CopiedCell {
+                    source: snapshot.source,
+                    value: (!value.is_empty()).then_some(value),
+                }
+            }
+            None => CopiedCell::default(),
         }
+    }
+
+    /// Copy the selected range into the in-app clipboard and push a
+    /// tab-separated grid of displayed values to the system clipboard.
+    /// Works on either sheet — a hex range is a `q × r` block, so it
+    /// captures into the same rectangular clipboard.
+    fn copy_selection(&mut self, ctx: &egui::Context) {
         // A plain copy cancels any pending cut marquee.
         self.cut = None;
-        let ((min_c, min_r), (max_c, max_r)) = self.selection.bounds();
-        let (width, height) = self.selection.dimensions();
-        let mut cells = Vec::with_capacity((width * height) as usize);
-        let mut tsv = String::new();
-        for r in min_r..=max_r {
-            for c in min_c..=max_c {
-                if c > min_c {
-                    tsv.push('\t');
+        match self.active {
+            ActiveSheet::Square => {
+                let ((min_c, min_r), (max_c, max_r)) = self.selection.bounds();
+                let (width, height) = self.selection.dimensions();
+                let mut cells = Vec::with_capacity((width * height) as usize);
+                let mut tsv = String::new();
+                for r in min_r..=max_r {
+                    for c in min_c..=max_c {
+                        if c > min_c {
+                            tsv.push('\t');
+                        }
+                        tsv.push_str(&self.cell_text(c, r));
+                        cells.push(self.copied_cell(self.square_sheet, &grid::cell_address(c, r)));
+                    }
+                    tsv.push('\n');
                 }
-                tsv.push_str(&self.cell_text(c, r));
-                let source = self
-                    .engine
-                    .get_cell(self.square_sheet, &grid::cell_address(c, r))
-                    .and_then(|s| s.source);
-                cells.push(source);
+                self.clipboard = Clipboard::capture(width, height, cells, false);
+                ctx.copy_text(tsv);
             }
-            tsv.push('\n');
+            ActiveSheet::Hex => {
+                let ((min_q, min_r), (max_q, max_r)) = self.hex_selection.bounds();
+                let (width, height) = self.hex_selection.dimensions();
+                let mut cells = Vec::new();
+                let mut tsv = String::new();
+                for r in min_r..=max_r {
+                    for q in min_q..=max_q {
+                        if q > min_q {
+                            tsv.push('\t');
+                        }
+                        let coord = HexCoord::new(q, r);
+                        tsv.push_str(&self.hex_cell_text(coord));
+                        cells.push(self.copied_cell(self.hex_sheet, &hex_address(coord)));
+                    }
+                    tsv.push('\n');
+                }
+                self.clipboard = Clipboard::capture(width as u32, height as u32, cells, true);
+                ctx.copy_text(tsv);
+            }
         }
-        self.clipboard = Clipboard::capture(width, height, cells);
-        ctx.copy_text(tsv);
     }
 
     /// Cut the selected range — captures it like a copy, then arms the
@@ -634,39 +666,64 @@ impl TescellateApp {
         self.cut = Some(self.selection);
     }
 
-    /// Paste the clipboard block with its top-left at the active cell —
-    /// square sheet only, recorded as one undo step. Sources are written
-    /// verbatim (no relative-reference rewriting yet).
+    /// Paste the clipboard block with its top-left at the active cell,
+    /// recorded as one undo step. Pasting onto the same kind of sheet
+    /// the copy came from writes the cell sources; pasting onto a
+    /// different lattice writes each cell's value instead.
     fn paste(&mut self) {
-        if self.active != ActiveSheet::Square || self.clipboard.is_empty() {
+        if self.clipboard.is_empty() {
             return;
         }
-        let (target_c, target_r) = self.selection.cursor;
         let (width, height) = self.clipboard.dimensions();
-        let mut targets = Vec::new();
-        // A pending cut clears its origin cells — queued first, so a
-        // paste landing on the same cell overrides the clear.
-        if let Some(cut) = self.cut.take() {
-            for (c, r) in cut.cells() {
-                targets.push((grid::cell_address(c, r), None));
+        match self.active {
+            ActiveSheet::Square => {
+                let (target_c, target_r) = self.selection.cursor;
+                let mut targets = Vec::new();
+                // A pending cut clears its origin cells — queued first,
+                // so a paste on the same cell overrides the clear.
+                if let Some(cut) = self.cut.take() {
+                    for (c, r) in cut.cells() {
+                        targets.push((grid::cell_address(c, r), None));
+                    }
+                }
+                for (rel_c, rel_r, cell) in self.clipboard.entries() {
+                    let c = target_c + rel_c;
+                    let r = target_r + rel_r;
+                    if c >= COLS || r >= ROWS {
+                        continue;
+                    }
+                    let source = self.clipboard.source_for(cell, false);
+                    targets.push((grid::cell_address(c, r), source));
+                }
+                self.apply_edits(self.square_sheet, targets);
+                // Select the pasted block, the active cell at its top-left.
+                let end_c = (target_c + width - 1).min(COLS - 1);
+                let end_r = (target_r + height - 1).min(ROWS - 1);
+                self.selection = Selection {
+                    anchor: (end_c, end_r),
+                    cursor: (target_c, target_r),
+                };
+            }
+            ActiveSheet::Hex => {
+                let cursor = self.hex_selection.cursor;
+                let mut targets = Vec::new();
+                for (rel_c, rel_r, cell) in self.clipboard.entries() {
+                    let coord = HexCoord::new(cursor.q + rel_c as i32, cursor.r + rel_r as i32);
+                    if !hex_in_view(coord) {
+                        continue;
+                    }
+                    let source = self.clipboard.source_for(cell, true);
+                    targets.push((hex_address(coord), source));
+                }
+                self.apply_edits(self.hex_sheet, targets);
+                // Select the pasted block, the cursor at its origin.
+                let far = HexCoord::new(cursor.q + width as i32 - 1, cursor.r + height as i32 - 1);
+                self.hex_selection = HexSelection {
+                    anchor: far,
+                    cursor,
+                };
             }
         }
-        for (rel_c, rel_r, src) in self.clipboard.entries() {
-            let c = target_c + rel_c;
-            let r = target_r + rel_r;
-            if c >= COLS || r >= ROWS {
-                continue;
-            }
-            targets.push((grid::cell_address(c, r), src.map(str::to_string)));
-        }
-        self.apply_edits(self.square_sheet, targets);
-        // Select the pasted block, with the active cell at its top-left.
-        let end_c = (target_c + width - 1).min(COLS - 1);
-        let end_r = (target_r + height - 1).min(ROWS - 1);
-        self.selection = Selection {
-            anchor: (end_c, end_r),
-            cursor: (target_c, target_r),
-        };
     }
 
     /// Revert the most recent action — cell content or formatting. The
