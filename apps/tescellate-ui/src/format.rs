@@ -86,6 +86,20 @@ pub fn border_sides(
     }
 }
 
+/// Which of a hexagon's six edges carry a border line. Edge `i` is the
+/// segment from hex vertex `i` to vertex `i + 1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HexBorders {
+    pub edges: [bool; 6],
+}
+
+impl HexBorders {
+    /// Every edge bordered.
+    pub fn all() -> Self {
+        Self { edges: [true; 6] }
+    }
+}
+
 /// The full visual format of one cell. The `Default` is "no formatting".
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CellFormat {
@@ -96,6 +110,7 @@ pub struct CellFormat {
     pub fill: Option<Color32>,
     pub number: NumberFormat,
     pub borders: Borders,
+    pub hex_borders: HexBorders,
 }
 
 impl CellFormat {
@@ -355,5 +370,11 @@ mod tests {
         assert_eq!(map.styled_count(), 1);
         // An unstyled hex cell reads as the default format.
         assert!(map.get(HexCoord::new(0, 0)).is_default());
+    }
+
+    #[test]
+    fn hex_borders_all_and_default() {
+        assert_eq!(HexBorders::all().edges, [true; 6]);
+        assert_eq!(HexBorders::default().edges, [false; 6]);
     }
 }
