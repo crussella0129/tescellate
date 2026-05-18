@@ -1687,20 +1687,15 @@ impl TescellateApp {
         let text = self.hex_cell_text(coord);
         if !text.is_empty() {
             let fmt = self.hex_effective_format(coord);
-            let centroid = self.hex_lattice.centroid(coord);
-            let pos = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+            let c = self.hex_lattice.centroid(coord);
+            let centroid = egui::pos2(origin.x + c.x, origin.y + c.y);
+            let (anchor, pos) = hex_text_layout(fmt.align, centroid, HEX_SIZE * 0.6);
             let color = fmt.text_color.unwrap_or(text_color);
             let font = egui::FontId::proportional(13.0);
-            painter.text(pos, egui::Align2::CENTER_CENTER, &text, font.clone(), color);
+            painter.text(pos, anchor, &text, font.clone(), color);
             if fmt.bold {
                 // Faux-bold: a second pass nudged half a pixel across.
-                painter.text(
-                    egui::pos2(pos.x + 0.5, pos.y),
-                    egui::Align2::CENTER_CENTER,
-                    &text,
-                    font,
-                    color,
-                );
+                painter.text(egui::pos2(pos.x + 0.5, pos.y), anchor, &text, font, color);
             }
         }
     }
@@ -2077,6 +2072,23 @@ fn draw_borders(
     }
 }
 
+/// The anchor and position to draw a hex cell's text at, given its
+/// horizontal alignment. Left/Right anchor `inset` points either side of
+/// the `centroid`; Center sits on it.
+fn hex_text_layout(align: HAlign, centroid: egui::Pos2, inset: f32) -> (egui::Align2, egui::Pos2) {
+    match align {
+        HAlign::Left => (
+            egui::Align2::LEFT_CENTER,
+            egui::pos2(centroid.x - inset, centroid.y),
+        ),
+        HAlign::Center => (egui::Align2::CENTER_CENTER, centroid),
+        HAlign::Right => (
+            egui::Align2::RIGHT_CENTER,
+            egui::pos2(centroid.x + inset, centroid.y),
+        ),
+    }
+}
+
 /// Format a numeric cell value: integers without a fractional part, other
 /// finite numbers with Rust's default float formatting.
 fn format_number(n: f64) -> String {
@@ -2320,6 +2332,20 @@ mod tests {
         assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].before, CellFormat::default());
         assert_eq!(merged[0].after, blue);
+    }
+
+    #[test]
+    fn hex_text_layout_anchors_by_alignment() {
+        let c = egui::pos2(100.0, 50.0);
+        let (anchor, pos) = hex_text_layout(HAlign::Center, c, 10.0);
+        assert_eq!(anchor, egui::Align2::CENTER_CENTER);
+        assert_eq!(pos, c);
+        let (anchor, pos) = hex_text_layout(HAlign::Left, c, 10.0);
+        assert_eq!(anchor, egui::Align2::LEFT_CENTER);
+        assert_eq!(pos, egui::pos2(90.0, 50.0));
+        let (anchor, pos) = hex_text_layout(HAlign::Right, c, 10.0);
+        assert_eq!(anchor, egui::Align2::RIGHT_CENTER);
+        assert_eq!(pos, egui::pos2(110.0, 50.0));
     }
 
     #[test]
