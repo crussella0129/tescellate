@@ -274,6 +274,9 @@ pub struct TescellateApp {
     find_open: bool,
     /// Set when Find is opened by Ctrl+F so the query field grabs focus.
     find_just_opened: bool,
+    /// The Name box's edit buffer — the active cell's address, editable
+    /// to jump the selection (square sheet).
+    name_box: String,
 }
 
 impl TescellateApp {
@@ -349,6 +352,7 @@ impl TescellateApp {
             find: FindState::default(),
             find_open: false,
             find_just_opened: false,
+            name_box: String::new(),
         }
     }
 
@@ -1573,7 +1577,28 @@ impl eframe::App for TescellateApp {
         egui::TopBottomPanel::top("tescellate_formula_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let (addr, source) = self.active_address_and_source();
-                ui.monospace(addr);
+                match self.active {
+                    ActiveSheet::Square => {
+                        let response = ui.add(
+                            egui::TextEdit::singleline(&mut self.name_box)
+                                .desired_width(64.0)
+                                .font(egui::TextStyle::Monospace),
+                        );
+                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            // Enter jumps the selection to the typed address.
+                            if let Some((c, r)) = grid::parse_address(&self.name_box) {
+                                if c < COLS && r < ROWS {
+                                    self.selection.collapse_to((c, r));
+                                }
+                            }
+                        } else if !response.has_focus() {
+                            self.name_box = addr.clone();
+                        }
+                    }
+                    ActiveSheet::Hex => {
+                        ui.monospace(addr.clone());
+                    }
+                }
                 match self.active {
                     ActiveSheet::Square if self.selection.is_range() => {
                         let (cols, rows) = self.selection.dimensions();

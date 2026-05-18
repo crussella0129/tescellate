@@ -45,6 +45,31 @@ pub fn cell_address(col: u32, row: u32) -> String {
     format!("{}{}", column_label(col), row + 1)
 }
 
+/// Parse an A1-style address — column letters then a 1-based row number,
+/// e.g. `"B7"` — into a zero-indexed `(col, row)`. The inverse of
+/// [`cell_address`]. `None` for anything that is not `[A-Za-z]+[0-9]+`
+/// with a non-zero row; surrounding whitespace and letter case are
+/// tolerated.
+pub fn parse_address(text: &str) -> Option<(u32, u32)> {
+    let text = text.trim();
+    let split = text.find(|c: char| c.is_ascii_digit())?;
+    let (letters, digits) = text.split_at(split);
+    if letters.is_empty() || !letters.bytes().all(|b| b.is_ascii_alphabetic()) {
+        return None;
+    }
+    // Bijective base-26: A=1, Z=26, AA=27, ...
+    let mut col1 = 0u32;
+    for b in letters.bytes() {
+        let digit = (b.to_ascii_uppercase() - b'A' + 1) as u32;
+        col1 = col1.checked_mul(26)?.checked_add(digit)?;
+    }
+    let row1: u32 = digits.parse().ok()?;
+    if col1 == 0 || row1 == 0 {
+        return None;
+    }
+    Some((col1 - 1, row1 - 1))
+}
+
 /// Per-column and per-row sizes. A column/row absent from the maps uses
 /// the default size, so an empty `GridMetrics` is a uniform grid.
 #[derive(Debug, Clone, Default)]
@@ -185,6 +210,30 @@ mod tests {
     fn cell_addresses() {
         assert_eq!(cell_address(0, 0), "A1");
         assert_eq!(cell_address(27, 99), "AB100");
+    }
+
+    #[test]
+    fn parse_address_inverts_cell_address() {
+        assert_eq!(parse_address("A1"), Some((0, 0)));
+        assert_eq!(parse_address("B7"), Some((1, 6)));
+        assert_eq!(parse_address("Z9"), Some((25, 8)));
+        assert_eq!(parse_address("AA1"), Some((26, 0)));
+        assert_eq!(parse_address("AB100"), Some((27, 99)));
+        // Letter case and surrounding whitespace are tolerated.
+        assert_eq!(parse_address("  c3  "), Some((2, 2)));
+        // Round-trips with cell_address.
+        assert_eq!(parse_address(&cell_address(27, 99)), Some((27, 99)));
+    }
+
+    #[test]
+    fn parse_address_rejects_malformed_input() {
+        assert_eq!(parse_address(""), None);
+        assert_eq!(parse_address("B"), None); // no row number
+        assert_eq!(parse_address("7"), None); // no column letters
+        assert_eq!(parse_address("B0"), None); // row 0 does not exist
+        assert_eq!(parse_address("7B"), None); // digits before letters
+        assert_eq!(parse_address("B7B"), None); // trailing letters
+        assert_eq!(parse_address("B 7"), None); // embedded space
     }
 
     #[test]
