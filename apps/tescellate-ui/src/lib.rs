@@ -10,6 +10,7 @@ mod app;
 pub mod clipboard;
 pub mod format;
 pub mod grid;
+pub mod history;
 pub mod keymap;
 pub mod ribbon;
 pub mod selection;

@@ -3,9 +3,9 @@
 //!
 //! The square sheet has keyboard navigation, in-cell editing, row/column
 //! sizing, cell formatting, a formatting ribbon, multi-cell range
-//! selection and (v9) copy/paste. The hex sheet renders `tescellate-tess`'s
-//! `HexLattice` as a real tessellation and is interactive too — both
-//! sheets are driven by the same pure `keymap` command layer.
+//! selection, copy/paste and (v10) undo/redo. The hex sheet renders
+//! `tescellate-tess`'s `HexLattice` as a real tessellation and is
+//! interactive too — both sheets share the pure `keymap` command layer.
 
 use eframe::egui;
 use tescellate_core::{CellValue, SheetId};
@@ -16,6 +16,7 @@ use tescellate_tess::{Lattice, LatticeKind, Point2};
 use crate::clipboard::Clipboard;
 use crate::format::{self, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
+use crate::history::History;
 use crate::keymap::{self, Command, Dir, Mode};
 use crate::ribbon::{self, RibbonAction};
 use crate::selection::Selection;
@@ -61,6 +62,9 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::CTRL, egui::Key::I),
     (egui::Modifiers::CTRL, egui::Key::C),
     (egui::Modifiers::CTRL, egui::Key::V),
+    (egui::Modifiers::CTRL, egui::Key::Z),
+    (CTRL_SHIFT, egui::Key::Z),
+    (egui::Modifiers::CTRL, egui::Key::Y),
     (CTRL_SHIFT, egui::Key::L),
     (CTRL_SHIFT, egui::Key::E),
     (CTRL_SHIFT, egui::Key::R),
@@ -98,6 +102,15 @@ enum Resize {
     Row(u32),
 }
 
+/// One cell's source before and after a change — the unit of undo/redo.
+#[derive(Debug, Clone)]
+struct CellEdit {
+    sheet: SheetId,
+    addr: String,
+    before: Option<String>,
+    after: Option<String>,
+}
+
 /// The Tescellate front-end application.
 pub struct TescellateApp {
     engine: WorkbookEngine,
@@ -123,6 +136,8 @@ pub struct TescellateApp {
     formats: FormatMap,
     /// The last copied block of cell sources.
     clipboard: Clipboard,
+    /// Undo/redo history — each entry is one action's cell edits.
+    history: History<Vec<CellEdit>>,
 }
 
 impl TescellateApp {
@@ -176,6 +191,7 @@ impl TescellateApp {
             resizing: None,
             formats: FormatMap::new(),
             clipboard: Clipboard::default(),
+            history: History::new(),
         }
     }
 
@@ -233,6 +249,17 @@ impl TescellateApp {
                 .get_cell(self.hex_sheet, &hex_address(self.hex_selected))
                 .and_then(|s| s.source)
                 .unwrap_or_default(),
+        }
+    }
+
+    /// The `(sheet, address)` of the active cell on the active sheet.
+    fn active_target(&self) -> (SheetId, String) {
+        match self.active {
+            ActiveSheet::Square => {
+                let (col, row) = self.selection.cursor;
+                (self.square_sheet, grid::cell_address(col, row))
+            }
+            ActiveSheet::Hex => (self.hex_sheet, hex_address(self.hex_selected)),
         }
     }
 
@@ -320,6 +347,8 @@ impl TescellateApp {
             Command::SetAlign(align) => self.format_selected(|f| f.align = align),
             Command::Copy => self.copy_selection(ctx),
             Command::Paste => self.paste(),
+            Command::Undo => self.undo(),
+            Command::Redo => self.redo(),
         }
     }
 
@@ -394,6 +423,29 @@ impl TescellateApp {
         });
     }
 
+    /// Apply a batch of cell writes as one undoable step. Each target is
+    /// an `(address, new source)`; a target that doesn't actually change
+    /// the cell is dropped, so an undo step never holds a no-op.
+    fn apply_edits(&mut self, sheet: SheetId, targets: Vec<(String, Option<String>)>) {
+        let mut edits = Vec::new();
+        for (addr, after) in targets {
+            let before = self.engine.get_cell(sheet, &addr).and_then(|s| s.source);
+            if before == after {
+                continue;
+            }
+            let _ = self.engine.set_cell(sheet, &addr, after.as_deref());
+            edits.push(CellEdit {
+                sheet,
+                addr,
+                before,
+                after,
+            });
+        }
+        if !edits.is_empty() {
+            self.history.record(edits);
+        }
+    }
+
     /// Write the in-progress edit to the active sheet and leave editing
     /// mode. An all-whitespace buffer clears the cell.
     fn commit_edit(&mut self) {
@@ -403,41 +455,27 @@ impl TescellateApp {
         let source = if edit.buffer.trim().is_empty() {
             None
         } else {
-            Some(edit.buffer.as_str())
+            Some(edit.buffer)
         };
-        match self.active {
-            ActiveSheet::Square => {
-                let (col, row) = self.selection.cursor;
-                let _ =
-                    self.engine
-                        .set_cell(self.square_sheet, &grid::cell_address(col, row), source);
-            }
-            ActiveSheet::Hex => {
-                let addr = hex_address(self.hex_selected);
-                let _ = self.engine.set_cell(self.hex_sheet, &addr, source);
-            }
-        }
+        let (sheet, addr) = self.active_target();
+        self.apply_edits(sheet, vec![(addr, source)]);
     }
 
     /// Clear the selection on whichever sheet is active — the whole range
     /// on the square sheet, the single selected cell on the hex sheet.
     fn clear_active(&mut self) {
-        match self.active {
+        let (sheet, targets) = match self.active {
             ActiveSheet::Square => {
-                for (col, row) in self.selection.cells() {
-                    let _ = self.engine.set_cell(
-                        self.square_sheet,
-                        &grid::cell_address(col, row),
-                        None,
-                    );
-                }
+                let targets = self
+                    .selection
+                    .cells()
+                    .map(|(c, r)| (grid::cell_address(c, r), None))
+                    .collect();
+                (self.square_sheet, targets)
             }
-            ActiveSheet::Hex => {
-                let _ = self
-                    .engine
-                    .set_cell(self.hex_sheet, &hex_address(self.hex_selected), None);
-            }
-        }
+            ActiveSheet::Hex => (self.hex_sheet, vec![(hex_address(self.hex_selected), None)]),
+        };
+        self.apply_edits(sheet, targets);
     }
 
     /// Copy the selected range — square sheet only. Captures each cell's
@@ -470,33 +508,24 @@ impl TescellateApp {
     }
 
     /// Paste the clipboard block with its top-left at the active cell —
-    /// square sheet only. Sources are written verbatim (no relative-
-    /// reference rewriting yet). The pasted block becomes the selection.
+    /// square sheet only, recorded as one undo step. Sources are written
+    /// verbatim (no relative-reference rewriting yet).
     fn paste(&mut self) {
         if self.active != ActiveSheet::Square || self.clipboard.is_empty() {
             return;
         }
         let (target_c, target_r) = self.selection.cursor;
         let (width, height) = self.clipboard.dimensions();
-        // Own the sources first, so the engine's `&mut` borrow doesn't
-        // overlap the clipboard's `&` borrow.
-        let block: Vec<(u32, u32, Option<String>)> = self
-            .clipboard
-            .entries()
-            .map(|(c, r, src)| (c, r, src.map(str::to_string)))
-            .collect();
-        for (rel_c, rel_r, source) in block {
+        let mut targets = Vec::new();
+        for (rel_c, rel_r, src) in self.clipboard.entries() {
             let c = target_c + rel_c;
             let r = target_r + rel_r;
             if c >= COLS || r >= ROWS {
                 continue;
             }
-            let _ = self.engine.set_cell(
-                self.square_sheet,
-                &grid::cell_address(c, r),
-                source.as_deref(),
-            );
+            targets.push((grid::cell_address(c, r), src.map(str::to_string)));
         }
+        self.apply_edits(self.square_sheet, targets);
         // Select the pasted block, with the active cell at its top-left.
         let end_c = (target_c + width - 1).min(COLS - 1);
         let end_r = (target_r + height - 1).min(ROWS - 1);
@@ -504,6 +533,31 @@ impl TescellateApp {
             anchor: (end_c, end_r),
             cursor: (target_c, target_r),
         };
+    }
+
+    /// Revert the most recent action — restores each changed cell's prior
+    /// source. The engine recomputes any dependents.
+    fn undo(&mut self) {
+        let Some(edits) = self.history.undo() else {
+            return;
+        };
+        for edit in &edits {
+            let _ = self
+                .engine
+                .set_cell(edit.sheet, &edit.addr, edit.before.as_deref());
+        }
+    }
+
+    /// Re-apply the most recently undone action.
+    fn redo(&mut self) {
+        let Some(edits) = self.history.redo() else {
+            return;
+        };
+        for edit in &edits {
+            let _ = self
+                .engine
+                .set_cell(edit.sheet, &edit.addr, edit.after.as_deref());
+        }
     }
 
     /// Resize the header border under an in-progress drag.
