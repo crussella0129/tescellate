@@ -1619,6 +1619,26 @@ impl TescellateApp {
         }
     }
 
+    /// Set a column's width to fit its widest cell's rendered text —
+    /// triggered by a double-click on the column's resize border.
+    fn autofit_column(&mut self, col: u32, painter: &egui::Painter) {
+        let font = egui::FontId::proportional(13.0);
+        let widths = (0..ROWS).map(|row| {
+            let text = self.cell_text(col, row);
+            if text.is_empty() {
+                0.0
+            } else {
+                painter
+                    .layout_no_wrap(text, font.clone(), egui::Color32::BLACK)
+                    .size()
+                    .x
+            }
+        });
+        // 5.0 is the cell text's left/right inset in `draw_cell_text`.
+        let width = grid::fit_extent(widths, 2.0 * 5.0, grid::MIN_COL_W);
+        self.metrics.set_col_width(col, width);
+    }
+
     /// The square cell under a pointer position, if any.
     fn cell_under(&self, response: &egui::Response, origin: egui::Pos2) -> Option<(u32, u32)> {
         response
@@ -1642,6 +1662,15 @@ impl TescellateApp {
             }
         }
         self.handle_resize(&response, origin);
+
+        // Double-clicking a column's border autofits it to its content.
+        if response.double_clicked() {
+            if let Some(p) = response.interact_pointer_pos() {
+                if let Some(col) = self.metrics.col_border_at(origin, p, COLS) {
+                    self.autofit_column(col, &painter);
+                }
+            }
+        }
 
         // A drag that didn't start on a header border sweeps a selection:
         // a cell drag a cell range, a header drag a column/row range.
