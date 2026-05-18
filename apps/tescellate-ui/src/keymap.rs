@@ -36,6 +36,8 @@ pub enum Command {
     Extend(Dir),
     /// Jump the cursor to the data edge in a direction — Ctrl+arrow.
     Jump(Dir),
+    /// Extend the selection to the data edge — Ctrl+Shift+arrow.
+    JumpExtend(Dir),
     /// Select the whole sheet (Ctrl+A).
     SelectAll,
     /// Move to the first column of the current row (Home).
@@ -85,6 +87,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Arrow keys", "Move the selection"),
     ("Shift + arrows", "Extend the selection"),
     ("Ctrl + arrows", "Jump to the data edge"),
+    ("Ctrl+Shift + arrows", "Extend to the data edge"),
     ("Ctrl+A", "Select the whole sheet"),
     ("Tab / Shift+Tab", "Move right / left"),
     ("Enter / Shift+Enter", "Move down / up"),
@@ -146,15 +149,14 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
     })
 }
 
-/// An arrow key, refined by its modifiers: Ctrl jumps to the data edge,
-/// Shift extends the selection, plain moves it. Ctrl wins over Shift.
+/// An arrow key, refined by its modifiers: Ctrl+Shift extends to the
+/// data edge, Ctrl jumps to it, Shift extends one cell, plain moves.
 fn arrow(dir: Dir, shift: bool, ctrl: bool) -> Command {
-    if ctrl {
-        Command::Jump(dir)
-    } else if shift {
-        Command::Extend(dir)
-    } else {
-        Command::Move(dir)
+    match (ctrl, shift) {
+        (true, true) => Command::JumpExtend(dir),
+        (true, false) => Command::Jump(dir),
+        (false, true) => Command::Extend(dir),
+        (false, false) => Command::Move(dir),
     }
 }
 
@@ -348,10 +350,17 @@ mod tests {
             Some(Command::Jump(Dir::Right)),
         );
         assert_eq!(nav(Key::ArrowUp, false, true), Some(Command::Jump(Dir::Up)));
-        // Ctrl wins over Shift — Ctrl+Shift+arrow still jumps.
+    }
+
+    #[test]
+    fn ctrl_shift_arrows_extend_to_the_data_edge() {
         assert_eq!(
             nav(Key::ArrowDown, true, true),
-            Some(Command::Jump(Dir::Down)),
+            Some(Command::JumpExtend(Dir::Down)),
+        );
+        assert_eq!(
+            nav(Key::ArrowLeft, true, true),
+            Some(Command::JumpExtend(Dir::Left)),
         );
     }
 
