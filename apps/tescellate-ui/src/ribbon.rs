@@ -24,6 +24,16 @@ pub enum RibbonAction {
     SetFill(Option<Color32>),
     /// Reset the selected cell to the default (unstyled) format.
     ClearFormat,
+    /// Undo the most recent action.
+    Undo,
+    /// Redo the most recently undone action.
+    Redo,
+    /// Copy the selected range.
+    Copy,
+    /// Cut the selected range.
+    Cut,
+    /// Paste the clipboard at the active cell.
+    Paste,
 }
 
 /// The number formats the ribbon's combo offers, with display labels. The
@@ -47,12 +57,49 @@ pub fn number_format_label(format: NumberFormat) -> &'static str {
     }
 }
 
-/// Draw the formatting toolbar for the selected cell's `current` format.
-/// Returns the action the user triggered this frame, if any.
-pub fn ribbon(ui: &mut egui::Ui, current: &CellFormat) -> Option<RibbonAction> {
+/// Draw the toolbar for the selected cell's `current` format. Returns
+/// the action the user triggered this frame, if any. `can_undo` /
+/// `can_redo` gate the undo/redo buttons.
+pub fn ribbon(
+    ui: &mut egui::Ui,
+    current: &CellFormat,
+    can_undo: bool,
+    can_redo: bool,
+) -> Option<RibbonAction> {
     let mut action = None;
-    ui.horizontal(|ui| {
+    // Wrapped, so the strip flows onto a second line on a narrow window
+    // rather than running its last controls off the edge.
+    ui.horizontal_wrapped(|ui| {
         ui.label(egui::RichText::new("Tescellate").strong());
+        ui.separator();
+
+        // Undo / redo — disabled when there is nothing to do.
+        if ui
+            .add_enabled(can_undo, egui::Button::new("Undo"))
+            .on_hover_text("Undo (Ctrl+Z)")
+            .clicked()
+        {
+            action = Some(RibbonAction::Undo);
+        }
+        if ui
+            .add_enabled(can_redo, egui::Button::new("Redo"))
+            .on_hover_text("Redo (Ctrl+Y)")
+            .clicked()
+        {
+            action = Some(RibbonAction::Redo);
+        }
+        ui.separator();
+
+        // Clipboard.
+        if ui.button("Copy").on_hover_text("Copy (Ctrl+C)").clicked() {
+            action = Some(RibbonAction::Copy);
+        }
+        if ui.button("Cut").on_hover_text("Cut (Ctrl+X)").clicked() {
+            action = Some(RibbonAction::Cut);
+        }
+        if ui.button("Paste").on_hover_text("Paste (Ctrl+V)").clicked() {
+            action = Some(RibbonAction::Paste);
+        }
         ui.separator();
 
         // Bold / italic — `selectable_label` shows the button pressed-in
