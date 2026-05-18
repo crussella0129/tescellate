@@ -203,7 +203,7 @@ struct CellEdit {
     after: Option<String>,
 }
 
-/// One cell's format before and after a change.
+/// One square cell's format before and after a change.
 #[derive(Debug, Clone)]
 struct FormatEdit {
     cell: (u32, u32),
@@ -211,12 +211,21 @@ struct FormatEdit {
     after: CellFormat,
 }
 
+/// One hex cell's format before and after a change.
+#[derive(Debug, Clone)]
+struct HexFormatEdit {
+    cell: HexCoord,
+    before: CellFormat,
+    after: CellFormat,
+}
+
 /// An undoable action — a batch of cell-content edits, or a batch of
-/// formatting edits. One `Action` is one undo step.
+/// square or hex formatting edits. One `Action` is one undo step.
 #[derive(Debug, Clone)]
 enum Action {
     Cells(Vec<CellEdit>),
     Formats(Vec<FormatEdit>),
+    HexFormats(Vec<HexFormatEdit>),
 }
 
 /// The Tescellate front-end application.
@@ -847,13 +856,20 @@ impl TescellateApp {
         self.refresh_find();
     }
 
-    /// Apply a formatting change to every cell of the selection, recorded
-    /// as one undo step. A no-op on the hex sheet, which has no
-    /// formatting yet; cells the change leaves untouched are dropped.
+    /// Apply a formatting change to every cell of the active sheet's
+    /// selection, recorded as one undo step. Cells the change leaves
+    /// untouched are dropped.
     fn format_range(&mut self, edit: impl Fn(&mut CellFormat)) {
-        if self.active != ActiveSheet::Square {
-            return;
+        match self.active {
+            ActiveSheet::Square => self.format_square_range(edit),
+            ActiveSheet::Hex => self.format_hex_range(edit),
         }
+    }
+
+    /// The square-sheet format apply, with edit-coalescing — a rapid run
+    /// of same-cell format edits (a colour-picker drag) collapses into
+    /// one undo step.
+    fn format_square_range(&mut self, edit: impl Fn(&mut CellFormat)) {
         let cells: Vec<(u32, u32)> = self.selection.cells().collect();
         let mut edits = Vec::new();
         for cell in cells {
@@ -898,19 +914,47 @@ impl TescellateApp {
         self.last_format_cells = touched;
     }
 
+    /// The hex-sheet format apply, recorded as one undo step. (No
+    /// edit-coalescing yet — a hex colour drag floods the history.)
+    fn format_hex_range(&mut self, edit: impl Fn(&mut CellFormat)) {
+        let mut edits = Vec::new();
+        for cell in self.hex_selection.cells() {
+            let before = self.hex_formats.get(cell);
+            let mut after = before.clone();
+            edit(&mut after);
+            if before == after {
+                continue;
+            }
+            self.hex_formats.update(cell, |f| *f = after.clone());
+            edits.push(HexFormatEdit {
+                cell,
+                before,
+                after,
+            });
+        }
+        if !edits.is_empty() {
+            self.history.record(Action::HexFormats(edits));
+        }
+    }
+
     /// Toggle a boolean format flag across the selection — Excel's rule:
     /// if every cell already has the flag, clear it for all; otherwise
-    /// set it for all.
+    /// set it for all. Works on whichever sheet is active.
     fn toggle_range(
         &mut self,
         get: impl Fn(&CellFormat) -> bool,
         set: impl Fn(&mut CellFormat, bool),
     ) {
-        if self.active != ActiveSheet::Square {
-            return;
-        }
-        let cells: Vec<(u32, u32)> = self.selection.cells().collect();
-        let target = toggle_target(cells.iter().map(|&c| get(&self.formats.get(c))));
+        let target = match self.active {
+            ActiveSheet::Square => {
+                let cells: Vec<(u32, u32)> = self.selection.cells().collect();
+                toggle_target(cells.iter().map(|&c| get(&self.formats.get(c))))
+            }
+            ActiveSheet::Hex => {
+                let cells = self.hex_selection.cells();
+                toggle_target(cells.iter().map(|&c| get(&self.hex_formats.get(c))))
+            }
+        };
         self.format_range(|f| set(f, target));
     }
 
@@ -1213,6 +1257,12 @@ impl TescellateApp {
                     self.formats.update(edit.cell, |f| *f = edit.before.clone());
                 }
             }
+            Action::HexFormats(edits) => {
+                for edit in &edits {
+                    self.hex_formats
+                        .update(edit.cell, |f| *f = edit.before.clone());
+                }
+            }
         }
     }
 
@@ -1232,6 +1282,12 @@ impl TescellateApp {
             Action::Formats(edits) => {
                 for edit in &edits {
                     self.formats.update(edit.cell, |f| *f = edit.after.clone());
+                }
+            }
+            Action::HexFormats(edits) => {
+                for edit in &edits {
+                    self.hex_formats
+                        .update(edit.cell, |f| *f = edit.after.clone());
                 }
             }
         }
@@ -1583,14 +1639,22 @@ impl TescellateApp {
 
         let text = self.hex_cell_text(coord);
         if !text.is_empty() {
+            let fmt = self.hex_formats.get(coord);
             let centroid = self.hex_lattice.centroid(coord);
-            painter.text(
-                egui::pos2(origin.x + centroid.x, origin.y + centroid.y),
-                egui::Align2::CENTER_CENTER,
-                text,
-                egui::FontId::proportional(13.0),
-                text_color,
-            );
+            let pos = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+            let color = fmt.text_color.unwrap_or(text_color);
+            let font = egui::FontId::proportional(13.0);
+            painter.text(pos, egui::Align2::CENTER_CENTER, &text, font.clone(), color);
+            if fmt.bold {
+                // Faux-bold: a second pass nudged half a pixel across.
+                painter.text(
+                    egui::pos2(pos.x + 0.5, pos.y),
+                    egui::Align2::CENTER_CENTER,
+                    &text,
+                    font,
+                    color,
+                );
+            }
         }
     }
 
@@ -1711,12 +1775,12 @@ impl eframe::App for TescellateApp {
                 }
             }
             ActiveSheet::Hex => {
+                // The hex-only orientation toggle, then the shared format
+                // ribbon — formatting now applies to hex cells too.
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Tescellate").strong());
-                    ui.separator();
-                    // Pointy-top / flat-top orientation. Switching changes
-                    // geometry only — axial (q,r) coords are orientation-
-                    // independent, so cell data and selection carry over.
+                    // Switching orientation changes geometry only — axial
+                    // (q,r) coords are orientation-independent, so cell
+                    // data, formatting and selection carry over.
                     let pointy = matches!(self.hex_lattice.orientation, HexOrientation::Pointy);
                     if ui.selectable_label(pointy, "Pointy-top").clicked() {
                         self.hex_lattice = HexLattice::pointy(HEX_SIZE);
@@ -1724,9 +1788,13 @@ impl eframe::App for TescellateApp {
                     if ui.selectable_label(!pointy, "Flat-top").clicked() {
                         self.hex_lattice = HexLattice::flat(HEX_SIZE);
                     }
-                    ui.separator();
-                    ui.label("Hex demo — arrows move along the q/r axes; type or F2 to edit.");
                 });
+                let current = self.hex_formats.get(self.hex_selection.cursor);
+                let can_undo = self.history.can_undo();
+                let can_redo = self.history.can_redo();
+                if let Some(action) = ribbon::ribbon(ui, &current, can_undo, can_redo) {
+                    self.apply_ribbon(action, ctx);
+                }
             }
         });
 
