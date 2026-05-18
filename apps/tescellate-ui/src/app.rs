@@ -411,6 +411,26 @@ impl TescellateApp {
             .unwrap_or_default()
     }
 
+    /// The raw evaluated value of a hex-sheet cell, for conditional
+    /// formatting. `Empty` when the cell holds nothing.
+    fn hex_cell_value(&self, coord: HexCoord) -> CellValue {
+        self.engine
+            .get_cell(self.hex_sheet, &hex_address(coord))
+            .map(|snapshot| snapshot.value)
+            .unwrap_or_default()
+    }
+
+    /// The effective format for a hex cell — its stored format layered
+    /// with the first matching conditional-formatting rule.
+    fn hex_effective_format(&self, coord: HexCoord) -> CellFormat {
+        let base = self.hex_formats.get(coord);
+        if self.cond_rules.is_empty() {
+            base
+        } else {
+            conditional::effective_format(&base, &self.hex_cell_value(coord), &self.cond_rules)
+        }
+    }
+
     /// The raw source text of a square-sheet cell — empty when the cell
     /// holds nothing. Find and Replace both work on this.
     fn cell_source(&self, col: u32, row: u32) -> String {
@@ -420,8 +440,8 @@ impl TescellateApp {
             .unwrap_or_default()
     }
 
-    /// The display text for a hex-sheet cell — no number format, since
-    /// formatting is square-only for now.
+    /// The display text for a hex-sheet cell. (The number format is not
+    /// yet applied on the hex sheet — that is a follow-on.)
     fn hex_cell_text(&self, coord: HexCoord) -> String {
         self.engine
             .get_cell(self.hex_sheet, &hex_address(coord))
@@ -1639,7 +1659,7 @@ impl TescellateApp {
 
         let text = self.hex_cell_text(coord);
         if !text.is_empty() {
-            let fmt = self.hex_formats.get(coord);
+            let fmt = self.hex_effective_format(coord);
             let centroid = self.hex_lattice.centroid(coord);
             let pos = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
             let color = fmt.text_color.unwrap_or(text_color);
@@ -1697,7 +1717,7 @@ impl TescellateApp {
             let fill = if self.hex_selection.contains(coord) {
                 sel_bg
             } else {
-                self.hex_formats.get(coord).fill.unwrap_or(cell_bg)
+                self.hex_effective_format(coord).fill.unwrap_or(cell_bg)
             };
             self.paint_hex(&painter, origin, coord, fill, line, text_color);
         }
