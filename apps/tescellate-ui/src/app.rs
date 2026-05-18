@@ -105,13 +105,29 @@ enum Resize {
     Row(u32),
 }
 
-/// One cell's source before and after a change — the unit of undo/redo.
+/// One cell's source before and after a change.
 #[derive(Debug, Clone)]
 struct CellEdit {
     sheet: SheetId,
     addr: String,
     before: Option<String>,
     after: Option<String>,
+}
+
+/// One cell's format before and after a change.
+#[derive(Debug, Clone)]
+struct FormatEdit {
+    cell: (u32, u32),
+    before: CellFormat,
+    after: CellFormat,
+}
+
+/// An undoable action — a batch of cell-content edits, or a batch of
+/// formatting edits. One `Action` is one undo step.
+#[derive(Debug, Clone)]
+enum Action {
+    Cells(Vec<CellEdit>),
+    Formats(Vec<FormatEdit>),
 }
 
 /// The Tescellate front-end application.
@@ -141,8 +157,8 @@ pub struct TescellateApp {
     clipboard: Clipboard,
     /// The range armed for cut, if any — the next paste clears it.
     cut: Option<Selection>,
-    /// Undo/redo history — each entry is one action's cell edits.
-    history: History<Vec<CellEdit>>,
+    /// Undo/redo history — one entry per action.
+    history: History<Action>,
 }
 
 impl TescellateApp {
@@ -348,9 +364,9 @@ impl TescellateApp {
             }
             Command::Cancel => self.edit = None,
             Command::Clear => self.clear_active(),
-            Command::ToggleBold => self.format_selected(|f| f.bold = !f.bold),
-            Command::ToggleItalic => self.format_selected(|f| f.italic = !f.italic),
-            Command::SetAlign(align) => self.format_selected(|f| f.align = align),
+            Command::ToggleBold => self.toggle_range(|f| f.bold, |f, v| f.bold = v),
+            Command::ToggleItalic => self.toggle_range(|f| f.italic, |f, v| f.italic = v),
+            Command::SetAlign(align) => self.format_range(|f| f.align = align),
             Command::Copy => self.copy_selection(ctx),
             Command::Cut => self.cut_selection(ctx),
             Command::Paste => self.paste(),
@@ -361,26 +377,61 @@ impl TescellateApp {
         }
     }
 
-    /// Apply a formatting action from the ribbon to the active cell.
+    /// Apply a formatting action from the ribbon across the selection.
     fn apply_ribbon(&mut self, action: RibbonAction) {
-        let sel = self.selection.cursor;
         match action {
-            RibbonAction::ToggleBold => self.formats.update(sel, |f| f.bold = !f.bold),
-            RibbonAction::ToggleItalic => self.formats.update(sel, |f| f.italic = !f.italic),
-            RibbonAction::SetAlign(align) => self.formats.update(sel, |f| f.align = align),
-            RibbonAction::SetNumber(number) => self.formats.update(sel, |f| f.number = number),
-            RibbonAction::SetTextColor(color) => self.formats.update(sel, |f| f.text_color = color),
-            RibbonAction::SetFill(fill) => self.formats.update(sel, |f| f.fill = fill),
-            RibbonAction::ClearFormat => self.formats.update(sel, |f| *f = CellFormat::default()),
+            RibbonAction::ToggleBold => self.toggle_range(|f| f.bold, |f, v| f.bold = v),
+            RibbonAction::ToggleItalic => self.toggle_range(|f| f.italic, |f, v| f.italic = v),
+            RibbonAction::SetAlign(align) => self.format_range(|f| f.align = align),
+            RibbonAction::SetNumber(number) => self.format_range(|f| f.number = number),
+            RibbonAction::SetTextColor(color) => self.format_range(|f| f.text_color = color),
+            RibbonAction::SetFill(fill) => self.format_range(|f| f.fill = fill),
+            RibbonAction::ClearFormat => self.format_range(|f| *f = CellFormat::default()),
         }
     }
 
-    /// Mutate the active square cell's format. A no-op on the hex sheet,
-    /// which carries no formatting yet.
-    fn format_selected(&mut self, edit: impl FnOnce(&mut CellFormat)) {
-        if self.active == ActiveSheet::Square {
-            self.formats.update(self.selection.cursor, edit);
+    /// Apply a formatting change to every cell of the selection, recorded
+    /// as one undo step. A no-op on the hex sheet, which has no
+    /// formatting yet; cells the change leaves untouched are dropped.
+    fn format_range(&mut self, edit: impl Fn(&mut CellFormat)) {
+        if self.active != ActiveSheet::Square {
+            return;
         }
+        let cells: Vec<(u32, u32)> = self.selection.cells().collect();
+        let mut edits = Vec::new();
+        for cell in cells {
+            let before = self.formats.get(cell);
+            let mut after = before.clone();
+            edit(&mut after);
+            if before == after {
+                continue;
+            }
+            self.formats.update(cell, |f| *f = after.clone());
+            edits.push(FormatEdit {
+                cell,
+                before,
+                after,
+            });
+        }
+        if !edits.is_empty() {
+            self.history.record(Action::Formats(edits));
+        }
+    }
+
+    /// Toggle a boolean format flag across the selection — Excel's rule:
+    /// if every cell already has the flag, clear it for all; otherwise
+    /// set it for all.
+    fn toggle_range(
+        &mut self,
+        get: impl Fn(&CellFormat) -> bool,
+        set: impl Fn(&mut CellFormat, bool),
+    ) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let cells: Vec<(u32, u32)> = self.selection.cells().collect();
+        let target = toggle_target(cells.iter().map(|&c| get(&self.formats.get(c))));
+        self.format_range(|f| set(f, target));
     }
 
     /// Move the selection on whichever sheet is active, collapsing any
@@ -451,7 +502,7 @@ impl TescellateApp {
             });
         }
         if !edits.is_empty() {
-            self.history.record(edits);
+            self.history.record(Action::Cells(edits));
         }
     }
 
@@ -563,28 +614,46 @@ impl TescellateApp {
         };
     }
 
-    /// Revert the most recent action — restores each changed cell's prior
-    /// source. The engine recomputes any dependents.
+    /// Revert the most recent action — cell content or formatting. The
+    /// engine recomputes any dependents.
     fn undo(&mut self) {
-        let Some(edits) = self.history.undo() else {
+        let Some(action) = self.history.undo() else {
             return;
         };
-        for edit in &edits {
-            let _ = self
-                .engine
-                .set_cell(edit.sheet, &edit.addr, edit.before.as_deref());
+        match action {
+            Action::Cells(edits) => {
+                for edit in &edits {
+                    let _ = self
+                        .engine
+                        .set_cell(edit.sheet, &edit.addr, edit.before.as_deref());
+                }
+            }
+            Action::Formats(edits) => {
+                for edit in &edits {
+                    self.formats.update(edit.cell, |f| *f = edit.before.clone());
+                }
+            }
         }
     }
 
     /// Re-apply the most recently undone action.
     fn redo(&mut self) {
-        let Some(edits) = self.history.redo() else {
+        let Some(action) = self.history.redo() else {
             return;
         };
-        for edit in &edits {
-            let _ = self
-                .engine
-                .set_cell(edit.sheet, &edit.addr, edit.after.as_deref());
+        match action {
+            Action::Cells(edits) => {
+                for edit in &edits {
+                    let _ = self
+                        .engine
+                        .set_cell(edit.sheet, &edit.addr, edit.after.as_deref());
+                }
+            }
+            Action::Formats(edits) => {
+                for edit in &edits {
+                    self.formats.update(edit.cell, |f| *f = edit.after.clone());
+                }
+            }
         }
     }
 
@@ -1090,6 +1159,12 @@ fn dedup_targets(targets: Vec<(String, Option<String>)>) -> Vec<(String, Option<
     out
 }
 
+/// The new state for a range toggle: off when every cell already has the
+/// flag, on otherwise — Excel's bold/italic-over-a-range rule.
+fn toggle_target(mut currently_on: impl Iterator<Item = bool>) -> bool {
+    !currently_on.all(|on| on)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1191,5 +1266,14 @@ mod tests {
             ("B2".to_string(), None),
         ];
         assert_eq!(dedup_targets(targets).len(), 2);
+    }
+
+    #[test]
+    fn toggle_target_turns_off_only_when_every_cell_is_on() {
+        // Every cell already has the flag — the toggle clears it.
+        assert!(!toggle_target([true, true, true].into_iter()));
+        // A mix, or all-off — the toggle sets it for the whole range.
+        assert!(toggle_target([true, false, true].into_iter()));
+        assert!(toggle_target([false, false].into_iter()));
     }
 }
