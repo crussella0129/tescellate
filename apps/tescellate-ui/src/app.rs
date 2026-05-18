@@ -30,6 +30,11 @@ const HEX_SIZE: f32 = 36.0;
 /// How many rings of hexes the hex view shows around the origin.
 const HEX_VIEW_RADIUS: i32 = 3;
 
+/// How close in time (seconds) two format edits must be to coalesce into
+/// one undo step — long enough to catch a colour-picker drag, short
+/// enough that two deliberate edits stay separate.
+const COALESCE_WINDOW: f64 = 0.6;
+
 /// Ctrl+Shift, for the alignment shortcuts.
 const CTRL_SHIFT: egui::Modifiers = egui::Modifiers {
     alt: false,
@@ -159,6 +164,15 @@ pub struct TescellateApp {
     clipboard: Clipboard,
     /// Undo/redo history — one entry per action.
     history: History<Action>,
+    /// `ctx.input().time` for the current frame — the clock used to
+    /// coalesce rapid format edits.
+    frame_time: f64,
+    /// When the last format action was recorded, and the cells it
+    /// touched. A fresh format edit over the same cells within
+    /// `COALESCE_WINDOW` merges into it — so a colour-picker drag is one
+    /// undo step, not one per frame.
+    last_format_time: f64,
+    last_format_cells: Vec<(u32, u32)>,
 }
 
 impl TescellateApp {
@@ -213,6 +227,9 @@ impl TescellateApp {
             formats: FormatMap::new(),
             clipboard: Clipboard::default(),
             history: History::new(),
+            frame_time: 0.0,
+            last_format_time: 0.0,
+            last_format_cells: Vec::new(),
         }
     }
 
@@ -445,9 +462,32 @@ impl TescellateApp {
                 after,
             });
         }
-        if !edits.is_empty() {
+        if edits.is_empty() {
+            return;
+        }
+        let touched: Vec<(u32, u32)> = edits.iter().map(|e| e.cell).collect();
+        // Coalesce with the previous format action when it touched the
+        // same cells within COALESCE_WINDOW — a colour-picker drag fires
+        // a change every frame, and the whole drag should undo at once.
+        let recent = self.frame_time - self.last_format_time < COALESCE_WINDOW;
+        if recent && self.last_format_cells == touched {
+            match self.history.pop_undo() {
+                Some(Action::Formats(prev)) => {
+                    let merged = merge_format_edits(prev, edits);
+                    self.history.record(Action::Formats(merged));
+                }
+                Some(other) => {
+                    // The top wasn't a format action — restore it.
+                    self.history.record(other);
+                    self.history.record(Action::Formats(edits));
+                }
+                None => self.history.record(Action::Formats(edits)),
+            }
+        } else {
             self.history.record(Action::Formats(edits));
         }
+        self.last_format_time = self.frame_time;
+        self.last_format_cells = touched;
     }
 
     /// Toggle a boolean format flag across the selection — Excel's rule:
@@ -1178,6 +1218,7 @@ impl TescellateApp {
 
 impl eframe::App for TescellateApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.frame_time = ctx.input(|i| i.time);
         for command in self.collect_commands(ctx) {
             self.apply(command, ctx);
         }
@@ -1400,6 +1441,26 @@ fn toggle_target(mut currently_on: impl Iterator<Item = bool>) -> bool {
     !currently_on.all(|on| on)
 }
 
+/// Merge two consecutive format-edit batches over the same cells into
+/// one — the earliest `before` and the latest `after` per cell, so a
+/// coalesced gesture undoes to its true starting state.
+fn merge_format_edits(prev: Vec<FormatEdit>, new: Vec<FormatEdit>) -> Vec<FormatEdit> {
+    new.into_iter()
+        .map(|n| {
+            let before = prev
+                .iter()
+                .find(|p| p.cell == n.cell)
+                .map(|p| p.before.clone())
+                .unwrap_or_else(|| n.before.clone());
+            FormatEdit {
+                cell: n.cell,
+                before,
+                after: n.after,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1510,5 +1571,34 @@ mod tests {
         // A mix, or all-off — the toggle sets it for the whole range.
         assert!(toggle_target([true, false, true].into_iter()));
         assert!(toggle_target([false, false].into_iter()));
+    }
+
+    #[test]
+    fn merge_format_edits_keeps_oldest_before_and_newest_after() {
+        let cell = (1, 1);
+        let red = CellFormat {
+            text_color: Some(egui::Color32::RED),
+            ..CellFormat::default()
+        };
+        let blue = CellFormat {
+            text_color: Some(egui::Color32::BLUE),
+            ..CellFormat::default()
+        };
+        // Frame 1 changed default -> red; frame 2 changed red -> blue.
+        let prev = vec![FormatEdit {
+            cell,
+            before: CellFormat::default(),
+            after: red.clone(),
+        }];
+        let new = vec![FormatEdit {
+            cell,
+            before: red,
+            after: blue.clone(),
+        }];
+        let merged = merge_format_edits(prev, new);
+        assert_eq!(merged.len(), 1);
+        // The merged edit spans the whole gesture: default -> blue.
+        assert_eq!(merged[0].before, CellFormat::default());
+        assert_eq!(merged[0].after, blue);
     }
 }
