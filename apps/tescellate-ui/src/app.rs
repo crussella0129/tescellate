@@ -29,6 +29,8 @@ use crate::widget::{self, Widgets};
 
 const COLS: u32 = 16;
 const ROWS: u32 = 32;
+/// How many rows a Page Up / Page Down moves the cursor.
+const PAGE_ROWS: u32 = 16;
 
 /// Circumradius of a rendered hex cell, in points.
 const HEX_SIZE: f32 = 36.0;
@@ -68,6 +70,8 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::CTRL, egui::Key::Home),
     (egui::Modifiers::NONE, egui::Key::End),
     (egui::Modifiers::CTRL, egui::Key::End),
+    (egui::Modifiers::NONE, egui::Key::PageUp),
+    (egui::Modifiers::NONE, egui::Key::PageDown),
     (egui::Modifiers::NONE, egui::Key::F2),
     (egui::Modifiers::NONE, egui::Key::F1),
     (egui::Modifiers::NONE, egui::Key::Delete),
@@ -660,6 +664,8 @@ impl TescellateApp {
                 ActiveSheet::Square => self.selection.collapse_to((COLS - 1, ROWS - 1)),
                 ActiveSheet::Hex => self.hex_selection.collapse_to(HexCoord::new(0, 0)),
             },
+            Command::PageUp => self.page(true),
+            Command::PageDown => self.page(false),
             Command::BeginEdit { replace_with } => self.begin_edit(replace_with),
             Command::Commit(dir) => {
                 self.commit_edit();
@@ -1386,6 +1392,24 @@ impl TescellateApp {
                 self.selection.collapse_to(next);
             }
             ActiveSheet::Hex => self.move_hex_selection(dir),
+        }
+    }
+
+    /// Page Up / Page Down — move the cursor a page. The square sheet
+    /// shifts by `PAGE_ROWS` rows, clamped; the hex sheet walks to the
+    /// r-extreme of the view along the cursor's q-line.
+    fn page(&mut self, up: bool) {
+        match self.active {
+            ActiveSheet::Square => {
+                let (c, r) = self.selection.cursor;
+                let row = grid::page_step(r, up, PAGE_ROWS, ROWS - 1);
+                self.selection.collapse_to((c, row));
+            }
+            ActiveSheet::Hex => {
+                let dir = if up { Dir::Up } else { Dir::Down };
+                let next = hex_jump(self.hex_selection.cursor, dir, hex_in_view, |_| false);
+                self.hex_selection.collapse_to(next);
+            }
         }
     }
 
