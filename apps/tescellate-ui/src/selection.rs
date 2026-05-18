@@ -193,6 +193,42 @@ impl HexSelection {
         }
         out
     }
+
+    /// The `(target, source)` cell pairs for a fill — the hex analog of
+    /// [`Selection::fill_targets`]. A multi-cell range fills its leading
+    /// edge (the `min_r` row down each `q`-column for `Down`, the
+    /// `min_q` column right along each `r`-row for `Right`) across the
+    /// rest of the selection. A single cell pulls from its neighbour one
+    /// axial step back. Empty for a single-row range filled down.
+    pub fn fill_targets(&self, dir: FillDir) -> Vec<(HexCoord, HexCoord)> {
+        let ((min_q, min_r), (max_q, max_r)) = self.bounds();
+        let mut pairs = Vec::new();
+        match dir {
+            FillDir::Down => {
+                if !self.is_range() {
+                    pairs.push((HexCoord::new(min_q, min_r), HexCoord::new(min_q, min_r - 1)));
+                } else {
+                    for q in min_q..=max_q {
+                        for r in (min_r + 1)..=max_r {
+                            pairs.push((HexCoord::new(q, r), HexCoord::new(q, min_r)));
+                        }
+                    }
+                }
+            }
+            FillDir::Right => {
+                if !self.is_range() {
+                    pairs.push((HexCoord::new(min_q, min_r), HexCoord::new(min_q - 1, min_r)));
+                } else {
+                    for r in min_r..=max_r {
+                        for q in (min_q + 1)..=max_q {
+                            pairs.push((HexCoord::new(q, r), HexCoord::new(min_q, r)));
+                        }
+                    }
+                }
+            }
+        }
+        pairs
+    }
 }
 
 #[cfg(test)]
@@ -349,5 +385,52 @@ mod tests {
         assert!(cells.contains(&HexCoord::new(0, 0)));
         assert!(cells.contains(&HexCoord::new(1, 2)));
         assert!(cells.iter().all(|&c| s.contains(c)));
+    }
+
+    #[test]
+    fn hex_fill_down_propagates_the_top_row_per_column() {
+        // A 2-q × 3-r range: the two lower r-rows fill from min_r.
+        let s = HexSelection {
+            anchor: HexCoord::new(0, 0),
+            cursor: HexCoord::new(1, 2),
+        };
+        let pairs = s.fill_targets(FillDir::Down);
+        assert_eq!(pairs.len(), 4);
+        assert!(pairs.contains(&(HexCoord::new(0, 1), HexCoord::new(0, 0))));
+        assert!(pairs.contains(&(HexCoord::new(1, 2), HexCoord::new(1, 0))));
+    }
+
+    #[test]
+    fn hex_fill_right_propagates_the_left_column_per_row() {
+        let s = HexSelection {
+            anchor: HexCoord::new(0, 0),
+            cursor: HexCoord::new(2, 1),
+        };
+        let pairs = s.fill_targets(FillDir::Right);
+        assert_eq!(pairs.len(), 4);
+        assert!(pairs.contains(&(HexCoord::new(1, 0), HexCoord::new(0, 0))));
+        assert!(pairs.contains(&(HexCoord::new(2, 1), HexCoord::new(0, 1))));
+    }
+
+    #[test]
+    fn hex_fill_on_a_single_cell_pulls_from_the_neighbour() {
+        let s = HexSelection::single(HexCoord::new(3, -2));
+        assert_eq!(
+            s.fill_targets(FillDir::Down),
+            vec![(HexCoord::new(3, -2), HexCoord::new(3, -3))],
+        );
+        assert_eq!(
+            s.fill_targets(FillDir::Right),
+            vec![(HexCoord::new(3, -2), HexCoord::new(2, -2))],
+        );
+    }
+
+    #[test]
+    fn hex_fill_down_on_a_single_row_range_is_a_noop() {
+        let s = HexSelection {
+            anchor: HexCoord::new(0, 4),
+            cursor: HexCoord::new(3, 4),
+        };
+        assert!(s.fill_targets(FillDir::Down).is_empty());
     }
 }
