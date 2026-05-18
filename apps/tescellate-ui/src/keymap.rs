@@ -54,6 +54,10 @@ pub enum Command {
     ToggleItalic,
     /// Set the selected cell's horizontal alignment (Ctrl+Shift+L/E/R).
     SetAlign(HAlign),
+    /// Copy the selected range to the clipboard (Ctrl+C).
+    Copy,
+    /// Paste the clipboard at the active cell (Ctrl+V).
+    Paste,
 }
 
 /// Interpret a non-text key press.
@@ -85,6 +89,8 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::L if ctrl && shift => Command::SetAlign(HAlign::Left),
         Key::E if ctrl && shift => Command::SetAlign(HAlign::Center),
         Key::R if ctrl && shift => Command::SetAlign(HAlign::Right),
+        Key::C if ctrl => Command::Copy,
+        Key::V if ctrl => Command::Paste,
         _ => return None,
     })
 }
@@ -279,5 +285,14 @@ mod tests {
             nav(Key::ArrowRight, false, false),
             Some(Command::Move(Dir::Right)),
         );
+    }
+
+    #[test]
+    fn ctrl_c_and_ctrl_v_copy_and_paste() {
+        assert_eq!(nav(Key::C, false, true), Some(Command::Copy));
+        assert_eq!(nav(Key::V, false, true), Some(Command::Paste));
+        // Plain C/V are ordinary typed characters, not commands.
+        assert_eq!(nav(Key::C, false, false), None);
+        assert_eq!(nav(Key::V, false, false), None);
     }
 }
