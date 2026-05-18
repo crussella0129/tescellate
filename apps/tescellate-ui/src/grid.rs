@@ -323,11 +323,17 @@ pub fn fit_extent(measured: impl Iterator<Item = f32>, padding: f32, min: f32) -
     (widest + padding).max(min)
 }
 
-/// The AutoSum action for a selection whose inclusive corners are
-/// `bounds`: the cell that should hold the total, and the `=SUM(...)`
-/// formula to put there. The total lands directly below the selection's
-/// bottom-left corner; `None` when that row would fall past `rows`.
-pub fn autosum(bounds: ((u32, u32), (u32, u32)), rows: u32) -> Option<((u32, u32), String)> {
+/// The AutoSum-style action for a selection whose inclusive corners are
+/// `bounds`: the cell that should hold the result, and the
+/// `=FUNC(range)` formula to put there — `func` is an aggregate name
+/// such as `"SUM"` or `"AVERAGE"`. The result lands directly below the
+/// selection's bottom-left corner; `None` when that row would fall past
+/// `rows`.
+pub fn autosum(
+    bounds: ((u32, u32), (u32, u32)),
+    rows: u32,
+    func: &str,
+) -> Option<((u32, u32), String)> {
     let ((min_c, min_r), (max_c, max_r)) = bounds;
     let target_row = max_r + 1;
     if target_row >= rows {
@@ -342,7 +348,7 @@ pub fn autosum(bounds: ((u32, u32), (u32, u32)), rows: u32) -> Option<((u32, u32
             cell_address(max_c, max_r),
         )
     };
-    Some(((min_c, target_row), format!("=SUM({range})")))
+    Some(((min_c, target_row), format!("={func}({range})")))
 }
 
 #[cfg(test)]
@@ -627,21 +633,21 @@ mod tests {
     fn autosum_sums_a_column_into_the_cell_below() {
         // A1:A5 selected -> =SUM(A1:A5) lands in A6.
         assert_eq!(
-            autosum(((0, 0), (0, 4)), 32),
+            autosum(((0, 0), (0, 4)), 32, "SUM"),
             Some(((0, 5), "=SUM(A1:A5)".to_string())),
         );
     }
 
     #[test]
     fn autosum_handles_a_block_and_a_single_cell() {
-        // A 2D block sums the whole rectangle below its bottom-left.
+        // A 2D block aggregates the whole rectangle below its bottom-left.
         assert_eq!(
-            autosum(((1, 1), (3, 4)), 32),
+            autosum(((1, 1), (3, 4)), 32, "SUM"),
             Some(((1, 5), "=SUM(B2:D5)".to_string())),
         );
-        // A single cell sums just itself.
+        // A single cell aggregates just itself.
         assert_eq!(
-            autosum(((2, 2), (2, 2)), 32),
+            autosum(((2, 2), (2, 2)), 32, "SUM"),
             Some(((2, 3), "=SUM(C3)".to_string())),
         );
     }
@@ -649,6 +655,14 @@ mod tests {
     #[test]
     fn autosum_is_none_with_no_room_below() {
         // The selection's bottom row is the last row — nowhere to put it.
-        assert_eq!(autosum(((0, 30), (0, 31)), 32), None);
+        assert_eq!(autosum(((0, 30), (0, 31)), 32, "SUM"), None);
+    }
+
+    #[test]
+    fn autosum_uses_the_chosen_function() {
+        assert_eq!(
+            autosum(((0, 0), (0, 4)), 32, "AVERAGE"),
+            Some(((0, 5), "=AVERAGE(A1:A5)".to_string())),
+        );
     }
 }
