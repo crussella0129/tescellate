@@ -755,6 +755,40 @@ impl TescellateApp {
         }
     }
 
+    /// Fill series — fill each selected column of the square sheet with
+    /// an arithmetic progression extrapolated from the numbers already
+    /// at the top of that column. Columns with no numeric seed are left
+    /// alone. One undo step.
+    fn fill_series(&mut self) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let ((min_c, min_r), (max_c, max_r)) = self.selection.bounds();
+        let total = (max_r - min_r + 1) as usize;
+        let mut targets = Vec::new();
+        for c in min_c..=max_c {
+            let mut seed = Vec::new();
+            for r in min_r..=max_r {
+                match self.cell_value(c, r) {
+                    CellValue::Number(n) => seed.push(n),
+                    CellValue::Integer(i) => seed.push(i as f64),
+                    _ => break,
+                }
+            }
+            if seed.is_empty() {
+                continue;
+            }
+            for (i, v) in grid::series_fill(&seed, total).into_iter().enumerate() {
+                let r = min_r + i as u32;
+                targets.push((grid::cell_address(c, r), Some(v.to_string())));
+            }
+        }
+        if !targets.is_empty() {
+            self.commit_edit();
+            self.apply_edits(self.square_sheet, targets);
+        }
+    }
+
     /// Apply a border mode across the selection — one undo step. Both
     /// sheets resolve borders per cell: the square sheet via
     /// `border_sides`, the hex sheet via `apply_hex_border`.
@@ -1891,6 +1925,10 @@ impl TescellateApp {
             ui.separator();
             if ui.button("Toggle checkbox").clicked() {
                 self.toggle_widget_cells();
+                ui.close_menu();
+            }
+            if ui.button("Fill series").clicked() {
+                self.fill_series();
                 ui.close_menu();
             }
             if ui.button("Edit note…").clicked() {
