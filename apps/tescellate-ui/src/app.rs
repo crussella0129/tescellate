@@ -2023,6 +2023,13 @@ impl TescellateApp {
                 }
             }
         }
+        // A double-click on a cell begins editing it in place.
+        if response.double_clicked() {
+            if let Some(cell) = self.cell_under(&response, origin) {
+                self.selection.collapse_to(cell);
+                self.begin_edit(None);
+            }
+        }
         // Right-click selects the cell under the cursor — unless it is
         // already inside the selection, which a right-click keeps — then
         // opens a context menu of the common cell actions.
@@ -2332,6 +2339,19 @@ impl TescellateApp {
                         } else {
                             self.hex_selection.collapse_to(coord);
                         }
+                    }
+                }
+            }
+        }
+
+        // A double-click on a hex begins editing it in place.
+        if response.double_clicked() {
+            if let Some(p) = response.interact_pointer_pos() {
+                let local = Point2::new(p.x - origin.x, p.y - origin.y);
+                if let Some(coord) = self.hex_lattice.cell_at(local) {
+                    if hex_in_view(coord) {
+                        self.hex_selection.collapse_to(coord);
+                        self.begin_edit(None);
                     }
                 }
             }
