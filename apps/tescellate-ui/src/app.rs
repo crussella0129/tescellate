@@ -704,6 +704,7 @@ impl TescellateApp {
             RibbonAction::Paste => self.paste(),
             RibbonAction::OpenConditional => self.cond_window_open = true,
             RibbonAction::ToggleWidget => self.toggle_widget_cells(),
+            RibbonAction::AutoSum => self.autosum(),
             RibbonAction::SetBorders(mode) => self.apply_border(mode),
             RibbonAction::OpenHelp => self.help_open = true,
         }
@@ -721,6 +722,22 @@ impl TescellateApp {
         for cell in cells {
             self.widgets.set_toggle(cell, !all_on);
         }
+    }
+
+    /// AutoSum — write `=SUM(...)` of the square selection into the cell
+    /// directly below it, then move there. A no-op on the hex sheet,
+    /// whose range syntax differs, or when there is no row below.
+    fn autosum(&mut self) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let Some((target, formula)) = grid::autosum(self.selection.bounds(), ROWS) else {
+            return;
+        };
+        self.commit_edit();
+        let addr = grid::cell_address(target.0, target.1);
+        self.apply_edits(self.square_sheet, vec![(addr, Some(formula))]);
+        self.selection.collapse_to(target);
     }
 
     /// Apply a border mode across the selection — one undo step. Both

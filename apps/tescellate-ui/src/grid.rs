@@ -323,6 +323,28 @@ pub fn fit_extent(measured: impl Iterator<Item = f32>, padding: f32, min: f32) -
     (widest + padding).max(min)
 }
 
+/// The AutoSum action for a selection whose inclusive corners are
+/// `bounds`: the cell that should hold the total, and the `=SUM(...)`
+/// formula to put there. The total lands directly below the selection's
+/// bottom-left corner; `None` when that row would fall past `rows`.
+pub fn autosum(bounds: ((u32, u32), (u32, u32)), rows: u32) -> Option<((u32, u32), String)> {
+    let ((min_c, min_r), (max_c, max_r)) = bounds;
+    let target_row = max_r + 1;
+    if target_row >= rows {
+        return None;
+    }
+    let range = if (min_c, min_r) == (max_c, max_r) {
+        cell_address(min_c, min_r)
+    } else {
+        format!(
+            "{}:{}",
+            cell_address(min_c, min_r),
+            cell_address(max_c, max_r),
+        )
+    };
+    Some(((min_c, target_row), format!("=SUM({range})")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,5 +621,34 @@ mod tests {
         assert_eq!(fit_extent([4.0, 2.0].into_iter(), 10.0, 32.0), 32.0);
         // An empty column (nothing measured) fits to the minimum.
         assert_eq!(fit_extent(std::iter::empty::<f32>(), 10.0, 32.0), 32.0);
+    }
+
+    #[test]
+    fn autosum_sums_a_column_into_the_cell_below() {
+        // A1:A5 selected -> =SUM(A1:A5) lands in A6.
+        assert_eq!(
+            autosum(((0, 0), (0, 4)), 32),
+            Some(((0, 5), "=SUM(A1:A5)".to_string())),
+        );
+    }
+
+    #[test]
+    fn autosum_handles_a_block_and_a_single_cell() {
+        // A 2D block sums the whole rectangle below its bottom-left.
+        assert_eq!(
+            autosum(((1, 1), (3, 4)), 32),
+            Some(((1, 5), "=SUM(B2:D5)".to_string())),
+        );
+        // A single cell sums just itself.
+        assert_eq!(
+            autosum(((2, 2), (2, 2)), 32),
+            Some(((2, 3), "=SUM(C3)".to_string())),
+        );
+    }
+
+    #[test]
+    fn autosum_is_none_with_no_room_below() {
+        // The selection's bottom row is the last row — nowhere to put it.
+        assert_eq!(autosum(((0, 30), (0, 31)), 32), None);
     }
 }
