@@ -2,8 +2,8 @@
 //! `WorkbookEngine` and draws the spreadsheet with egui.
 //!
 //! The square sheet has keyboard navigation, in-cell editing, row/column
-//! sizing, cell formatting, a formatting ribbon, and (v8) multi-cell
-//! range selection. The hex sheet renders `tescellate-tess`'s
+//! sizing, cell formatting, a formatting ribbon, multi-cell range
+//! selection and (v9) copy/paste. The hex sheet renders `tescellate-tess`'s
 //! `HexLattice` as a real tessellation and is interactive too — both
 //! sheets are driven by the same pure `keymap` command layer.
 
@@ -13,6 +13,7 @@ use tescellate_formula::WorkbookEngine;
 use tescellate_tess::hex::{self, HexCoord, HexLattice};
 use tescellate_tess::{Lattice, LatticeKind, Point2};
 
+use crate::clipboard::Clipboard;
 use crate::format::{self, CellFormat, FormatMap, HAlign};
 use crate::grid::{self, GridMetrics};
 use crate::keymap::{self, Command, Dir, Mode};
@@ -58,6 +59,8 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::NONE, egui::Key::Backspace),
     (egui::Modifiers::CTRL, egui::Key::B),
     (egui::Modifiers::CTRL, egui::Key::I),
+    (egui::Modifiers::CTRL, egui::Key::C),
+    (egui::Modifiers::CTRL, egui::Key::V),
     (CTRL_SHIFT, egui::Key::L),
     (CTRL_SHIFT, egui::Key::E),
     (CTRL_SHIFT, egui::Key::R),
@@ -118,6 +121,8 @@ pub struct TescellateApp {
     resizing: Option<Resize>,
     /// Per-cell visual formatting of the square sheet.
     formats: FormatMap,
+    /// The last copied block of cell sources.
+    clipboard: Clipboard,
 }
 
 impl TescellateApp {
@@ -170,6 +175,7 @@ impl TescellateApp {
             metrics: GridMetrics::new(),
             resizing: None,
             formats: FormatMap::new(),
+            clipboard: Clipboard::default(),
         }
     }
 
@@ -287,7 +293,7 @@ impl TescellateApp {
         commands
     }
 
-    fn apply(&mut self, command: Command) {
+    fn apply(&mut self, command: Command, ctx: &egui::Context) {
         match command {
             Command::Move(dir) => self.move_active(dir),
             Command::Extend(dir) => self.extend_active(dir),
@@ -312,6 +318,8 @@ impl TescellateApp {
             Command::ToggleBold => self.format_selected(|f| f.bold = !f.bold),
             Command::ToggleItalic => self.format_selected(|f| f.italic = !f.italic),
             Command::SetAlign(align) => self.format_selected(|f| f.align = align),
+            Command::Copy => self.copy_selection(ctx),
+            Command::Paste => self.paste(),
         }
     }
 
@@ -430,6 +438,72 @@ impl TescellateApp {
                     .set_cell(self.hex_sheet, &hex_address(self.hex_selected), None);
             }
         }
+    }
+
+    /// Copy the selected range — square sheet only. Captures each cell's
+    /// source into the in-app clipboard, and pushes a tab-separated grid
+    /// of *displayed values* to the system clipboard for interop.
+    fn copy_selection(&mut self, ctx: &egui::Context) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let ((min_c, min_r), (max_c, max_r)) = self.selection.bounds();
+        let (width, height) = self.selection.dimensions();
+        let mut cells = Vec::with_capacity((width * height) as usize);
+        let mut tsv = String::new();
+        for r in min_r..=max_r {
+            for c in min_c..=max_c {
+                if c > min_c {
+                    tsv.push('\t');
+                }
+                tsv.push_str(&self.cell_text(c, r));
+                let source = self
+                    .engine
+                    .get_cell(self.square_sheet, &grid::cell_address(c, r))
+                    .and_then(|s| s.source);
+                cells.push(source);
+            }
+            tsv.push('\n');
+        }
+        self.clipboard = Clipboard::capture(width, height, cells);
+        ctx.copy_text(tsv);
+    }
+
+    /// Paste the clipboard block with its top-left at the active cell —
+    /// square sheet only. Sources are written verbatim (no relative-
+    /// reference rewriting yet). The pasted block becomes the selection.
+    fn paste(&mut self) {
+        if self.active != ActiveSheet::Square || self.clipboard.is_empty() {
+            return;
+        }
+        let (target_c, target_r) = self.selection.cursor;
+        let (width, height) = self.clipboard.dimensions();
+        // Own the sources first, so the engine's `&mut` borrow doesn't
+        // overlap the clipboard's `&` borrow.
+        let block: Vec<(u32, u32, Option<String>)> = self
+            .clipboard
+            .entries()
+            .map(|(c, r, src)| (c, r, src.map(str::to_string)))
+            .collect();
+        for (rel_c, rel_r, source) in block {
+            let c = target_c + rel_c;
+            let r = target_r + rel_r;
+            if c >= COLS || r >= ROWS {
+                continue;
+            }
+            let _ = self.engine.set_cell(
+                self.square_sheet,
+                &grid::cell_address(c, r),
+                source.as_deref(),
+            );
+        }
+        // Select the pasted block, with the active cell at its top-left.
+        let end_c = (target_c + width - 1).min(COLS - 1);
+        let end_r = (target_r + height - 1).min(ROWS - 1);
+        self.selection = Selection {
+            anchor: (end_c, end_r),
+            cursor: (target_c, target_r),
+        };
     }
 
     /// Resize the header border under an in-progress drag.
@@ -721,7 +795,7 @@ impl TescellateApp {
 impl eframe::App for TescellateApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         for command in self.collect_commands(ctx) {
-            self.apply(command);
+            self.apply(command, ctx);
         }
 
         egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| match self.active {
