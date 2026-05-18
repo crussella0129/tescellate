@@ -601,6 +601,7 @@ impl TescellateApp {
         match command {
             Command::Move(dir) => self.move_active(dir),
             Command::Extend(dir) => self.extend_active(dir),
+            Command::SelectAll => self.select_all(),
             Command::MoveToRowStart => match self.active {
                 ActiveSheet::Square => {
                     let row = self.selection.cursor.1;
@@ -634,6 +635,22 @@ impl TescellateApp {
                 self.find_just_opened = true;
             }
             Command::OpenHelp => self.help_open = true,
+        }
+    }
+
+    /// Select every cell of the active sheet — Ctrl+A, or a click on the
+    /// header corner. The hex sheet has no fixed bounds, so it selects
+    /// the parallelogram bounding the visible disc.
+    fn select_all(&mut self) {
+        match self.active {
+            ActiveSheet::Square => self.selection = Selection::all(COLS, ROWS),
+            ActiveSheet::Hex => {
+                let r = HEX_VIEW_RADIUS;
+                self.hex_selection = HexSelection {
+                    anchor: HexCoord::new(-r, -r),
+                    cursor: HexCoord::new(r, r),
+                };
+            }
         }
     }
 
@@ -1564,6 +1581,19 @@ impl TescellateApp {
                     self.selection.extend_to(cell);
                 } else {
                     self.selection.collapse_to(cell);
+                }
+            } else if let Some(p) = response.interact_pointer_pos() {
+                // A click on a header selects a whole column or row; the
+                // header corner selects the sheet.
+                if let Some(col) = self.metrics.col_header_at(origin, p, COLS) {
+                    self.commit_edit();
+                    self.selection = Selection::column(col, ROWS);
+                } else if let Some(row) = self.metrics.row_header_at(origin, p, ROWS) {
+                    self.commit_edit();
+                    self.selection = Selection::row(row, COLS);
+                } else if grid::in_header_corner(origin, p) {
+                    self.commit_edit();
+                    self.selection = Selection::all(COLS, ROWS);
                 }
             }
         }

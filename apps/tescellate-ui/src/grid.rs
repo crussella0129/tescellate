@@ -192,6 +192,43 @@ impl GridMetrics {
         }
         None
     }
+
+    /// If `p` lies in the column-header band — but not within a resize
+    /// grab zone, which [`GridMetrics::col_border_at`] claims first — the
+    /// column whose header it hits. `None` outside the band or past the
+    /// last column.
+    pub fn col_header_at(&self, origin: Pos2, p: Pos2, cols: u32) -> Option<u32> {
+        if self.col_border_at(origin, p, cols).is_some() {
+            return None;
+        }
+        let local = p - origin;
+        if local.x < HEADER_W || local.y < 0.0 || local.y >= HEADER_H {
+            return None;
+        }
+        self.axis_index(local.x, cols, |c| self.col_width(c), HEADER_W)
+    }
+
+    /// If `p` lies in the row-header band — but not within a resize grab
+    /// zone, which [`GridMetrics::row_border_at`] claims first — the row
+    /// whose header it hits. `None` outside the band or past the last row.
+    pub fn row_header_at(&self, origin: Pos2, p: Pos2, rows: u32) -> Option<u32> {
+        if self.row_border_at(origin, p, rows).is_some() {
+            return None;
+        }
+        let local = p - origin;
+        if local.y < HEADER_H || local.x < 0.0 || local.x >= HEADER_W {
+            return None;
+        }
+        self.axis_index(local.y, rows, |r| self.row_height(r), HEADER_H)
+    }
+}
+
+/// Whether `p` lies in the header corner — the box above the row-header
+/// band and left of the column-header band. Clicking it selects the
+/// whole sheet, as spreadsheets do.
+pub fn in_header_corner(origin: Pos2, p: Pos2) -> bool {
+    let local = p - origin;
+    local.x >= 0.0 && local.x < HEADER_W && local.y >= 0.0 && local.y < HEADER_H
 }
 
 #[cfg(test)]
@@ -310,5 +347,75 @@ mod tests {
             m.row_border_at(origin, pos2(HEADER_W + 50.0, border_y), 8),
             None,
         );
+    }
+
+    #[test]
+    fn col_header_hit_test() {
+        let m = GridMetrics::new();
+        let origin = pos2(0.0, 0.0);
+        // Mid-header of column 0 — inside the band, clear of any border.
+        let x0 = HEADER_W + DEFAULT_COL_W / 2.0;
+        assert_eq!(
+            m.col_header_at(origin, pos2(x0, HEADER_H / 2.0), 8),
+            Some(0)
+        );
+        // Column 2's header.
+        let x2 = HEADER_W + 2.5 * DEFAULT_COL_W;
+        assert_eq!(m.col_header_at(origin, pos2(x2, 4.0), 8), Some(2));
+        // Below the header band is not a header click.
+        assert_eq!(m.col_header_at(origin, pos2(x0, HEADER_H + 30.0), 8), None);
+        // The row-header band (x < HEADER_W) is not a column header.
+        assert_eq!(m.col_header_at(origin, pos2(10.0, 4.0), 8), None);
+        // A resize-border zone yields None — col_border_at claims it.
+        let border_x = HEADER_W + DEFAULT_COL_W;
+        assert_eq!(m.col_header_at(origin, pos2(border_x, 4.0), 8), None);
+        // Past the last column is None.
+        assert_eq!(
+            m.col_header_at(origin, pos2(HEADER_W + 20.0 * DEFAULT_COL_W, 4.0), 8),
+            None,
+        );
+    }
+
+    #[test]
+    fn row_header_hit_test() {
+        let m = GridMetrics::new();
+        let origin = pos2(0.0, 0.0);
+        let y0 = HEADER_H + DEFAULT_ROW_H / 2.0;
+        assert_eq!(
+            m.row_header_at(origin, pos2(HEADER_W / 2.0, y0), 8),
+            Some(0)
+        );
+        // Right of the row-header band is not a row header.
+        assert_eq!(m.row_header_at(origin, pos2(HEADER_W + 30.0, y0), 8), None);
+        // The column-header band (y < HEADER_H) is not a row header.
+        assert_eq!(m.row_header_at(origin, pos2(10.0, 4.0), 8), None);
+        // A resize-border zone yields None.
+        let border_y = HEADER_H + DEFAULT_ROW_H;
+        assert_eq!(
+            m.row_header_at(origin, pos2(HEADER_W / 2.0, border_y), 8),
+            None,
+        );
+    }
+
+    #[test]
+    fn header_corner_hit_test() {
+        let origin = pos2(0.0, 0.0);
+        // Inside the corner box.
+        assert!(in_header_corner(
+            origin,
+            pos2(HEADER_W / 2.0, HEADER_H / 2.0)
+        ));
+        // The column-header band is not the corner.
+        assert!(!in_header_corner(
+            origin,
+            pos2(HEADER_W + 10.0, HEADER_H / 2.0)
+        ));
+        // The row-header band is not the corner.
+        assert!(!in_header_corner(
+            origin,
+            pos2(HEADER_W / 2.0, HEADER_H + 10.0)
+        ));
+        // Above or left of the grid is not the corner.
+        assert!(!in_header_corner(origin, pos2(-5.0, -5.0)));
     }
 }

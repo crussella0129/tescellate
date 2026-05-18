@@ -36,6 +36,34 @@ impl Selection {
         }
     }
 
+    /// A selection spanning an entire column — every row `0..rows`. The
+    /// active cell is the column's top, `(col, 0)`, as spreadsheets
+    /// place it.
+    pub fn column(col: u32, rows: u32) -> Self {
+        Self {
+            anchor: (col, rows.saturating_sub(1)),
+            cursor: (col, 0),
+        }
+    }
+
+    /// A selection spanning an entire row — every column `0..cols`. The
+    /// active cell is the row's leftmost cell, `(0, row)`.
+    pub fn row(row: u32, cols: u32) -> Self {
+        Self {
+            anchor: (cols.saturating_sub(1), row),
+            cursor: (0, row),
+        }
+    }
+
+    /// A selection covering the whole `cols × rows` grid. The active
+    /// cell is the top-left, `(0, 0)`.
+    pub fn all(cols: u32, rows: u32) -> Self {
+        Self {
+            anchor: (cols.saturating_sub(1), rows.saturating_sub(1)),
+            cursor: (0, 0),
+        }
+    }
+
     /// Move the whole selection to one cell — a plain arrow or click.
     pub fn collapse_to(&mut self, cell: Cell) {
         self.anchor = cell;
@@ -242,6 +270,43 @@ mod tests {
         assert_eq!(s.dimensions(), (1, 1));
         assert!(s.contains((3, 4)));
         assert!(!s.contains((3, 5)));
+    }
+
+    #[test]
+    fn column_selection_spans_every_row() {
+        let s = Selection::column(3, 32);
+        assert_eq!(s.bounds(), ((3, 0), (3, 31)));
+        assert_eq!(s.dimensions(), (1, 32));
+        // The active cell is the column's top.
+        assert_eq!(s.cursor, (3, 0));
+        assert!(s.contains((3, 15)));
+        assert!(!s.contains((4, 15)));
+    }
+
+    #[test]
+    fn row_selection_spans_every_column() {
+        let s = Selection::row(7, 16);
+        assert_eq!(s.bounds(), ((0, 7), (15, 7)));
+        assert_eq!(s.dimensions(), (16, 1));
+        assert_eq!(s.cursor, (0, 7));
+        assert!(s.contains((9, 7)));
+        assert!(!s.contains((9, 8)));
+    }
+
+    #[test]
+    fn select_all_covers_the_whole_grid() {
+        let s = Selection::all(16, 32);
+        assert_eq!(s.bounds(), ((0, 0), (15, 31)));
+        assert_eq!(s.dimensions(), (16, 32));
+        assert_eq!(s.cursor, (0, 0));
+    }
+
+    #[test]
+    fn region_constructors_survive_a_zero_extent() {
+        // Degenerate counts must not underflow — they collapse to a cell.
+        assert_eq!(Selection::column(2, 0).bounds(), ((2, 0), (2, 0)));
+        assert_eq!(Selection::row(0, 0).bounds(), ((0, 0), (0, 0)));
+        assert_eq!(Selection::all(0, 0).bounds(), ((0, 0), (0, 0)));
     }
 
     #[test]
