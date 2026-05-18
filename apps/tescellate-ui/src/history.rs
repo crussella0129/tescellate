@@ -28,6 +28,13 @@ impl<E: Clone> History<E> {
         self.redo_stack.clear();
     }
 
+    /// Remove and return the most recent undo entry, leaving the redo
+    /// stack untouched — used to coalesce a fresh action into the
+    /// previous one (the caller re-`record`s the merged result).
+    pub fn pop_undo(&mut self) -> Option<E> {
+        self.undo_stack.pop()
+    }
+
     /// Take the most recent action to undo. It moves to the redo stack,
     /// so a later [`redo`](Self::redo) can replay it.
     pub fn undo(&mut self) -> Option<E> {
