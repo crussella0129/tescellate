@@ -44,6 +44,10 @@ pub enum Command {
     MoveToRowStart,
     /// Move to the top-left cell (Ctrl+Home).
     MoveToOrigin,
+    /// Move to the last column of the current row (End).
+    MoveToRowEnd,
+    /// Move to the bottom-right cell (Ctrl+End).
+    MoveToSheetEnd,
     /// Begin editing the selected cell. `replace_with` is `Some(c)` when a
     /// character was typed — the cell's content is replaced, starting with
     /// `c` — or `None` for an F2-style edit of the existing content.
@@ -93,6 +97,8 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Enter / Shift+Enter", "Move down / up"),
     ("Home", "Jump to the row start"),
     ("Ctrl+Home", "Jump to the top-left cell"),
+    ("End", "Jump to the row end"),
+    ("Ctrl+End", "Jump to the bottom-right cell"),
     ("F2", "Edit the selected cell"),
     ("Delete / Backspace", "Clear the selection"),
     ("Ctrl+B / Ctrl+I", "Bold / italic"),
@@ -124,6 +130,8 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::Enter => Command::Move(if shift { Dir::Up } else { Dir::Down }),
         Key::Home if ctrl => Command::MoveToOrigin,
         Key::Home => Command::MoveToRowStart,
+        Key::End if ctrl => Command::MoveToSheetEnd,
+        Key::End => Command::MoveToRowEnd,
         Key::F2 => Command::BeginEdit { replace_with: None },
         Key::Delete | Key::Backspace => Command::Clear,
         Key::A if ctrl => Command::SelectAll,
@@ -234,6 +242,12 @@ mod tests {
     fn home_jumps_to_row_start_or_origin() {
         assert_eq!(nav(Key::Home, false, false), Some(Command::MoveToRowStart));
         assert_eq!(nav(Key::Home, false, true), Some(Command::MoveToOrigin));
+    }
+
+    #[test]
+    fn end_jumps_to_row_end_or_sheet_end() {
+        assert_eq!(nav(Key::End, false, false), Some(Command::MoveToRowEnd));
+        assert_eq!(nav(Key::End, false, true), Some(Command::MoveToSheetEnd));
     }
 
     #[test]
