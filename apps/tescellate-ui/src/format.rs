@@ -32,6 +32,56 @@ pub enum NumberFormat {
     Currency,
 }
 
+/// Which sides of a cell carry a border line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Borders {
+    pub top: bool,
+    pub bottom: bool,
+    pub left: bool,
+    pub right: bool,
+}
+
+/// A border command from the ribbon, applied across the selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BorderMode {
+    /// Border all four sides of every selected cell.
+    All,
+    /// Border only the sides on the selection's outer edge.
+    Outer,
+    /// Clear every border.
+    None,
+}
+
+/// Which sides of `cell` get a border under `mode`, given the selection's
+/// `bounds` — its min and max `(col, row)` corner. `All` borders every
+/// side; `None` clears them; `Outer` borders only the sides lying on the
+/// selection's edge (so a one-cell selection gets all four).
+pub fn border_sides(
+    cell: (u32, u32),
+    bounds: ((u32, u32), (u32, u32)),
+    mode: BorderMode,
+) -> Borders {
+    match mode {
+        BorderMode::None => Borders::default(),
+        BorderMode::All => Borders {
+            top: true,
+            bottom: true,
+            left: true,
+            right: true,
+        },
+        BorderMode::Outer => {
+            let ((min_c, min_r), (max_c, max_r)) = bounds;
+            let (c, r) = cell;
+            Borders {
+                top: r == min_r,
+                bottom: r == max_r,
+                left: c == min_c,
+                right: c == max_c,
+            }
+        }
+    }
+}
+
 /// The full visual format of one cell. The `Default` is "no formatting".
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CellFormat {
@@ -41,6 +91,7 @@ pub struct CellFormat {
     pub text_color: Option<Color32>,
     pub fill: Option<Color32>,
     pub number: NumberFormat,
+    pub borders: Borders,
 }
 
 impl CellFormat {
@@ -172,5 +223,41 @@ mod tests {
         let f = map.get((1, 1));
         assert!(f.italic);
         assert_eq!(f.align, HAlign::Right);
+    }
+
+    #[test]
+    fn border_sides_all_and_none() {
+        let bounds = ((1, 1), (3, 3));
+        let all = border_sides((2, 2), bounds, BorderMode::All);
+        assert!(all.top && all.bottom && all.left && all.right);
+        assert_eq!(
+            border_sides((2, 2), bounds, BorderMode::None),
+            Borders::default(),
+        );
+    }
+
+    #[test]
+    fn outer_borders_trace_the_selection_edge() {
+        let bounds = ((1, 1), (3, 3));
+        // Top-left corner — top and left only.
+        let tl = border_sides((1, 1), bounds, BorderMode::Outer);
+        assert!(tl.top && tl.left && !tl.bottom && !tl.right);
+        // Bottom-right corner — bottom and right only.
+        let br = border_sides((3, 3), bounds, BorderMode::Outer);
+        assert!(br.bottom && br.right && !br.top && !br.left);
+        // A top-edge, non-corner cell — top only.
+        let top = border_sides((2, 1), bounds, BorderMode::Outer);
+        assert!(top.top && !top.bottom && !top.left && !top.right);
+        // An interior cell — no borders.
+        assert_eq!(
+            border_sides((2, 2), bounds, BorderMode::Outer),
+            Borders::default(),
+        );
+    }
+
+    #[test]
+    fn outer_borders_on_a_single_cell_are_all_four() {
+        let only = border_sides((5, 5), ((5, 5), (5, 5)), BorderMode::Outer);
+        assert!(only.top && only.bottom && only.left && only.right);
     }
 }
