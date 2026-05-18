@@ -8,6 +8,13 @@
 /// A zero-indexed `(column, row)` cell.
 pub type Cell = (u32, u32);
 
+/// Which way a fill propagates across the selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillDir {
+    Down,
+    Right,
+}
+
 /// A rectangular cell selection — an `anchor` and a `cursor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection {
@@ -68,6 +75,46 @@ impl Selection {
     pub fn cells(&self) -> impl Iterator<Item = Cell> {
         let ((min_c, min_r), (max_c, max_r)) = self.bounds();
         (min_r..=max_r).flat_map(move |r| (min_c..=max_c).map(move |c| (c, r)))
+    }
+
+    /// The `(target, source)` cell pairs for a fill. A multi-cell range
+    /// fills its leading edge — the top row for `Down`, the left column
+    /// for `Right` — across the rest of the selection. A single cell
+    /// pulls from its neighbour one step back. The list is empty when
+    /// there is nothing to fill (a single-row range filled down, or a
+    /// single cell already at the grid edge).
+    pub fn fill_targets(&self, dir: FillDir) -> Vec<(Cell, Cell)> {
+        let ((min_c, min_r), (max_c, max_r)) = self.bounds();
+        let mut pairs = Vec::new();
+        match dir {
+            FillDir::Down => {
+                if !self.is_range() {
+                    if min_r > 0 {
+                        pairs.push(((min_c, min_r), (min_c, min_r - 1)));
+                    }
+                } else {
+                    for c in min_c..=max_c {
+                        for r in (min_r + 1)..=max_r {
+                            pairs.push(((c, r), (c, min_r)));
+                        }
+                    }
+                }
+            }
+            FillDir::Right => {
+                if !self.is_range() {
+                    if min_c > 0 {
+                        pairs.push(((min_c, min_r), (min_c - 1, min_r)));
+                    }
+                } else {
+                    for r in min_r..=max_r {
+                        for c in (min_c + 1)..=max_c {
+                            pairs.push(((c, r), (min_c, r)));
+                        }
+                    }
+                }
+            }
+        }
+        pairs
     }
 }
 
@@ -131,5 +178,62 @@ mod tests {
         let s = Selection::single((7, 2));
         let cells: Vec<Cell> = s.cells().collect();
         assert_eq!(cells, vec![(7, 2)]);
+    }
+
+    #[test]
+    fn fill_down_propagates_the_top_row_per_column() {
+        // A 2-column × 3-row range: rows 1 and 2 fill from row 0.
+        let s = Selection {
+            anchor: (0, 0),
+            cursor: (1, 2),
+        };
+        let pairs = s.fill_targets(FillDir::Down);
+        assert_eq!(pairs.len(), 4);
+        assert!(pairs.contains(&((0, 1), (0, 0))));
+        assert!(pairs.contains(&((0, 2), (0, 0))));
+        assert!(pairs.contains(&((1, 1), (1, 0))));
+        assert!(pairs.contains(&((1, 2), (1, 0))));
+    }
+
+    #[test]
+    fn fill_right_propagates_the_left_column_per_row() {
+        let s = Selection {
+            anchor: (0, 0),
+            cursor: (2, 1),
+        };
+        let pairs = s.fill_targets(FillDir::Right);
+        assert_eq!(pairs.len(), 4);
+        assert!(pairs.contains(&((1, 0), (0, 0))));
+        assert!(pairs.contains(&((2, 0), (0, 0))));
+        assert!(pairs.contains(&((1, 1), (0, 1))));
+        assert!(pairs.contains(&((2, 1), (0, 1))));
+    }
+
+    #[test]
+    fn fill_on_a_single_cell_pulls_from_the_neighbour() {
+        assert_eq!(
+            Selection::single((3, 5)).fill_targets(FillDir::Down),
+            vec![((3, 5), (3, 4))],
+        );
+        assert_eq!(
+            Selection::single((4, 2)).fill_targets(FillDir::Right),
+            vec![((4, 2), (3, 2))],
+        );
+        // A cell at the grid edge has no neighbour to pull from.
+        assert!(Selection::single((3, 0))
+            .fill_targets(FillDir::Down)
+            .is_empty());
+        assert!(Selection::single((0, 2))
+            .fill_targets(FillDir::Right)
+            .is_empty());
+    }
+
+    #[test]
+    fn fill_down_on_a_single_row_range_is_a_noop() {
+        let s = Selection {
+            anchor: (0, 4),
+            cursor: (3, 4),
+        };
+        assert!(s.fill_targets(FillDir::Down).is_empty());
     }
 }

@@ -62,6 +62,10 @@ pub enum Command {
     Undo,
     /// Redo the most recently undone action (Ctrl+Y / Ctrl+Shift+Z).
     Redo,
+    /// Fill the selection's top row down into it (Ctrl+D).
+    FillDown,
+    /// Fill the selection's left column rightward into it (Ctrl+R).
+    FillRight,
 }
 
 /// Interpret a non-text key press.
@@ -98,6 +102,9 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::Z if ctrl && shift => Command::Redo,
         Key::Z if ctrl => Command::Undo,
         Key::Y if ctrl => Command::Redo,
+        Key::D if ctrl => Command::FillDown,
+        // Ctrl+Shift+R is alignment (matched above); plain Ctrl+R fills.
+        Key::R if ctrl => Command::FillRight,
         _ => return None,
     })
 }
@@ -311,5 +318,18 @@ mod tests {
         assert_eq!(nav(Key::Z, true, true), Some(Command::Redo));
         // Plain Z/Y are typed characters, not commands.
         assert_eq!(nav(Key::Z, false, false), None);
+    }
+
+    #[test]
+    fn ctrl_d_and_ctrl_r_fill() {
+        assert_eq!(nav(Key::D, false, true), Some(Command::FillDown));
+        assert_eq!(nav(Key::R, false, true), Some(Command::FillRight));
+        // Ctrl+Shift+R stays alignment, not a fill.
+        assert_eq!(
+            nav(Key::R, true, true),
+            Some(Command::SetAlign(HAlign::Right)),
+        );
+        // Plain D/R are typed characters, not commands.
+        assert_eq!(nav(Key::D, false, false), None);
     }
 }
