@@ -19,7 +19,7 @@ use crate::grid::{self, GridMetrics};
 use crate::history::History;
 use crate::keymap::{self, Command, Dir, Mode};
 use crate::ribbon::{self, RibbonAction};
-use crate::selection::Selection;
+use crate::selection::{FillDir, Selection};
 
 const COLS: u32 = 16;
 const ROWS: u32 = 32;
@@ -65,6 +65,8 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::CTRL, egui::Key::Z),
     (CTRL_SHIFT, egui::Key::Z),
     (egui::Modifiers::CTRL, egui::Key::Y),
+    (egui::Modifiers::CTRL, egui::Key::D),
+    (egui::Modifiers::CTRL, egui::Key::R),
     (CTRL_SHIFT, egui::Key::L),
     (CTRL_SHIFT, egui::Key::E),
     (CTRL_SHIFT, egui::Key::R),
@@ -349,6 +351,8 @@ impl TescellateApp {
             Command::Paste => self.paste(),
             Command::Undo => self.undo(),
             Command::Redo => self.redo(),
+            Command::FillDown => self.fill(FillDir::Down),
+            Command::FillRight => self.fill(FillDir::Right),
         }
     }
 
@@ -558,6 +562,24 @@ impl TescellateApp {
                 .engine
                 .set_cell(edit.sheet, &edit.addr, edit.after.as_deref());
         }
+    }
+
+    /// Fill the selection's leading edge across the rest of it — Ctrl+D
+    /// (down) / Ctrl+R (right), square sheet only. Sources copy verbatim
+    /// and the whole fill is a single undo step.
+    fn fill(&mut self, dir: FillDir) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let mut targets = Vec::new();
+        for (target, from) in self.selection.fill_targets(dir) {
+            let source = self
+                .engine
+                .get_cell(self.square_sheet, &grid::cell_address(from.0, from.1))
+                .and_then(|s| s.source);
+            targets.push((grid::cell_address(target.0, target.1), source));
+        }
+        self.apply_edits(self.square_sheet, targets);
     }
 
     /// Resize the header border under an in-progress drag.
