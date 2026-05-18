@@ -16,7 +16,7 @@ use tescellate_tess::{Lattice, LatticeKind, Point2};
 use crate::clipboard::{Clipboard, CopiedCell};
 use crate::conditional::{self, Condition, Rule};
 use crate::find::{self, FindState};
-use crate::format::{self, BorderMode, Borders, CellFormat, FormatMap, HAlign};
+use crate::format::{self, BorderMode, Borders, CellFormat, FormatMap, HAlign, HexBorders};
 use crate::grid::{self, GridMetrics};
 use crate::history::History;
 use crate::keymap::{self, Command, Dir, Mode};
@@ -667,12 +667,24 @@ impl TescellateApp {
         }
     }
 
-    /// Apply a border mode across the selection — one undo step. Square
-    /// sheet only.
+    /// Apply a border mode across the selection — one undo step. On the
+    /// square sheet `border_sides` resolves per-cell sides; on the hex
+    /// sheet every selected cell gets all six edges, or none.
     fn apply_border(&mut self, mode: BorderMode) {
-        if self.active != ActiveSheet::Square {
-            return;
+        match self.active {
+            ActiveSheet::Square => self.apply_square_border(mode),
+            ActiveSheet::Hex => {
+                let hb = match mode {
+                    BorderMode::None => HexBorders::default(),
+                    BorderMode::All | BorderMode::Outer => HexBorders::all(),
+                };
+                self.format_hex_range(|f| f.hex_borders = hb);
+            }
         }
+    }
+
+    /// The square-sheet border apply — `border_sides` per cell.
+    fn apply_square_border(&mut self, mode: BorderMode) {
         let bounds = self.selection.bounds();
         let cells: Vec<(u32, u32)> = self.selection.cells().collect();
         let mut edits = Vec::new();
@@ -1726,11 +1738,20 @@ impl TescellateApp {
             .iter()
             .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
             .collect();
-        painter.add(egui::Shape::convex_polygon(vertices, fill, stroke));
+        let fmt = self.hex_effective_format(coord);
+        painter.add(egui::Shape::convex_polygon(vertices.clone(), fill, stroke));
+        // Per-edge borders, stroked heavier over the polygon outline.
+        if fmt.hex_borders.edges.iter().any(|&on| on) {
+            let border = egui::Stroke::new(2.0, text_color);
+            for (i, &on) in fmt.hex_borders.edges.iter().enumerate() {
+                if on {
+                    painter.line_segment([vertices[i], vertices[(i + 1) % 6]], border);
+                }
+            }
+        }
 
         let text = self.hex_cell_text(coord);
         if !text.is_empty() {
-            let fmt = self.hex_effective_format(coord);
             let c = self.hex_lattice.centroid(coord);
             let centroid = egui::pos2(origin.x + c.x, origin.y + c.y);
             let (anchor, pos) = hex_text_layout(fmt.align, centroid, HEX_SIZE * 0.6);
