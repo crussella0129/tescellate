@@ -718,6 +718,12 @@ impl TescellateApp {
                         response.request_focus();
                         self.find_step(true);
                     }
+                    if ui
+                        .checkbox(&mut self.find.case_sensitive, "Match case")
+                        .changed()
+                    {
+                        self.refresh_find();
+                    }
                 });
                 ui.horizontal(|ui| {
                     ui.label("Replace");
@@ -796,7 +802,12 @@ impl TescellateApp {
         }
         if let Some((c, r)) = self.find.current_match() {
             let source = self.cell_source(c, r);
-            let new = find::replace_all(&source, &self.find.query, &self.find.replace);
+            let new = find::replace_all(
+                &source,
+                &self.find.query,
+                &self.find.replace,
+                self.find.case_sensitive,
+            );
             if new != source {
                 let addr = grid::cell_address(c, r);
                 self.apply_edits(self.square_sheet, vec![(addr, commit_source(&new))]);
@@ -813,10 +824,11 @@ impl TescellateApp {
         }
         let query = self.find.query.clone();
         let replacement = self.find.replace.clone();
+        let case_sensitive = self.find.case_sensitive;
         let mut targets = Vec::new();
         for &(c, r) in self.find.matches() {
             let source = self.cell_source(c, r);
-            let new = find::replace_all(&source, &query, &replacement);
+            let new = find::replace_all(&source, &query, &replacement, case_sensitive);
             if new != source {
                 targets.push((grid::cell_address(c, r), commit_source(&new)));
             }

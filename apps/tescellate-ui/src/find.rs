@@ -1,23 +1,35 @@
-//! Find — case-insensitive substring search over the square sheet.
+//! Find — substring search (optionally case-sensitive) over the square
+//! sheet.
 //!
 //! [`FindState`] holds the query, the cells that currently match it, and
 //! which match is "current"; `app.rs` populates the matches by feeding
 //! it each cell's source text. The match predicate, the replacement, and
 //! the wrap-around stepping are pure, so `cargo test` covers them.
 
-/// Whether `text` contains `query`, case-insensitively. An empty query
-/// matches nothing — Find with a blank box highlights no cells.
-pub fn cell_matches(query: &str, text: &str) -> bool {
-    !query.is_empty() && text.to_lowercase().contains(&query.to_lowercase())
+/// Whether `text` contains `query` — case-insensitively unless
+/// `case_sensitive`. An empty query matches nothing.
+pub fn cell_matches(query: &str, text: &str, case_sensitive: bool) -> bool {
+    if query.is_empty() {
+        return false;
+    }
+    if case_sensitive {
+        text.contains(query)
+    } else {
+        text.to_lowercase().contains(&query.to_lowercase())
+    }
 }
 
-/// Replace every case-insensitive occurrence of `query` in `source` with
-/// `replacement`. Returns the rewritten string; equal to `source` when
-/// `query` is empty or absent. Scans char-by-char, so it is correct for
-/// any Unicode rather than byte-slicing a lowercased copy.
-pub fn replace_all(source: &str, query: &str, replacement: &str) -> String {
+/// Replace every occurrence of `query` in `source` with `replacement` —
+/// case-insensitively unless `case_sensitive`. Returns the rewritten
+/// string; equal to `source` when `query` is empty or absent. The
+/// case-insensitive path scans char-by-char, so it is correct for any
+/// Unicode rather than byte-slicing a lowercased copy.
+pub fn replace_all(source: &str, query: &str, replacement: &str, case_sensitive: bool) -> String {
     if query.is_empty() {
         return source.to_string();
+    }
+    if case_sensitive {
+        return source.replace(query, replacement);
     }
     let lower_query = query.to_lowercase();
     let query_len = query.chars().count();
@@ -44,6 +56,8 @@ pub struct FindState {
     pub query: String,
     /// The replacement text for Find & Replace.
     pub replace: String,
+    /// Whether matching is case-sensitive.
+    pub case_sensitive: bool,
     matches: Vec<(u32, u32)>,
     current: usize,
 }
@@ -54,8 +68,9 @@ impl FindState {
     /// contents change.
     pub fn refresh(&mut self, cells: impl Iterator<Item = ((u32, u32), String)>) {
         let query = self.query.clone();
+        let case_sensitive = self.case_sensitive;
         self.matches = cells
-            .filter(|(_, text)| cell_matches(&query, text))
+            .filter(|(_, text)| cell_matches(&query, text, case_sensitive))
             .map(|(cell, _)| cell)
             .collect();
         self.current = 0;
@@ -120,13 +135,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cell_matches_is_a_case_insensitive_substring() {
-        assert!(cell_matches("ab", "xxABzz"));
-        assert!(cell_matches("HELLO", "hello world"));
-        assert!(cell_matches("7", "1700"));
-        assert!(!cell_matches("qq", "hello"));
+    fn cell_matches_substring_case_insensitive_by_default() {
+        assert!(cell_matches("ab", "xxABzz", false));
+        assert!(cell_matches("HELLO", "hello world", false));
+        assert!(cell_matches("7", "1700", false));
+        assert!(!cell_matches("qq", "hello", false));
         // A blank query matches nothing.
-        assert!(!cell_matches("", "anything"));
+        assert!(!cell_matches("", "anything", false));
+    }
+
+    #[test]
+    fn cell_matches_respects_case_sensitivity() {
+        // Case-insensitive: "AB" finds "ab".
+        assert!(cell_matches("AB", "xabz", false));
+        // Case-sensitive: it does not; the exact case still does.
+        assert!(!cell_matches("AB", "xabz", true));
+        assert!(cell_matches("ab", "xabz", true));
     }
 
     fn sheet() -> Vec<((u32, u32), String)> {
@@ -187,18 +211,26 @@ mod tests {
 
     #[test]
     fn replace_all_is_case_insensitive_and_unicode_safe() {
-        assert_eq!(replace_all("hello world", "o", "0"), "hell0 w0rld");
+        assert_eq!(replace_all("hello world", "o", "0", false), "hell0 w0rld");
         // Case-insensitive find; the replacement is written verbatim.
-        assert_eq!(replace_all("Banana", "A", "_"), "B_n_n_");
+        assert_eq!(replace_all("Banana", "A", "_", false), "B_n_n_");
         // No occurrence — unchanged.
-        assert_eq!(replace_all("hello", "zzz", "x"), "hello");
+        assert_eq!(replace_all("hello", "zzz", "x", false), "hello");
         // An empty query is a no-op.
-        assert_eq!(replace_all("hello", "", "x"), "hello");
+        assert_eq!(replace_all("hello", "", "x", false), "hello");
         // Replacing with empty deletes the matches.
-        assert_eq!(replace_all("a-b-c", "-", ""), "abc");
+        assert_eq!(replace_all("a-b-c", "-", "", false), "abc");
         // Multi-char, case-insensitive, non-overlapping.
-        assert_eq!(replace_all("xXxX", "xx", "y"), "yy");
+        assert_eq!(replace_all("xXxX", "xx", "y", false), "yy");
         // Non-ASCII content is handled per char.
-        assert_eq!(replace_all("café CAFÉ", "café", "tea"), "tea tea");
+        assert_eq!(replace_all("café CAFÉ", "café", "tea", false), "tea tea");
+    }
+
+    #[test]
+    fn replace_all_case_sensitive_only_hits_exact_case() {
+        // Case-sensitive replace touches only the matching case.
+        assert_eq!(replace_all("aAaA", "a", "x", true), "xAxA");
+        // Case-insensitive replace hits every case.
+        assert_eq!(replace_all("aAaA", "a", "x", false), "xxxx");
     }
 }
