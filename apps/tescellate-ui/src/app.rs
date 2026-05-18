@@ -267,6 +267,9 @@ pub struct TescellateApp {
     /// undo step, not one per frame.
     last_format_time: f64,
     last_format_cells: Vec<(u32, u32)>,
+    /// The hex-sheet counterparts, for hex format coalescing.
+    last_hex_format_time: f64,
+    last_hex_format_cells: Vec<HexCoord>,
     /// Conditional-formatting rules for the square sheet, evaluated each
     /// frame and layered over a cell's manual format.
     cond_rules: Vec<Rule>,
@@ -353,6 +356,8 @@ impl TescellateApp {
             frame_time: 0.0,
             last_format_time: 0.0,
             last_format_cells: Vec::new(),
+            last_hex_format_time: 0.0,
+            last_hex_format_cells: Vec::new(),
             cond_rules: vec![Rule {
                 condition: Condition::GreaterThan(1000.0),
                 format: CellFormat {
@@ -934,8 +939,8 @@ impl TescellateApp {
         self.last_format_cells = touched;
     }
 
-    /// The hex-sheet format apply, recorded as one undo step. (No
-    /// edit-coalescing yet — a hex colour drag floods the history.)
+    /// The hex-sheet format apply, recorded as one undo step. A rapid
+    /// run of same-cell edits (a colour drag) coalesces into one step.
     fn format_hex_range(&mut self, edit: impl Fn(&mut CellFormat)) {
         let mut edits = Vec::new();
         for cell in self.hex_selection.cells() {
@@ -952,9 +957,31 @@ impl TescellateApp {
                 after,
             });
         }
-        if !edits.is_empty() {
+        if edits.is_empty() {
+            return;
+        }
+        let touched: Vec<HexCoord> = edits.iter().map(|e| e.cell).collect();
+        // Coalesce a rapid run of same-cell hex format edits (a colour
+        // drag) into one undo step, mirroring the square sheet.
+        let recent = self.frame_time - self.last_hex_format_time < COALESCE_WINDOW;
+        if recent && self.last_hex_format_cells == touched {
+            match self.history.pop_undo() {
+                Some(Action::HexFormats(prev)) => {
+                    let merged = merge_hex_format_edits(prev, edits);
+                    self.history.record(Action::HexFormats(merged));
+                }
+                Some(other) => {
+                    // The top wasn't a hex format action — restore it.
+                    self.history.record(other);
+                    self.history.record(Action::HexFormats(edits));
+                }
+                None => self.history.record(Action::HexFormats(edits)),
+            }
+        } else {
             self.history.record(Action::HexFormats(edits));
         }
+        self.last_hex_format_time = self.frame_time;
+        self.last_hex_format_cells = touched;
     }
 
     /// Toggle a boolean format flag across the selection — Excel's rule:
@@ -2107,6 +2134,26 @@ fn merge_format_edits(prev: Vec<FormatEdit>, new: Vec<FormatEdit>) -> Vec<Format
         .collect()
 }
 
+/// Merge two consecutive hex format-edit batches over the same cells —
+/// earliest `before`, latest `after` per cell. The hex twin of
+/// [`merge_format_edits`].
+fn merge_hex_format_edits(prev: Vec<HexFormatEdit>, new: Vec<HexFormatEdit>) -> Vec<HexFormatEdit> {
+    new.into_iter()
+        .map(|n| {
+            let before = prev
+                .iter()
+                .find(|p| p.cell == n.cell)
+                .map(|p| p.before.clone())
+                .unwrap_or_else(|| n.before.clone());
+            HexFormatEdit {
+                cell: n.cell,
+                before,
+                after: n.after,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2244,6 +2291,33 @@ mod tests {
         let merged = merge_format_edits(prev, new);
         assert_eq!(merged.len(), 1);
         // The merged edit spans the whole gesture: default -> blue.
+        assert_eq!(merged[0].before, CellFormat::default());
+        assert_eq!(merged[0].after, blue);
+    }
+
+    #[test]
+    fn merge_hex_format_edits_keeps_oldest_before_and_newest_after() {
+        let cell = HexCoord::new(2, -1);
+        let red = CellFormat {
+            text_color: Some(egui::Color32::RED),
+            ..CellFormat::default()
+        };
+        let blue = CellFormat {
+            text_color: Some(egui::Color32::BLUE),
+            ..CellFormat::default()
+        };
+        let prev = vec![HexFormatEdit {
+            cell,
+            before: CellFormat::default(),
+            after: red.clone(),
+        }];
+        let new = vec![HexFormatEdit {
+            cell,
+            before: red,
+            after: blue.clone(),
+        }];
+        let merged = merge_hex_format_edits(prev, new);
+        assert_eq!(merged.len(), 1);
         assert_eq!(merged[0].before, CellFormat::default());
         assert_eq!(merged[0].after, blue);
     }
