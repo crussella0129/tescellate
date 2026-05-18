@@ -1,5 +1,4 @@
-//! Find — substring search (optionally case-sensitive) over the square
-//! sheet.
+//! Find — substring search (optionally case-sensitive) over a sheet.
 //!
 //! [`FindState`] holds the query, the cells that currently match it, and
 //! which match is "current"; `app.rs` populates the matches by feeding
@@ -49,24 +48,36 @@ pub fn replace_all(source: &str, query: &str, replacement: &str, case_sensitive:
     result
 }
 
-/// The Find panel's state: the query, the matching cells in row-major
-/// order, and the index of the current match within them.
-#[derive(Debug, Clone, Default)]
-pub struct FindState {
+/// The Find panel's state: the query, the matching cells (any lattice's
+/// coordinate `K`), and the index of the current match within them.
+#[derive(Debug, Clone)]
+pub struct FindState<K> {
     pub query: String,
     /// The replacement text for Find & Replace.
     pub replace: String,
     /// Whether matching is case-sensitive.
     pub case_sensitive: bool,
-    matches: Vec<(u32, u32)>,
+    matches: Vec<K>,
     current: usize,
 }
 
-impl FindState {
+impl<K> Default for FindState<K> {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            replace: String::new(),
+            case_sensitive: false,
+            matches: Vec::new(),
+            current: 0,
+        }
+    }
+}
+
+impl<K: Copy + PartialEq> FindState<K> {
     /// Rebuild the match list from `(cell, text)` pairs, resetting the
     /// current match to the first. Call whenever the query or the sheet
     /// contents change.
-    pub fn refresh(&mut self, cells: impl Iterator<Item = ((u32, u32), String)>) {
+    pub fn refresh(&mut self, cells: impl Iterator<Item = (K, String)>) {
         let query = self.query.clone();
         let case_sensitive = self.case_sensitive;
         self.matches = cells
@@ -90,7 +101,7 @@ impl FindState {
     }
 
     /// The current match, or `None` when nothing matches.
-    pub fn current_match(&self) -> Option<(u32, u32)> {
+    pub fn current_match(&self) -> Option<K> {
         self.matches.get(self.current).copied()
     }
 
@@ -106,7 +117,7 @@ impl FindState {
 
     /// Step to the next (`forward`) or previous match, wrapping around,
     /// and return it. `None` when there are no matches.
-    pub fn step(&mut self, forward: bool) -> Option<(u32, u32)> {
+    pub fn step(&mut self, forward: bool) -> Option<K> {
         let len = self.matches.len();
         if len == 0 {
             return None;
@@ -120,12 +131,12 @@ impl FindState {
     }
 
     /// Whether `cell` is one of the matches — used to tint it in the grid.
-    pub fn is_match(&self, cell: (u32, u32)) -> bool {
+    pub fn is_match(&self, cell: K) -> bool {
         self.matches.contains(&cell)
     }
 
-    /// Every matching cell, row-major — what Replace All iterates.
-    pub fn matches(&self) -> &[(u32, u32)] {
+    /// Every matching cell, in scan order — what Replace All iterates.
+    pub fn matches(&self) -> &[K] {
         &self.matches
     }
 }

@@ -100,6 +100,13 @@ enum ActiveSheet {
     Hex,
 }
 
+/// A cell on either sheet — Find tracks matches across both lattices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CellId {
+    Square((u32, u32)),
+    Hex(HexCoord),
+}
+
 /// An in-progress cell edit.
 struct EditState {
     buffer: String,
@@ -283,7 +290,7 @@ pub struct TescellateApp {
     /// except while the bar itself is being edited.
     formula_bar: String,
     /// Find-panel state — the query and its matching cells.
-    find: FindState,
+    find: FindState<CellId>,
     /// Whether the Find window is open.
     find_open: bool,
     /// Set when Find is opened by Ctrl+F so the query field grabs focus.
@@ -441,6 +448,15 @@ impl TescellateApp {
     fn cell_source(&self, col: u32, row: u32) -> String {
         self.engine
             .get_cell(self.square_sheet, &grid::cell_address(col, row))
+            .and_then(|snapshot| snapshot.source)
+            .unwrap_or_default()
+    }
+
+    /// The raw source text of a hex-sheet cell — empty when it holds
+    /// nothing. Find and Replace use it on the hex sheet.
+    fn hex_cell_source(&self, coord: HexCoord) -> String {
+        self.engine
+            .get_cell(self.hex_sheet, &hex_address(coord))
             .and_then(|snapshot| snapshot.source)
             .unwrap_or_default()
     }
@@ -818,23 +834,49 @@ impl TescellateApp {
         }
     }
 
-    /// Rebuild the Find matches from the square sheet's current contents
+    /// The sheet, address and current source of a Find match.
+    fn cell_id_target(&self, id: CellId) -> (SheetId, String, String) {
+        match id {
+            CellId::Square((c, r)) => (
+                self.square_sheet,
+                grid::cell_address(c, r),
+                self.cell_source(c, r),
+            ),
+            CellId::Hex(h) => (self.hex_sheet, hex_address(h), self.hex_cell_source(h)),
+        }
+    }
+
+    /// Move the active sheet's selection onto a Find match.
+    fn jump_to(&mut self, id: CellId) {
+        match id {
+            CellId::Square(cell) => self.selection.collapse_to(cell),
+            CellId::Hex(coord) => self.hex_selection.collapse_to(coord),
+        }
+    }
+
+    /// Rebuild the Find matches from the active sheet's current contents
     /// and jump the selection to the first match.
     fn refresh_find(&mut self) {
-        let cells: Vec<((u32, u32), String)> = (0..ROWS)
-            .flat_map(|r| (0..COLS).map(move |c| (c, r)))
-            .map(|(c, r)| ((c, r), self.cell_source(c, r)))
-            .collect();
+        let cells: Vec<(CellId, String)> = match self.active {
+            ActiveSheet::Square => (0..ROWS)
+                .flat_map(|r| (0..COLS).map(move |c| (c, r)))
+                .map(|(c, r)| (CellId::Square((c, r)), self.cell_source(c, r)))
+                .collect(),
+            ActiveSheet::Hex => hex::hex_disc(HexCoord::new(0, 0), HEX_VIEW_RADIUS)
+                .into_iter()
+                .map(|coord| (CellId::Hex(coord), self.hex_cell_source(coord)))
+                .collect(),
+        };
         self.find.refresh(cells.into_iter());
-        if let Some(cell) = self.find.current_match() {
-            self.selection.collapse_to(cell);
+        if let Some(id) = self.find.current_match() {
+            self.jump_to(id);
         }
     }
 
     /// Step Find to the next/previous match and move the selection to it.
     fn find_step(&mut self, forward: bool) {
-        if let Some(cell) = self.find.step(forward) {
-            self.selection.collapse_to(cell);
+        if let Some(id) = self.find.step(forward) {
+            self.jump_to(id);
         }
     }
 
@@ -844,8 +886,8 @@ impl TescellateApp {
         if self.find.query.is_empty() {
             return;
         }
-        if let Some((c, r)) = self.find.current_match() {
-            let source = self.cell_source(c, r);
+        if let Some(id) = self.find.current_match() {
+            let (sheet, addr, source) = self.cell_id_target(id);
             let new = find::replace_all(
                 &source,
                 &self.find.query,
@@ -853,8 +895,7 @@ impl TescellateApp {
                 self.find.case_sensitive,
             );
             if new != source {
-                let addr = grid::cell_address(c, r);
-                self.apply_edits(self.square_sheet, vec![(addr, commit_source(&new))]);
+                self.apply_edits(sheet, vec![(addr, commit_source(&new))]);
             }
             self.refresh_find();
         }
@@ -869,15 +910,18 @@ impl TescellateApp {
         let query = self.find.query.clone();
         let replacement = self.find.replace.clone();
         let case_sensitive = self.find.case_sensitive;
+        let matches: Vec<CellId> = self.find.matches().to_vec();
+        let mut sheet = self.square_sheet;
         let mut targets = Vec::new();
-        for &(c, r) in self.find.matches() {
-            let source = self.cell_source(c, r);
+        for id in matches {
+            let (s, addr, source) = self.cell_id_target(id);
+            sheet = s;
             let new = find::replace_all(&source, &query, &replacement, case_sensitive);
             if new != source {
-                targets.push((grid::cell_address(c, r), commit_source(&new)));
+                targets.push((addr, commit_source(&new)));
             }
         }
-        self.apply_edits(self.square_sheet, targets);
+        self.apply_edits(sheet, targets);
         self.refresh_find();
     }
 
@@ -1556,7 +1600,7 @@ impl TescellateApp {
                 if (c, r) != cursor && self.selection.contains((c, r)) {
                     painter.rect_filled(rect, 0.0, sel_tint);
                 }
-                if self.find.is_match((c, r)) {
+                if self.find.is_match(CellId::Square((c, r))) {
                     painter.rect_filled(rect, 0.0, find_tint);
                 }
                 painter.rect_stroke(rect, 0.0, grid_line);
@@ -1738,6 +1782,8 @@ impl TescellateApp {
             // Cells inside the selected range take the selection fill.
             let fill = if self.hex_selection.contains(coord) {
                 sel_bg
+            } else if self.find.is_match(CellId::Hex(coord)) {
+                egui::Color32::from_rgb(255, 236, 170)
             } else {
                 self.hex_effective_format(coord).fill.unwrap_or(cell_bg)
             };
@@ -1905,6 +1951,9 @@ impl eframe::App for TescellateApp {
                 {
                     self.commit_edit();
                     self.active = ActiveSheet::Square;
+                    if self.find_open {
+                        self.refresh_find();
+                    }
                 }
                 if ui
                     .selectable_label(self.active == ActiveSheet::Hex, "Hex demo")
@@ -1912,6 +1961,9 @@ impl eframe::App for TescellateApp {
                 {
                     self.commit_edit();
                     self.active = ActiveSheet::Hex;
+                    if self.find_open {
+                        self.refresh_find();
+                    }
                 }
                 // Selection statistics, pushed to the right edge.
                 let stats = stats::selection_stats(&self.selection_values());
