@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 
 use egui::Color32;
+use tescellate_tess::hex::HexCoord;
 
 /// Horizontal text alignment within a cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -98,6 +99,34 @@ impl HexBorders {
     pub fn all() -> Self {
         Self { edges: [true; 6] }
     }
+}
+
+/// The six axial neighbour offsets, indexed by hex edge: offset `i` is
+/// the hex sharing edge `i` — the segment from vertex `i` to vertex
+/// `i + 1`. The mapping is orientation-independent: a `HexLattice`'s
+/// `vertices` and `centroid` rotate together, so pointy- and flat-top
+/// hexes share it.
+const HEX_EDGE_NEIGHBORS: [(i32, i32); 6] = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
+
+/// The hex sharing edge `edge` of `cell` — the neighbour across that
+/// edge. `edge` is taken modulo 6.
+pub fn hex_edge_neighbor(cell: HexCoord, edge: usize) -> HexCoord {
+    let (dq, dr) = HEX_EDGE_NEIGHBORS[edge % 6];
+    HexCoord::new(cell.q + dq, cell.r + dr)
+}
+
+/// Which of `cell`'s six edges lie on the perimeter of a selection: an
+/// edge is on the perimeter when the hex across it is not itself
+/// selected. `selected` reports selection membership. A lone selected
+/// hex gets all six edges; a hex whose six neighbours are all selected
+/// gets none — the hex analogue of [`border_sides`] under
+/// [`BorderMode::Outer`].
+pub fn hex_outer_borders(cell: HexCoord, selected: impl Fn(HexCoord) -> bool) -> HexBorders {
+    let mut edges = [false; 6];
+    for (edge, on) in edges.iter_mut().enumerate() {
+        *on = !selected(hex_edge_neighbor(cell, edge));
+    }
+    HexBorders { edges }
 }
 
 /// The full visual format of one cell. The `Default` is "no formatting".
@@ -362,7 +391,6 @@ mod tests {
 
     #[test]
     fn format_map_works_with_a_hex_key() {
-        use tescellate_tess::hex::HexCoord;
         let mut map: FormatMap<HexCoord> = FormatMap::new();
         let cell = HexCoord::new(1, -2);
         map.update(cell, |f| f.bold = true);
@@ -376,5 +404,70 @@ mod tests {
     fn hex_borders_all_and_default() {
         assert_eq!(HexBorders::all().edges, [true; 6]);
         assert_eq!(HexBorders::default().edges, [false; 6]);
+    }
+
+    #[test]
+    fn hex_edge_neighbors_are_six_distinct_adjacent_hexes() {
+        let cell = HexCoord::new(2, -3);
+        let mut seen: Vec<HexCoord> = Vec::new();
+        for edge in 0..6 {
+            let n = hex_edge_neighbor(cell, edge);
+            // Each edge's neighbour is exactly one axial step away.
+            assert_eq!(cell.distance(n), 1, "edge {edge} neighbour not adjacent");
+            assert!(!seen.contains(&n), "edge {edge} neighbour duplicated");
+            seen.push(n);
+        }
+        assert_eq!(seen.len(), 6);
+    }
+
+    #[test]
+    fn hex_edge_neighbor_index_wraps_modulo_six() {
+        let cell = HexCoord::new(0, 0);
+        assert_eq!(hex_edge_neighbor(cell, 6), hex_edge_neighbor(cell, 0));
+        assert_eq!(hex_edge_neighbor(cell, 7), hex_edge_neighbor(cell, 1));
+    }
+
+    #[test]
+    fn lone_hex_gets_every_outer_edge() {
+        let cell = HexCoord::new(1, 1);
+        // Only `cell` itself is selected.
+        let b = hex_outer_borders(cell, |c| c == cell);
+        assert_eq!(b.edges, [true; 6]);
+    }
+
+    #[test]
+    fn fully_surrounded_hex_gets_no_outer_edge() {
+        let cell = HexCoord::new(0, 0);
+        // Every cell within one step is selected — `cell` is interior.
+        let b = hex_outer_borders(cell, |c| cell.distance(c) <= 1);
+        assert_eq!(b.edges, [false; 6]);
+    }
+
+    #[test]
+    fn outer_edge_is_set_exactly_where_the_neighbour_is_unselected() {
+        let cell = HexCoord::new(0, 0);
+        // Select `cell` plus only its edge-2 and edge-5 neighbours.
+        let keep = [cell, hex_edge_neighbor(cell, 2), hex_edge_neighbor(cell, 5)];
+        let b = hex_outer_borders(cell, |c| keep.contains(&c));
+        // Edges 2 and 5 face a selected hex, so they are not perimeter.
+        assert_eq!(b.edges, [true, true, false, true, true, false]);
+    }
+
+    #[test]
+    fn outer_borders_trace_a_two_hex_selection() {
+        let a = HexCoord::new(0, 0);
+        let b = hex_edge_neighbor(a, 0); // a's edge-0 neighbour
+        let selected = [a, b];
+        let in_sel = |c: HexCoord| selected.contains(&c);
+        // `a`: every edge perimeter except edge 0, which faces `b`.
+        assert_eq!(
+            hex_outer_borders(a, in_sel).edges,
+            [false, true, true, true, true, true],
+        );
+        // `b`: every edge perimeter except edge 3, which faces `a`.
+        assert_eq!(
+            hex_outer_borders(b, in_sel).edges,
+            [true, true, true, false, true, true],
+        );
     }
 }

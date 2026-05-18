@@ -673,19 +673,13 @@ impl TescellateApp {
         }
     }
 
-    /// Apply a border mode across the selection — one undo step. On the
-    /// square sheet `border_sides` resolves per-cell sides; on the hex
-    /// sheet every selected cell gets all six edges, or none.
+    /// Apply a border mode across the selection — one undo step. Both
+    /// sheets resolve borders per cell: the square sheet via
+    /// `border_sides`, the hex sheet via `apply_hex_border`.
     fn apply_border(&mut self, mode: BorderMode) {
         match self.active {
             ActiveSheet::Square => self.apply_square_border(mode),
-            ActiveSheet::Hex => {
-                let hb = match mode {
-                    BorderMode::None => HexBorders::default(),
-                    BorderMode::All | BorderMode::Outer => HexBorders::all(),
-                };
-                self.format_hex_range(|f| f.hex_borders = hb);
-            }
+            ActiveSheet::Hex => self.apply_hex_border(mode),
         }
     }
 
@@ -710,6 +704,36 @@ impl TescellateApp {
         }
         if !edits.is_empty() {
             self.history.record(Action::Formats(edits));
+        }
+    }
+
+    /// The hex-sheet border apply. `All` and `None` set every cell's
+    /// edges uniformly; `Outer` resolves each cell's perimeter via
+    /// `hex_outer_borders` — an edge is bordered only when the hex
+    /// across it is not itself selected.
+    fn apply_hex_border(&mut self, mode: BorderMode) {
+        let selection = self.hex_selection;
+        let mut edits = Vec::new();
+        for cell in selection.cells() {
+            let before = self.hex_formats.get(cell);
+            let mut after = before.clone();
+            after.hex_borders = match mode {
+                BorderMode::None => HexBorders::default(),
+                BorderMode::All => HexBorders::all(),
+                BorderMode::Outer => format::hex_outer_borders(cell, |c| selection.contains(c)),
+            };
+            if before == after {
+                continue;
+            }
+            self.hex_formats.update(cell, |f| *f = after.clone());
+            edits.push(HexFormatEdit {
+                cell,
+                before,
+                after,
+            });
+        }
+        if !edits.is_empty() {
+            self.history.record(Action::HexFormats(edits));
         }
     }
 
