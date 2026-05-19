@@ -2391,10 +2391,24 @@ impl TescellateApp {
         }
         if response.clicked() {
             if let Some(cell) = self.cell_under(&response, origin, header_x, header_y) {
-                // Format painter — if armed, the click paints the captured
-                // format onto the target cell and disarms; selection
-                // doesn't move. Otherwise the usual shift / plain logic.
-                if let Some(fmt) = self.format_painter.take() {
+                // Formula-mode click — while the in-cell edit is a formula
+                // (`=…`), a click on another cell inserts that cell's A1
+                // address into the formula at the end of the buffer
+                // instead of committing the edit and moving the selection.
+                // The TextEdit re-focuses next frame via `fresh = true`.
+                let in_formula = self
+                    .edit
+                    .as_ref()
+                    .is_some_and(|e| e.buffer.trim_start().starts_with('='));
+                if in_formula {
+                    let addr = grid::cell_address(cell.0, cell.1);
+                    if let Some(edit) = self.edit.as_mut() {
+                        edit.buffer.push_str(&addr);
+                        edit.fresh = true;
+                    }
+                } else if let Some(fmt) = self.format_painter.take() {
+                    // Format painter — paint the captured format onto the
+                    // target cell and disarm; selection doesn't move.
                     self.commit_edit();
                     self.formats.update(cell, |f| *f = fmt);
                 } else {
