@@ -1153,7 +1153,25 @@ impl TescellateApp {
                                 .allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
                             ui.painter().rect_filled(rect, 2.0, fill);
                         }
-                        ui.label(describe_condition(&rule.condition));
+                        // Render the description in the rule's own style,
+                        // so the row previews what a match looks like.
+                        let mut desc = egui::RichText::new(describe_condition(&rule.condition));
+                        if rule.format.bold {
+                            desc = desc.strong();
+                        }
+                        if rule.format.italic {
+                            desc = desc.italics();
+                        }
+                        if rule.format.strikethrough {
+                            desc = desc.strikethrough();
+                        }
+                        if rule.format.underline {
+                            desc = desc.underline();
+                        }
+                        if let Some(color) = rule.format.text_color {
+                            desc = desc.color(color);
+                        }
+                        ui.label(desc);
                         if ui
                             .add_enabled(i > 0, egui::Button::new("↑").small())
                             .clicked()
