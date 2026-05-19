@@ -73,6 +73,10 @@ pub struct FindState<K> {
     pub case_sensitive: bool,
     /// Whether a cell must equal the query exactly, not merely contain it.
     pub whole_cell: bool,
+    /// Whether matching is restricted to the current selection. The
+    /// scoping itself is the caller's job — it feeds `refresh` only the
+    /// in-scope cells; this field just records the user's choice.
+    pub in_selection: bool,
     matches: Vec<K>,
     current: usize,
 }
@@ -84,6 +88,7 @@ impl<K> Default for FindState<K> {
             replace: String::new(),
             case_sensitive: false,
             whole_cell: false,
+            in_selection: false,
             matches: Vec::new(),
             current: 0,
         }
@@ -223,6 +228,14 @@ mod tests {
         assert_eq!(f.current_index(), 1);
         assert!(f.is_match((0, 1)));
         assert!(!f.is_match((1, 1)));
+    }
+
+    #[test]
+    fn find_defaults_to_searching_the_whole_sheet() {
+        // The scope toggle starts off, so a fresh Find spans the whole
+        // sheet rather than only the current selection.
+        let f: FindState<(u32, u32)> = FindState::default();
+        assert!(!f.in_selection);
     }
 
     #[test]

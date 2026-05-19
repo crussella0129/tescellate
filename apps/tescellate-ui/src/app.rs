@@ -1225,6 +1225,12 @@ impl TescellateApp {
                     {
                         self.refresh_find();
                     }
+                    if ui
+                        .checkbox(&mut self.find.in_selection, "Within selection")
+                        .changed()
+                    {
+                        self.refresh_find();
+                    }
                 });
                 ui.horizontal(|ui| {
                     ui.label("Replace");
@@ -1298,13 +1304,16 @@ impl TescellateApp {
     /// Rebuild the Find matches from the active sheet's current contents
     /// and jump the selection to the first match.
     fn refresh_find(&mut self) {
+        let in_selection = self.find.in_selection;
         let cells: Vec<(CellId, String)> = match self.active {
             ActiveSheet::Square => (0..ROWS)
                 .flat_map(|r| (0..COLS).map(move |c| (c, r)))
+                .filter(|&(c, r)| !in_selection || self.selection.contains((c, r)))
                 .map(|(c, r)| (CellId::Square((c, r)), self.cell_source(c, r)))
                 .collect(),
             ActiveSheet::Hex => hex::hex_disc(HexCoord::new(0, 0), HEX_VIEW_RADIUS)
                 .into_iter()
+                .filter(|&coord| !in_selection || self.hex_selection.contains(coord))
                 .map(|coord| (CellId::Hex(coord), self.hex_cell_source(coord)))
                 .collect(),
         };
