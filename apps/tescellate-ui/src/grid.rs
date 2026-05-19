@@ -376,6 +376,43 @@ pub fn page_step(start: u32, up: bool, page: u32, max: u32) -> u32 {
     }
 }
 
+/// The current data region around `cursor` — its inclusive `(min, max)`
+/// corners. Starting from the cursor's 1x1 box, the box grows outward
+/// while the row or column just beyond an edge holds any non-empty cell
+/// (`occupied`) within the box's span, to a fixpoint. An isolated cell
+/// yields just itself. `cols` / `rows` bound the grow.
+pub fn current_region(
+    cursor: (u32, u32),
+    cols: u32,
+    rows: u32,
+    occupied: impl Fn(u32, u32) -> bool,
+) -> ((u32, u32), (u32, u32)) {
+    let (mut min_c, mut min_r) = cursor;
+    let (mut max_c, mut max_r) = cursor;
+    loop {
+        let mut grew = false;
+        if min_r > 0 && (min_c..=max_c).any(|c| occupied(c, min_r - 1)) {
+            min_r -= 1;
+            grew = true;
+        }
+        if max_r + 1 < rows && (min_c..=max_c).any(|c| occupied(c, max_r + 1)) {
+            max_r += 1;
+            grew = true;
+        }
+        if min_c > 0 && (min_r..=max_r).any(|r| occupied(min_c - 1, r)) {
+            min_c -= 1;
+            grew = true;
+        }
+        if max_c + 1 < cols && (min_r..=max_r).any(|r| occupied(max_c + 1, r)) {
+            max_c += 1;
+            grew = true;
+        }
+        if !grew {
+            return ((min_c, min_r), (max_c, max_r));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -721,5 +758,29 @@ mod tests {
         assert_eq!(page_step(20, true, 16, 31), 4);
         // Up clamps at row 0.
         assert_eq!(page_step(5, true, 16, 31), 0);
+    }
+
+    #[test]
+    fn current_region_grows_to_the_data_block() {
+        // A 2x2 block of content spanning (1,1)..(2,2).
+        let filled = |c, r| (1..=2).contains(&c) && (1..=2).contains(&r);
+        assert_eq!(current_region((1, 1), 16, 32, filled), ((1, 1), (2, 2)));
+        // The same region from any cell inside it.
+        assert_eq!(current_region((2, 2), 16, 32, filled), ((1, 1), (2, 2)));
+    }
+
+    #[test]
+    fn current_region_of_an_isolated_cell_is_itself() {
+        assert_eq!(
+            current_region((3, 4), 16, 32, |_, _| false),
+            ((3, 4), (3, 4)),
+        );
+    }
+
+    #[test]
+    fn current_region_stops_at_empty_rows_and_columns() {
+        // Content fills columns 0..1 and rows 0..1; beyond is empty.
+        let filled = |c, r| c <= 1 && r <= 1;
+        assert_eq!(current_region((0, 0), 16, 32, filled), ((0, 0), (1, 1)));
     }
 }
