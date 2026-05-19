@@ -1154,6 +1154,12 @@ impl TescellateApp {
                     {
                         self.refresh_find();
                     }
+                    if ui
+                        .checkbox(&mut self.find.whole_cell, "Whole cell")
+                        .changed()
+                    {
+                        self.refresh_find();
+                    }
                 });
                 ui.horizontal(|ui| {
                     ui.label("Replace");
