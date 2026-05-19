@@ -16,7 +16,7 @@ use tescellate_tess::{Lattice, LatticeKind, Point2};
 use crate::clipboard::{Clipboard, CopiedCell, PasteMode};
 use crate::conditional::{self, Condition, Rule};
 use crate::find::{self, FindState};
-use crate::format::{self, BorderMode, Borders, CellFormat, FormatMap, HAlign, HexBorders};
+use crate::format::{self, BorderMode, Borders, CellFormat, FormatMap, HAlign, HexBorders, VAlign};
 use crate::grid::{self, GridMetrics};
 use crate::history::History;
 use crate::keymap::{self, Command, Dir, Mode};
@@ -872,6 +872,7 @@ impl TescellateApp {
                 self.toggle_range(|f| f.underline, |f, v| f.underline = v)
             }
             RibbonAction::SetAlign(align) => self.format_range(|f| f.align = align),
+            RibbonAction::SetVAlign(valign) => self.format_range(|f| f.valign = valign),
             RibbonAction::SetNumber(number) => self.format_range(|f| f.number = number),
             RibbonAction::AdjustDecimals(delta) => {
                 self.format_range(|f| f.number = format::adjust_decimals(f.number, delta))
@@ -2536,7 +2537,12 @@ impl TescellateApp {
                 CellValue::Number(_) | CellValue::Integer(_)
             );
             let c = self.hex_lattice.centroid(coord);
-            let centroid = egui::pos2(origin.x + c.x, origin.y + c.y);
+            let vshift = match fmt.valign {
+                VAlign::Top => -HEX_SIZE * 0.5,
+                VAlign::Middle => 0.0,
+                VAlign::Bottom => HEX_SIZE * 0.5,
+            };
+            let centroid = egui::pos2(origin.x + c.x, origin.y + c.y + vshift);
             let align = format::effective_align(fmt.align, numeric);
             let (anchor, pos) = hex_text_layout(align, centroid, HEX_SIZE * 0.6);
             let color = fmt.text_color.unwrap_or(text_color);
@@ -2966,7 +2972,7 @@ fn draw_cell_text(
     let galley = painter.layout_job(job);
     let pad = 5.0;
     let size = galley.size();
-    let y = rect.center().y - size.y / 2.0;
+    let y = rect.top() + format::vertical_offset(fmt.valign, rect.height(), size.y, pad);
     let x = match format::effective_align(fmt.align, numeric) {
         HAlign::Left | HAlign::Auto => rect.left() + pad,
         HAlign::Center => rect.center().x - size.x / 2.0,
