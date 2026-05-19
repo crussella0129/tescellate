@@ -156,6 +156,23 @@ mod tests {
     }
 
     #[test]
+    fn a_matching_rule_overlays_text_color() {
+        let rule = Rule {
+            condition: Condition::GreaterThan(0.0),
+            format: CellFormat {
+                text_color: Some(Color32::RED),
+                ..CellFormat::default()
+            },
+        };
+        let got = effective_format(
+            &CellFormat::default(),
+            &CellValue::Number(5.0),
+            std::slice::from_ref(&rule),
+        );
+        assert_eq!(got.text_color, Some(Color32::RED));
+    }
+
+    #[test]
     fn the_first_matching_rule_wins() {
         let rules = [
             Rule {
