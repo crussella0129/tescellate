@@ -64,6 +64,21 @@ pub enum RibbonAction {
     OpenHelp,
     /// Switch between the light and dark colour themes.
     ToggleTheme,
+    /// Open the Find / Replace dialog.
+    OpenFind,
+    /// Step to the next Find match.
+    FindNext,
+    /// Step to the previous Find match.
+    FindPrev,
+    /// Select every cell on the active sheet.
+    SelectAll,
+    /// Expand the selection to the contiguous data region around the
+    /// cursor.
+    SelectRegion,
+    /// Open the note editor for the cell under the cursor.
+    OpenNote,
+    /// Close the application window.
+    Quit,
 }
 
 /// The number formats the ribbon's combo offers, with display labels. The
@@ -411,8 +426,12 @@ pub fn menu_bar(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<Rib
             ui.add_enabled(false, egui::Button::new("Save As…"));
             ui.separator();
             ui.add_enabled(false, egui::Button::new("Export…"));
-            ui.separator();
             ui.label(egui::RichText::new("(Save/Open need engine support)").weak());
+            ui.separator();
+            if ui.button("Quit").clicked() {
+                action = Some(RibbonAction::Quit);
+                ui.close_menu();
+            }
         });
         ui.menu_button("Edit", |ui| {
             if ui
@@ -444,6 +463,43 @@ pub fn menu_bar(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<Rib
             }
             if ui.button("Paste values  Ctrl+Shift+V").clicked() {
                 action = Some(RibbonAction::PasteValues);
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("Find / Replace…  Ctrl+F").clicked() {
+                action = Some(RibbonAction::OpenFind);
+                ui.close_menu();
+            }
+            if ui.button("Find next  F3").clicked() {
+                action = Some(RibbonAction::FindNext);
+                ui.close_menu();
+            }
+            if ui.button("Find previous  Shift+F3").clicked() {
+                action = Some(RibbonAction::FindPrev);
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("Select all  Ctrl+A").clicked() {
+                action = Some(RibbonAction::SelectAll);
+                ui.close_menu();
+            }
+            if ui.button("Select region  Ctrl+Shift+8").clicked() {
+                action = Some(RibbonAction::SelectRegion);
+                ui.close_menu();
+            }
+        });
+        ui.menu_button("Insert", |ui| {
+            ui.menu_button("AutoSum", |ui| {
+                for func in ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"] {
+                    if ui.button(func).clicked() {
+                        action = Some(RibbonAction::Aggregate(func));
+                        ui.close_menu();
+                    }
+                }
+            });
+            ui.separator();
+            if ui.button("Note for active cell…").clicked() {
+                action = Some(RibbonAction::OpenNote);
                 ui.close_menu();
             }
         });

@@ -967,6 +967,23 @@ impl TescellateApp {
             }
             RibbonAction::OpenHelp => self.help_open = true,
             RibbonAction::ToggleTheme => self.dark_mode = !self.dark_mode,
+            RibbonAction::OpenFind => {
+                self.find_open = true;
+                self.find_just_opened = true;
+            }
+            RibbonAction::FindNext => self.find_step(true),
+            RibbonAction::FindPrev => self.find_step(false),
+            RibbonAction::SelectAll => self.select_all(),
+            RibbonAction::SelectRegion => self.select_region(),
+            RibbonAction::OpenNote => {
+                let cell = self.selection.cursor;
+                self.note_cell = CellId::Square(cell);
+                self.note_draft = self.notes.get(cell).to_string();
+                self.note_open = true;
+            }
+            RibbonAction::Quit => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
         }
     }
 
