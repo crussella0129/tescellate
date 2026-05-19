@@ -147,9 +147,12 @@ enum HeaderDrag {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CondKind {
     Greater,
+    GreaterEqual,
     Less,
+    LessEqual,
     Equal,
     NotEqual,
+    Between,
     IsTrue,
     IsFalse,
     NonEmpty,
@@ -157,11 +160,14 @@ enum CondKind {
 }
 
 impl CondKind {
-    const ALL: [CondKind; 8] = [
+    const ALL: [CondKind; 11] = [
         CondKind::Greater,
+        CondKind::GreaterEqual,
         CondKind::Less,
+        CondKind::LessEqual,
         CondKind::Equal,
         CondKind::NotEqual,
+        CondKind::Between,
         CondKind::IsTrue,
         CondKind::IsFalse,
         CondKind::NonEmpty,
@@ -171,9 +177,12 @@ impl CondKind {
     fn label(self) -> &'static str {
         match self {
             CondKind::Greater => "greater than",
+            CondKind::GreaterEqual => "greater or equal",
             CondKind::Less => "less than",
+            CondKind::LessEqual => "less or equal",
             CondKind::Equal => "equal to",
             CondKind::NotEqual => "not equal to",
+            CondKind::Between => "between",
             CondKind::IsTrue => "is TRUE",
             CondKind::IsFalse => "is FALSE",
             CondKind::NonEmpty => "non-empty",
@@ -181,12 +190,24 @@ impl CondKind {
         }
     }
 
-    /// Whether this kind needs the numeric threshold field.
+    /// Whether this kind needs the first numeric threshold field.
     fn needs_threshold(self) -> bool {
         matches!(
             self,
-            CondKind::Greater | CondKind::Less | CondKind::Equal | CondKind::NotEqual
+            CondKind::Greater
+                | CondKind::GreaterEqual
+                | CondKind::Less
+                | CondKind::LessEqual
+                | CondKind::Equal
+                | CondKind::NotEqual
+                | CondKind::Between
         )
+    }
+
+    /// Whether this kind needs the second numeric threshold field — only
+    /// `Between`, whose range carries an upper bound.
+    fn needs_threshold2(self) -> bool {
+        matches!(self, CondKind::Between)
     }
 
     /// The kind matching an existing condition — the inverse of the
@@ -194,9 +215,12 @@ impl CondKind {
     fn from_condition(condition: &Condition) -> CondKind {
         match condition {
             Condition::GreaterThan(_) => CondKind::Greater,
+            Condition::GreaterOrEqual(_) => CondKind::GreaterEqual,
             Condition::LessThan(_) => CondKind::Less,
+            Condition::LessOrEqual(_) => CondKind::LessEqual,
             Condition::EqualTo(_) => CondKind::Equal,
             Condition::NotEqualTo(_) => CondKind::NotEqual,
+            Condition::Between(..) => CondKind::Between,
             Condition::IsTrue => CondKind::IsTrue,
             Condition::IsFalse => CondKind::IsFalse,
             Condition::NonEmpty => CondKind::NonEmpty,
@@ -209,6 +233,8 @@ impl CondKind {
 struct CondDraft {
     kind: CondKind,
     threshold: String,
+    /// The range's upper bound for `Between`; unused by other kinds.
+    threshold2: String,
     fill: egui::Color32,
     /// Whether a matching cell is also rendered bold.
     bold: bool,
@@ -222,6 +248,7 @@ impl Default for CondDraft {
         Self {
             kind: CondKind::Greater,
             threshold: "100".to_string(),
+            threshold2: "200".to_string(),
             fill: egui::Color32::from_rgb(255, 235, 156),
             bold: false,
             text_color_on: false,
@@ -236,9 +263,17 @@ impl CondDraft {
     fn build(&self) -> Option<Rule> {
         let condition = match self.kind {
             CondKind::Greater => Condition::GreaterThan(self.threshold.trim().parse().ok()?),
+            CondKind::GreaterEqual => {
+                Condition::GreaterOrEqual(self.threshold.trim().parse().ok()?)
+            }
             CondKind::Less => Condition::LessThan(self.threshold.trim().parse().ok()?),
+            CondKind::LessEqual => Condition::LessOrEqual(self.threshold.trim().parse().ok()?),
             CondKind::Equal => Condition::EqualTo(self.threshold.trim().parse().ok()?),
             CondKind::NotEqual => Condition::NotEqualTo(self.threshold.trim().parse().ok()?),
+            CondKind::Between => Condition::Between(
+                self.threshold.trim().parse().ok()?,
+                self.threshold2.trim().parse().ok()?,
+            ),
             CondKind::IsTrue => Condition::IsTrue,
             CondKind::IsFalse => Condition::IsFalse,
             CondKind::NonEmpty => Condition::NonEmpty,
@@ -263,12 +298,20 @@ impl CondDraft {
             Condition::GreaterThan(t)
             | Condition::LessThan(t)
             | Condition::EqualTo(t)
-            | Condition::NotEqualTo(t) => t.to_string(),
+            | Condition::NotEqualTo(t)
+            | Condition::GreaterOrEqual(t)
+            | Condition::LessOrEqual(t)
+            | Condition::Between(t, _) => t.to_string(),
             _ => defaults.threshold,
+        };
+        let threshold2 = match rule.condition {
+            Condition::Between(_, t) => t.to_string(),
+            _ => defaults.threshold2,
         };
         CondDraft {
             kind: CondKind::from_condition(&rule.condition),
             threshold,
+            threshold2,
             fill: rule.format.fill.unwrap_or(defaults.fill),
             bold: rule.format.bold,
             text_color_on: rule.format.text_color.is_some(),
@@ -1102,6 +1145,13 @@ impl TescellateApp {
                     if self.cond_draft.kind.needs_threshold() {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.cond_draft.threshold)
+                                .desired_width(56.0),
+                        );
+                    }
+                    if self.cond_draft.kind.needs_threshold2() {
+                        ui.label("and");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.cond_draft.threshold2)
                                 .desired_width(56.0),
                         );
                     }
@@ -3026,9 +3076,16 @@ fn natural_text(value: CellValue) -> String {
 fn describe_condition(condition: &Condition) -> String {
     match condition {
         Condition::GreaterThan(t) => format!("value > {}", format_number(*t)),
+        Condition::GreaterOrEqual(t) => format!("value >= {}", format_number(*t)),
         Condition::LessThan(t) => format!("value < {}", format_number(*t)),
+        Condition::LessOrEqual(t) => format!("value <= {}", format_number(*t)),
         Condition::EqualTo(t) => format!("value = {}", format_number(*t)),
         Condition::NotEqualTo(t) => format!("value != {}", format_number(*t)),
+        Condition::Between(a, b) => format!(
+            "value in {}..{}",
+            format_number(a.min(*b)),
+            format_number(a.max(*b)),
+        ),
         Condition::IsTrue => "value is TRUE".to_string(),
         Condition::IsFalse => "value is FALSE".to_string(),
         Condition::NonEmpty => "cell is non-empty".to_string(),
@@ -3355,6 +3412,17 @@ mod tests {
         .build()
         .unwrap();
         assert_eq!(CondDraft::from_rule(&rule).kind, CondKind::IsEmpty);
+        // Between round-trips both of its bounds.
+        let between = CondDraft {
+            kind: CondKind::Between,
+            threshold: "10".to_string(),
+            threshold2: "20".to_string(),
+            ..CondDraft::default()
+        };
+        let back = CondDraft::from_rule(&between.build().unwrap());
+        assert_eq!(back.kind, CondKind::Between);
+        assert_eq!(back.threshold, "10");
+        assert_eq!(back.threshold2, "20");
     }
 
     #[test]

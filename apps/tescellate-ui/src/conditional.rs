@@ -20,6 +20,13 @@ pub enum Condition {
     EqualTo(f64),
     /// A numeric value not equal to the threshold.
     NotEqualTo(f64),
+    /// A numeric value greater than or equal to the threshold.
+    GreaterOrEqual(f64),
+    /// A numeric value less than or equal to the threshold.
+    LessOrEqual(f64),
+    /// A numeric value within the two thresholds' inclusive range,
+    /// whichever order the bounds are given in.
+    Between(f64, f64),
     /// The cell holds boolean `TRUE`.
     IsTrue,
     /// The cell holds boolean `FALSE`.
@@ -43,6 +50,9 @@ impl Condition {
             Condition::LessThan(t) => number.is_some_and(|n| n < *t),
             Condition::EqualTo(t) => number.is_some_and(|n| n == *t),
             Condition::NotEqualTo(t) => number.is_some_and(|n| n != *t),
+            Condition::GreaterOrEqual(t) => number.is_some_and(|n| n >= *t),
+            Condition::LessOrEqual(t) => number.is_some_and(|n| n <= *t),
+            Condition::Between(a, b) => number.is_some_and(|n| n >= a.min(*b) && n <= a.max(*b)),
             Condition::IsTrue => matches!(value, CellValue::Bool(true)),
             Condition::IsFalse => matches!(value, CellValue::Bool(false)),
             Condition::NonEmpty => !matches!(value, CellValue::Empty),
@@ -119,6 +129,26 @@ mod tests {
         // IsEmpty is the mirror of NonEmpty.
         assert!(Condition::IsEmpty.matches(&CellValue::Empty));
         assert!(!Condition::IsEmpty.matches(&CellValue::Number(0.0)));
+    }
+
+    #[test]
+    fn ge_le_and_between_test_numeric_ranges() {
+        let v = CellValue::Number(50.0);
+        // >= and <= include the threshold itself.
+        assert!(Condition::GreaterOrEqual(50.0).matches(&v));
+        assert!(Condition::GreaterOrEqual(10.0).matches(&v));
+        assert!(!Condition::GreaterOrEqual(51.0).matches(&v));
+        assert!(Condition::LessOrEqual(50.0).matches(&v));
+        assert!(!Condition::LessOrEqual(49.0).matches(&v));
+        // Between is inclusive at both ends.
+        assert!(Condition::Between(0.0, 50.0).matches(&v));
+        assert!(Condition::Between(50.0, 100.0).matches(&v));
+        assert!(!Condition::Between(0.0, 49.0).matches(&v));
+        // The two bounds may be given in either order.
+        assert!(Condition::Between(100.0, 0.0).matches(&v));
+        // Integers count as numbers; non-numeric values never match.
+        assert!(Condition::GreaterOrEqual(2.0).matches(&CellValue::Integer(7)));
+        assert!(!Condition::Between(0.0, 9.0).matches(&CellValue::Text("hi".into())));
     }
 
     #[test]
