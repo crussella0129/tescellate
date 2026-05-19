@@ -140,19 +140,21 @@ impl GridMetrics {
         Some((col, row))
     }
 
-    /// Like [`GridMetrics::cell_at`], but with the column header frozen
-    /// at viewport-y `header_y`: a point inside the floating header's
-    /// band `[header_y, header_y + HEADER_H)` hits no cell, so a click
-    /// there is not mistaken for the cell scrolled beneath it.
+    /// Like [`GridMetrics::cell_at`], but with both the row header
+    /// frozen at viewport-x `header_x` and the column header frozen at
+    /// viewport-y `header_y`: a point inside either floating header
+    /// band hits no cell, so a click on a frozen header is not mistaken
+    /// for the cell scrolled beneath it.
     pub fn cell_at_frozen(
         &self,
         origin: Pos2,
+        header_x: f32,
         header_y: f32,
         p: Pos2,
         cols: u32,
         rows: u32,
     ) -> Option<(u32, u32)> {
-        if p.y < header_y + HEADER_H {
+        if p.x < header_x + HEADER_W || p.y < header_y + HEADER_H {
             return None;
         }
         self.cell_at(origin, p, cols, rows)
@@ -803,23 +805,43 @@ mod tests {
     }
 
     #[test]
-    fn cell_at_frozen_excludes_the_floating_header_band() {
+    fn cell_at_frozen_excludes_both_floating_header_bands() {
         let m = GridMetrics::new();
         let origin = pos2(0.0, 0.0);
-        // Unscrolled (header_y == origin.y) it matches cell_at exactly.
+        // Unscrolled (header_x/y == origin.x/y) it matches cell_at exactly.
         let deep = pos2(HEADER_W + 10.0, HEADER_H + 10.0);
         assert_eq!(
-            m.cell_at_frozen(origin, origin.y, deep, 100, 100),
+            m.cell_at_frozen(origin, origin.x, origin.y, deep, 100, 100),
             m.cell_at(origin, deep, 100, 100),
         );
-        assert!(m.cell_at_frozen(origin, origin.y, deep, 100, 100).is_some());
-        // Scrolled, the header floats to y = 300: a point inside that
-        // floating band hits no cell, though cell_at alone would.
-        let in_band = pos2(HEADER_W + 10.0, 300.0 + HEADER_H / 2.0);
-        assert!(m.cell_at(origin, in_band, 100, 100).is_some());
-        assert_eq!(m.cell_at_frozen(origin, 300.0, in_band, 100, 100), None);
-        // Just past the floating band a cell is found again.
+        assert!(m
+            .cell_at_frozen(origin, origin.x, origin.y, deep, 100, 100)
+            .is_some());
+        // Scrolled down, the column header floats to y = 300: a point
+        // inside that band hits no cell, though cell_at alone would.
+        let in_col_band = pos2(HEADER_W + 10.0, 300.0 + HEADER_H / 2.0);
+        assert!(m.cell_at(origin, in_col_band, 100, 100).is_some());
+        assert_eq!(
+            m.cell_at_frozen(origin, origin.x, 300.0, in_col_band, 100, 100),
+            None,
+        );
+        // Just past the column band a cell is found again.
         let below = pos2(HEADER_W + 10.0, 300.0 + HEADER_H + 5.0);
-        assert!(m.cell_at_frozen(origin, 300.0, below, 100, 100).is_some());
+        assert!(m
+            .cell_at_frozen(origin, origin.x, 300.0, below, 100, 100)
+            .is_some());
+        // Scrolled right, the row header floats to x = 400: a point
+        // inside that band hits no cell, though cell_at alone would.
+        let in_row_band = pos2(400.0 + HEADER_W / 2.0, HEADER_H + 10.0);
+        assert!(m.cell_at(origin, in_row_band, 100, 100).is_some());
+        assert_eq!(
+            m.cell_at_frozen(origin, 400.0, origin.y, in_row_band, 100, 100),
+            None,
+        );
+        // Just past the row band a cell is found again.
+        let right = pos2(400.0 + HEADER_W + 5.0, HEADER_H + 10.0);
+        assert!(m
+            .cell_at_frozen(origin, 400.0, origin.y, right, 100, 100)
+            .is_some());
     }
 }
