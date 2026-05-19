@@ -49,12 +49,14 @@ pub enum NumberFormat {
     Thousands { decimals: u8 },
     /// Scientific notation — a mantissa and a power-of-ten exponent.
     Scientific { decimals: u8 },
-    /// A calendar date — the value, truncated to whole days, read as a
-    /// count of days since 1970-01-01 and shown as `YYYY-MM-DD`.
+    /// A calendar date — the value, rounded down to a whole day, read
+    /// as a count of days since 1970-01-01 and shown as `YYYY-MM-DD`.
     Date,
     /// A time of day — the value's fractional part (a fraction of a
     /// day) shown as `HH:MM:SS`.
     Time,
+    /// A date and time together — `YYYY-MM-DD HH:MM:SS`.
+    DateTime,
 }
 
 /// Which sides of a cell carry a border line.
@@ -185,13 +187,14 @@ pub fn render_number(value: f64, format: NumberFormat) -> Option<String> {
         NumberFormat::Scientific { decimals } => Some(format!("{:.*e}", decimals as usize, value)),
         NumberFormat::Date => Some(render_date(value)),
         NumberFormat::Time => Some(render_time(value)),
+        NumberFormat::DateTime => Some(format!("{} {}", render_date(value), render_time(value))),
     }
 }
 
-/// Render `value`, truncated to whole days, as a `YYYY-MM-DD` date —
-/// the day count measured from the 1970-01-01 epoch (day 0).
+/// Render `value`, rounded down to a whole day, as a `YYYY-MM-DD` date
+/// — the day count measured from the 1970-01-01 epoch (day 0).
 fn render_date(value: f64) -> String {
-    let (y, m, d) = civil_from_days(value.trunc() as i64);
+    let (y, m, d) = civil_from_days(value.floor() as i64);
     format!("{y:04}-{m:02}-{d:02}")
 }
 
@@ -416,8 +419,10 @@ mod tests {
         assert_eq!(date(789.0), Some("1972-02-29".to_string()));
         // Days before the epoch run negative.
         assert_eq!(date(-1.0), Some("1969-12-31".to_string()));
-        // A fractional value is truncated to whole days.
+        // A fractional value is rounded down to the day containing it.
         assert_eq!(date(31.9), Some("1970-02-01".to_string()));
+        // A pre-epoch fraction floors onto the previous day.
+        assert_eq!(date(-0.5), Some("1969-12-31".to_string()));
     }
 
     #[test]
@@ -434,6 +439,17 @@ mod tests {
         assert_eq!(time(-0.25), Some("18:00:00".to_string()));
         // One minute and one second past midnight.
         assert_eq!(time(61.0 / 86_400.0), Some("00:01:01".to_string()));
+    }
+
+    #[test]
+    fn datetime_format_combines_the_date_and_time() {
+        let dt = |n: f64| render_number(n, NumberFormat::DateTime);
+        assert_eq!(dt(0.0), Some("1970-01-01 00:00:00".to_string()));
+        // A whole day count plus half a day of time.
+        assert_eq!(dt(789.5), Some("1972-02-29 12:00:00".to_string()));
+        // A negative value floors to the earlier day, the time wrapping
+        // into it — a quarter-day before the epoch is that evening.
+        assert_eq!(dt(-0.25), Some("1969-12-31 18:00:00".to_string()));
     }
 
     #[test]
