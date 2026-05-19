@@ -153,6 +153,7 @@ enum CondKind {
     Equal,
     NotEqual,
     Between,
+    Contains,
     IsTrue,
     IsFalse,
     NonEmpty,
@@ -160,7 +161,7 @@ enum CondKind {
 }
 
 impl CondKind {
-    const ALL: [CondKind; 11] = [
+    const ALL: [CondKind; 12] = [
         CondKind::Greater,
         CondKind::GreaterEqual,
         CondKind::Less,
@@ -168,6 +169,7 @@ impl CondKind {
         CondKind::Equal,
         CondKind::NotEqual,
         CondKind::Between,
+        CondKind::Contains,
         CondKind::IsTrue,
         CondKind::IsFalse,
         CondKind::NonEmpty,
@@ -183,6 +185,7 @@ impl CondKind {
             CondKind::Equal => "equal to",
             CondKind::NotEqual => "not equal to",
             CondKind::Between => "between",
+            CondKind::Contains => "contains text",
             CondKind::IsTrue => "is TRUE",
             CondKind::IsFalse => "is FALSE",
             CondKind::NonEmpty => "non-empty",
@@ -201,6 +204,7 @@ impl CondKind {
                 | CondKind::Equal
                 | CondKind::NotEqual
                 | CondKind::Between
+                | CondKind::Contains
         )
     }
 
@@ -221,6 +225,7 @@ impl CondKind {
             Condition::EqualTo(_) => CondKind::Equal,
             Condition::NotEqualTo(_) => CondKind::NotEqual,
             Condition::Between(..) => CondKind::Between,
+            Condition::Contains(_) => CondKind::Contains,
             Condition::IsTrue => CondKind::IsTrue,
             Condition::IsFalse => CondKind::IsFalse,
             Condition::NonEmpty => CondKind::NonEmpty,
@@ -274,6 +279,13 @@ impl CondDraft {
                 self.threshold.trim().parse().ok()?,
                 self.threshold2.trim().parse().ok()?,
             ),
+            CondKind::Contains => {
+                let needle = self.threshold.trim();
+                if needle.is_empty() {
+                    return None;
+                }
+                Condition::Contains(needle.to_string())
+            }
             CondKind::IsTrue => Condition::IsTrue,
             CondKind::IsFalse => Condition::IsFalse,
             CondKind::NonEmpty => Condition::NonEmpty,
@@ -294,7 +306,7 @@ impl CondDraft {
     /// [`CondDraft::build`], for the editor's "Edit" button.
     fn from_rule(rule: &Rule) -> Self {
         let defaults = CondDraft::default();
-        let threshold = match rule.condition {
+        let threshold = match &rule.condition {
             Condition::GreaterThan(t)
             | Condition::LessThan(t)
             | Condition::EqualTo(t)
@@ -302,9 +314,10 @@ impl CondDraft {
             | Condition::GreaterOrEqual(t)
             | Condition::LessOrEqual(t)
             | Condition::Between(t, _) => t.to_string(),
+            Condition::Contains(s) => s.clone(),
             _ => defaults.threshold,
         };
-        let threshold2 = match rule.condition {
+        let threshold2 = match &rule.condition {
             Condition::Between(_, t) => t.to_string(),
             _ => defaults.threshold2,
         };
@@ -3096,6 +3109,7 @@ fn describe_condition(condition: &Condition) -> String {
             format_number(a.min(*b)),
             format_number(a.max(*b)),
         ),
+        Condition::Contains(s) => format!("text contains \"{s}\""),
         Condition::IsTrue => "value is TRUE".to_string(),
         Condition::IsFalse => "value is FALSE".to_string(),
         Condition::NonEmpty => "cell is non-empty".to_string(),
