@@ -66,6 +66,7 @@ pub const NUMBER_FORMATS: &[(NumberFormat, &str)] = &[
     (NumberFormat::Scientific { decimals: 2 }, "Scientific"),
     (NumberFormat::Date, "Date"),
     (NumberFormat::Time, "Time"),
+    (NumberFormat::DateTime, "Date & time"),
 ];
 
 /// A short label for a number format — used for the combo's selected
@@ -80,6 +81,7 @@ pub fn number_format_label(format: NumberFormat) -> &'static str {
         NumberFormat::Scientific { .. } => "Scientific",
         NumberFormat::Date => "Date",
         NumberFormat::Time => "Time",
+        NumberFormat::DateTime => "Date & time",
     }
 }
 
@@ -324,7 +326,7 @@ mod tests {
 
     #[test]
     fn number_formats_list_starts_with_general() {
-        assert_eq!(NUMBER_FORMATS.len(), 8);
+        assert_eq!(NUMBER_FORMATS.len(), 9);
         assert_eq!(NUMBER_FORMATS[0].0, NumberFormat::General);
     }
 
