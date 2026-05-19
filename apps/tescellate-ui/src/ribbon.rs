@@ -64,6 +64,7 @@ pub const NUMBER_FORMATS: &[(NumberFormat, &str)] = &[
     (NumberFormat::Percent { decimals: 0 }, "Percent"),
     (NumberFormat::Currency, "Currency"),
     (NumberFormat::Scientific { decimals: 2 }, "Scientific"),
+    (NumberFormat::Date, "Date"),
 ];
 
 /// A short label for a number format — used for the combo's selected
@@ -76,6 +77,7 @@ pub fn number_format_label(format: NumberFormat) -> &'static str {
         NumberFormat::Currency => "Currency",
         NumberFormat::Thousands { .. } => "Thousands",
         NumberFormat::Scientific { .. } => "Scientific",
+        NumberFormat::Date => "Date",
     }
 }
 
@@ -320,7 +322,7 @@ mod tests {
 
     #[test]
     fn number_formats_list_starts_with_general() {
-        assert_eq!(NUMBER_FORMATS.len(), 6);
+        assert_eq!(NUMBER_FORMATS.len(), 7);
         assert_eq!(NUMBER_FORMATS[0].0, NumberFormat::General);
     }
 
