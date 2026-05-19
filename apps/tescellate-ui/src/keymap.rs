@@ -139,7 +139,7 @@ pub const GESTURES: &[(&str, &str)] = &[
     ("Click a header", "Select the column or row"),
     ("Drag headers", "Select a column or row range"),
     ("Click the corner", "Select the whole sheet"),
-    ("Double-click a border", "Autofit the column"),
+    ("Double-click a border", "Autofit the column or row"),
     ("Right-click", "Cell actions menu"),
 ];
 

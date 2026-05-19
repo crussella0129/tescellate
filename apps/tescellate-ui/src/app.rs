@@ -2120,6 +2120,27 @@ impl TescellateApp {
         self.metrics.set_col_width(col, width);
     }
 
+    /// Set a row's height to fit its tallest cell's rendered text —
+    /// triggered by a double-click on the row's resize border. Each
+    /// cell is measured at its own font size.
+    fn autofit_row(&mut self, row: u32, painter: &egui::Painter) {
+        let heights = (0..COLS).map(|col| {
+            let text = self.cell_text(col, row);
+            if text.is_empty() {
+                0.0
+            } else {
+                let pts = self.formats.get((col, row)).font_size.points();
+                painter
+                    .layout_no_wrap(text, egui::FontId::proportional(pts), egui::Color32::BLACK)
+                    .size()
+                    .y
+            }
+        });
+        // 5.0 is the cell text's top/bottom inset in `draw_cell_text`.
+        let height = grid::fit_extent(heights, 2.0 * 5.0, grid::MIN_ROW_H);
+        self.metrics.set_row_height(row, height);
+    }
+
     /// The square cell under a pointer position, if any.
     fn cell_under(&self, response: &egui::Response, origin: egui::Pos2) -> Option<(u32, u32)> {
         response
@@ -2167,11 +2188,13 @@ impl TescellateApp {
             }
         }
 
-        // Double-clicking a column's border autofits it to its content.
+        // Double-clicking a column or row border autofits it to content.
         if response.double_clicked() {
             if let Some(p) = response.interact_pointer_pos() {
                 if let Some(col) = self.metrics.col_border_at(origin, p, COLS) {
                     self.autofit_column(col, &painter);
+                } else if let Some(row) = self.metrics.row_border_at(origin, p, ROWS) {
+                    self.autofit_row(row, &painter);
                 }
             }
         }
