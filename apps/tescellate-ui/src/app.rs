@@ -2861,22 +2861,24 @@ impl eframe::App for TescellateApp {
                 }
                 // Selection statistics, pushed to the right edge.
                 let stats = stats::selection_stats(&self.selection_values());
-                if stats.count > 0 {
+                if stats.nonempty > 0 {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let avg = stats.average.map(format_number).unwrap_or_default();
-                        let min = stats.min.map(format_number).unwrap_or_default();
-                        let max = stats.max.map(format_number).unwrap_or_default();
-                        ui.label(
-                            egui::RichText::new(format!(
+                        let text = if stats.count > 0 {
+                            let avg = stats.average.map(format_number).unwrap_or_default();
+                            let min = stats.min.map(format_number).unwrap_or_default();
+                            let max = stats.max.map(format_number).unwrap_or_default();
+                            format!(
                                 "Sum {}     Avg {}     Min {}     Max {}     Count {}",
                                 format_number(stats.sum),
                                 avg,
                                 min,
                                 max,
-                                stats.count,
-                            ))
-                            .weak(),
-                        );
+                                stats.nonempty,
+                            )
+                        } else {
+                            format!("Count {}", stats.nonempty)
+                        };
+                        ui.label(egui::RichText::new(text).weak());
                     });
                 }
             });
