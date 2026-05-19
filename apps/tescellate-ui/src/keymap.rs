@@ -94,6 +94,10 @@ pub enum Command {
     FillRight,
     /// Open the Find panel (Ctrl+F).
     OpenFind,
+    /// Jump to the next Find match (F3) — no-op when there is no query.
+    FindNext,
+    /// Jump to the previous Find match (Shift+F3).
+    FindPrev,
     /// Open the keyboard-shortcuts help overlay (F1).
     OpenHelp,
 }
@@ -125,6 +129,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+Z / Ctrl+Y", "Undo / redo"),
     ("Ctrl+D / Ctrl+R", "Fill down / right"),
     ("Ctrl+F", "Find & replace"),
+    ("F3 / Shift+F3", "Find next / previous match"),
     ("F1", "This shortcuts list"),
 ];
 
@@ -190,6 +195,8 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         // Ctrl+Shift+R is alignment (matched above); plain Ctrl+R fills.
         Key::R if ctrl => Command::FillRight,
         Key::F if ctrl => Command::OpenFind,
+        Key::F3 if shift => Command::FindPrev,
+        Key::F3 => Command::FindNext,
         Key::F1 => Command::OpenHelp,
         Key::Escape => Command::ClearMarquee,
         _ => return None,
@@ -481,6 +488,12 @@ mod tests {
         assert_eq!(nav(Key::F, false, true), Some(Command::OpenFind));
         // Plain F is an ordinary typed character, not a command.
         assert_eq!(nav(Key::F, false, false), None);
+    }
+
+    #[test]
+    fn f3_steps_to_the_next_or_previous_find_match() {
+        assert_eq!(nav(Key::F3, false, false), Some(Command::FindNext));
+        assert_eq!(nav(Key::F3, true, false), Some(Command::FindPrev));
     }
 
     #[test]
