@@ -2539,18 +2539,28 @@ impl TescellateApp {
                 ui.close_menu();
             }
         });
-        // A noted hex shows its note as a tooltip while it is hovered.
+        // A hovered hex shows its error detail, or failing that its note.
         if let Some(p) = response.hover_pos() {
             let local = Point2::new(p.x - origin.x, p.y - origin.y);
             if let Some(coord) = self.hex_lattice.cell_at(local) {
-                if hex_in_view(coord) && self.hex_notes.has(coord) {
-                    let note = self.hex_notes.get(coord).to_string();
-                    egui::show_tooltip_at_pointer(
-                        ui.ctx(),
-                        ui.layer_id(),
-                        egui::Id::new("hex_note_tooltip"),
-                        |ui| ui.label(note),
-                    );
+                if hex_in_view(coord) {
+                    if let CellValue::Error(e) = self.hex_cell_value(coord) {
+                        let detail = error_detail(&e);
+                        egui::show_tooltip_at_pointer(
+                            ui.ctx(),
+                            ui.layer_id(),
+                            egui::Id::new("hex_error_tooltip"),
+                            |ui| ui.label(detail),
+                        );
+                    } else if self.hex_notes.has(coord) {
+                        let note = self.hex_notes.get(coord).to_string();
+                        egui::show_tooltip_at_pointer(
+                            ui.ctx(),
+                            ui.layer_id(),
+                            egui::Id::new("hex_note_tooltip"),
+                            |ui| ui.label(note),
+                        );
+                    }
                 }
             }
         }
