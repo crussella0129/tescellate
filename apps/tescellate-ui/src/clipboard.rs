@@ -26,6 +26,17 @@ pub struct CopiedCell {
     pub value: Option<String>,
 }
 
+/// Which form of a captured cell a paste writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasteMode {
+    /// The captured source on the same lattice, the value across one —
+    /// the ordinary paste, so a formula carries wherever it still can.
+    Normal,
+    /// The evaluated value always, even on the same lattice — a paste
+    /// that strips formulas down to their result.
+    ValuesOnly,
+}
+
 /// A rectangular block of captured cells, stored row-major — and, when
 /// the block was cut rather than copied, the origin to clear on paste.
 #[derive(Debug, Clone, Default)]
@@ -111,6 +122,21 @@ impl Clipboard {
             cell.value.clone()
         }
     }
+
+    /// The text a paste of `cell` writes under `mode`. `Normal` defers to
+    /// [`source_for`](Self::source_for); `ValuesOnly` writes the evaluated
+    /// value even on the same lattice, so the paste drops the formula.
+    pub fn paste_text(
+        &self,
+        cell: &CopiedCell,
+        target_is_hex: bool,
+        mode: PasteMode,
+    ) -> Option<String> {
+        match mode {
+            PasteMode::Normal => self.source_for(cell, target_is_hex),
+            PasteMode::ValuesOnly => cell.value.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -188,5 +214,26 @@ mod tests {
         let (.., hcell) = h.entries().next().unwrap();
         assert_eq!(h.source_for(hcell, false), Some("12".to_string()));
         assert_eq!(h.source_for(hcell, true), Some("=H(1,0)".to_string()));
+    }
+
+    #[test]
+    fn values_only_paste_drops_the_formula_on_the_same_lattice() {
+        let c = Clipboard::capture(1, 1, vec![formula("=SUM(B2:B4)", "60")], false);
+        let (.., cell) = c.entries().next().unwrap();
+        // Normal: a same-lattice paste keeps the source.
+        assert_eq!(
+            c.paste_text(cell, false, PasteMode::Normal),
+            Some("=SUM(B2:B4)".to_string()),
+        );
+        // ValuesOnly: the evaluated value, even on the same lattice.
+        assert_eq!(
+            c.paste_text(cell, false, PasteMode::ValuesOnly),
+            Some("60".to_string()),
+        );
+        // Across a lattice the two modes agree — a source can't carry.
+        assert_eq!(
+            c.paste_text(cell, true, PasteMode::Normal),
+            c.paste_text(cell, true, PasteMode::ValuesOnly),
+        );
     }
 }
