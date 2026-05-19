@@ -1124,8 +1124,11 @@ impl TescellateApp {
                 if self.cond_rules.is_empty() {
                     ui.label(egui::RichText::new("No rules yet — add one below.").weak());
                 }
+                let count = self.cond_rules.len();
                 let mut remove = None;
                 let mut edit = None;
+                let mut raise = None;
+                let mut lower = None;
                 for (i, rule) in self.cond_rules.iter().enumerate() {
                     ui.horizontal(|ui| {
                         if let Some(fill) = rule.format.fill {
@@ -1134,6 +1137,18 @@ impl TescellateApp {
                             ui.painter().rect_filled(rect, 2.0, fill);
                         }
                         ui.label(describe_condition(&rule.condition));
+                        if ui
+                            .add_enabled(i > 0, egui::Button::new("↑").small())
+                            .clicked()
+                        {
+                            raise = Some(i);
+                        }
+                        if ui
+                            .add_enabled(i + 1 < count, egui::Button::new("↓").small())
+                            .clicked()
+                        {
+                            lower = Some(i);
+                        }
                         if ui.small_button("Edit").clicked() {
                             edit = Some(i);
                         }
@@ -1149,6 +1164,14 @@ impl TescellateApp {
                     self.cond_rules.remove(i);
                 } else if let Some(i) = remove {
                     self.cond_rules.remove(i);
+                } else if let Some(i) = raise {
+                    if let Some((a, b)) = conditional::swap_for_move(count, i, true) {
+                        self.cond_rules.swap(a, b);
+                    }
+                } else if let Some(i) = lower {
+                    if let Some((a, b)) = conditional::swap_for_move(count, i, false) {
+                        self.cond_rules.swap(a, b);
+                    }
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
