@@ -2109,13 +2109,14 @@ impl TescellateApp {
         self.apply_edits(sheet, targets);
     }
 
-    /// Resize the header border under an in-progress drag. `col_hdr_origin`
-    /// is the frozen column header's origin; `origin` the grid's.
+    /// Resize the header border under an in-progress drag. The headers
+    /// are both frozen, so the hit-tests use their floating origins —
+    /// `col_hdr_origin` for column borders, `row_hdr_origin` for row.
     fn handle_resize(
         &mut self,
         response: &egui::Response,
-        origin: egui::Pos2,
         col_hdr_origin: egui::Pos2,
+        row_hdr_origin: egui::Pos2,
     ) {
         if response.drag_started() {
             if let Some(p) = response.interact_pointer_pos() {
@@ -2123,7 +2124,11 @@ impl TescellateApp {
                     .metrics
                     .col_border_at(col_hdr_origin, p, COLS)
                     .map(Resize::Column)
-                    .or_else(|| self.metrics.row_border_at(origin, p, ROWS).map(Resize::Row));
+                    .or_else(|| {
+                        self.metrics
+                            .row_border_at(row_hdr_origin, p, ROWS)
+                            .map(Resize::Row)
+                    });
             }
         }
         if response.dragged() {
@@ -2191,11 +2196,13 @@ impl TescellateApp {
         &self,
         response: &egui::Response,
         origin: egui::Pos2,
+        header_x: f32,
         header_y: f32,
     ) -> Option<(u32, u32)> {
-        response
-            .interact_pointer_pos()
-            .and_then(|p| self.metrics.cell_at_frozen(origin, header_y, p, COLS, ROWS))
+        response.interact_pointer_pos().and_then(|p| {
+            self.metrics
+                .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
+        })
     }
 
     fn draw_grid(&mut self, ui: &mut egui::Ui) {
@@ -2205,10 +2212,14 @@ impl TescellateApp {
         );
         let (response, painter) = ui.allocate_painter(size, egui::Sense::click_and_drag());
         let origin = response.rect.min;
-        // The column header is frozen: it floats to the viewport's top
-        // edge so the A/B/C strip stays visible as the cells scroll.
+        // Both headers are frozen: each floats to its viewport edge so
+        // the A/B/C strip and the 1/2/3 column stay visible while the
+        // cells scroll. The corner box rides them both.
+        let header_x = ui.clip_rect().left();
         let header_y = ui.clip_rect().top();
         let col_hdr_origin = egui::pos2(origin.x, header_y);
+        let row_hdr_origin = egui::pos2(header_x, origin.y);
+        let corner_origin = egui::pos2(header_x, header_y);
 
         // Keep the active cell in view when the keyboard moves it past a
         // scroll edge. `None` alignment scrolls the minimum amount, so an
@@ -2230,15 +2241,22 @@ impl TescellateApp {
                 .is_some()
             {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeColumn);
-            } else if self.metrics.row_border_at(origin, p, ROWS).is_some() {
+            } else if self
+                .metrics
+                .row_border_at(row_hdr_origin, p, ROWS)
+                .is_some()
+            {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeRow);
             }
         }
-        self.handle_resize(&response, origin, col_hdr_origin);
+        self.handle_resize(&response, col_hdr_origin, row_hdr_origin);
 
         // A hovered cell shows its error detail, or failing that its note.
         if let Some(p) = response.hover_pos() {
-            if let Some(cell) = self.metrics.cell_at_frozen(origin, header_y, p, COLS, ROWS) {
+            if let Some(cell) = self
+                .metrics
+                .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
+            {
                 if let CellValue::Error(e) = self.cell_value(cell.0, cell.1) {
                     let detail = error_detail(&e);
                     egui::show_tooltip_at_pointer(
@@ -2264,7 +2282,7 @@ impl TescellateApp {
             if let Some(p) = response.interact_pointer_pos() {
                 if let Some(col) = self.metrics.col_border_at(col_hdr_origin, p, COLS) {
                     self.autofit_column(col, &painter);
-                } else if let Some(row) = self.metrics.row_border_at(origin, p, ROWS) {
+                } else if let Some(row) = self.metrics.row_border_at(row_hdr_origin, p, ROWS) {
                     self.autofit_row(row, &painter);
                 }
             }
@@ -2279,12 +2297,13 @@ impl TescellateApp {
                         self.commit_edit();
                         self.header_drag = Some(HeaderDrag::Column(col));
                         self.selection = Selection::column(col, ROWS);
-                    } else if let Some(row) = self.metrics.row_header_at(origin, p, ROWS) {
+                    } else if let Some(row) = self.metrics.row_header_at(row_hdr_origin, p, ROWS) {
                         self.commit_edit();
                         self.header_drag = Some(HeaderDrag::Row(row));
                         self.selection = Selection::row(row, COLS);
-                    } else if let Some(cell) =
-                        self.metrics.cell_at_frozen(origin, header_y, p, COLS, ROWS)
+                    } else if let Some(cell) = self
+                        .metrics
+                        .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
                     {
                         self.commit_edit();
                         self.selection.collapse_to(cell);
@@ -2302,8 +2321,9 @@ impl TescellateApp {
                             self.selection = Selection::row_range(r0, r1, COLS);
                         }
                         None => {
-                            if let Some(cell) =
-                                self.metrics.cell_at_frozen(origin, header_y, p, COLS, ROWS)
+                            if let Some(cell) = self
+                                .metrics
+                                .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
                             {
                                 self.selection.extend_to(cell);
                             }
@@ -2316,7 +2336,7 @@ impl TescellateApp {
             self.header_drag = None;
         }
         if response.clicked() {
-            if let Some(cell) = self.cell_under(&response, origin, header_y) {
+            if let Some(cell) = self.cell_under(&response, origin, header_x, header_y) {
                 self.commit_edit();
                 // Shift-click extends the range; a plain click resets it.
                 if ui.input(|i| i.modifiers.shift) {
@@ -2336,14 +2356,14 @@ impl TescellateApp {
                     } else {
                         Selection::column(col, ROWS)
                     };
-                } else if let Some(row) = self.metrics.row_header_at(origin, p, ROWS) {
+                } else if let Some(row) = self.metrics.row_header_at(row_hdr_origin, p, ROWS) {
                     self.commit_edit();
                     self.selection = if shift {
                         Selection::row_range(self.selection.anchor.1, row, COLS)
                     } else {
                         Selection::row(row, COLS)
                     };
-                } else if grid::in_header_corner(origin, p) {
+                } else if grid::in_header_corner(corner_origin, p) {
                     self.commit_edit();
                     self.selection = Selection::all(COLS, ROWS);
                 }
@@ -2351,7 +2371,7 @@ impl TescellateApp {
         }
         // A double-click on a cell begins editing it in place.
         if response.double_clicked() {
-            if let Some(cell) = self.cell_under(&response, origin, header_y) {
+            if let Some(cell) = self.cell_under(&response, origin, header_x, header_y) {
                 self.selection.collapse_to(cell);
                 self.begin_edit(None);
             }
@@ -2360,7 +2380,7 @@ impl TescellateApp {
         // already inside the selection, which a right-click keeps — then
         // opens a context menu of the common cell actions.
         if response.secondary_clicked() {
-            if let Some(cell) = self.cell_under(&response, origin, header_y) {
+            if let Some(cell) = self.cell_under(&response, origin, header_x, header_y) {
                 if !self.selection.contains(cell) {
                     self.commit_edit();
                     self.selection.collapse_to(cell);
@@ -2432,26 +2452,6 @@ impl TescellateApp {
         let border_stroke = egui::Stroke::new(2.0, text_color);
         let font = egui::FontId::proportional(13.0);
 
-        // Row-number headers.
-        for r in 0..ROWS {
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(origin.x, origin.y + self.metrics.row_top(r)),
-                egui::vec2(grid::HEADER_W, self.metrics.row_height(r)),
-            );
-            painter.rect_filled(rect, 0.0, header_bg);
-            // Tint the active cell's row header.
-            if r == self.selection.cursor.1 {
-                painter.rect_filled(rect, 0.0, sel_tint);
-            }
-            painter.rect_stroke(rect, 0.0, grid_line);
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                (r + 1).to_string(),
-                font.clone(),
-                text_color,
-            );
-        }
         // Cells: fill, the selection tint, border, and the formatted
         // value. The cell being edited is left blank for the overlay.
         let cursor = self.selection.cursor;
@@ -2606,8 +2606,31 @@ impl TescellateApp {
             }
         }
 
-        // The frozen column header — drawn last and floated to the
-        // viewport's top edge, so it stays above the scrolled cells.
+        // The frozen row header — floated to the viewport's left edge
+        // so the 1/2/3 column stays visible as the cells scroll right.
+        // Drawn after the cells so it overpaints any column that scrolls
+        // beneath it.
+        for r in 0..ROWS {
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(header_x, origin.y + self.metrics.row_top(r)),
+                egui::vec2(grid::HEADER_W, self.metrics.row_height(r)),
+            );
+            painter.rect_filled(rect, 0.0, header_bg);
+            // Tint the active cell's row header.
+            if r == self.selection.cursor.1 {
+                painter.rect_filled(rect, 0.0, sel_tint);
+            }
+            painter.rect_stroke(rect, 0.0, grid_line);
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                (r + 1).to_string(),
+                font.clone(),
+                text_color,
+            );
+        }
+        // The frozen column header — floated to the viewport's top edge
+        // so the A/B/C strip stays visible as the cells scroll down.
         for c in 0..COLS {
             let rect = egui::Rect::from_min_size(
                 egui::pos2(origin.x + self.metrics.col_left(c), header_y),
@@ -2627,6 +2650,13 @@ impl TescellateApp {
                 text_color,
             );
         }
+        // The header corner — drawn last so it always sits above both
+        // frozen header bands, even when one of them scrolls into the
+        // other's track.
+        let corner_rect =
+            egui::Rect::from_min_size(corner_origin, egui::vec2(grid::HEADER_W, grid::HEADER_H));
+        painter.rect_filled(corner_rect, 0.0, header_bg);
+        painter.rect_stroke(corner_rect, 0.0, grid_line);
     }
 
     /// Paint one hexagon — its polygon and cell value — using vertices
