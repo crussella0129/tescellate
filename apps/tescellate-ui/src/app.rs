@@ -62,6 +62,14 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::SHIFT, egui::Key::ArrowDown),
     (egui::Modifiers::SHIFT, egui::Key::ArrowLeft),
     (egui::Modifiers::SHIFT, egui::Key::ArrowRight),
+    (egui::Modifiers::CTRL, egui::Key::ArrowUp),
+    (egui::Modifiers::CTRL, egui::Key::ArrowDown),
+    (egui::Modifiers::CTRL, egui::Key::ArrowLeft),
+    (egui::Modifiers::CTRL, egui::Key::ArrowRight),
+    (CTRL_SHIFT, egui::Key::ArrowUp),
+    (CTRL_SHIFT, egui::Key::ArrowDown),
+    (CTRL_SHIFT, egui::Key::ArrowLeft),
+    (CTRL_SHIFT, egui::Key::ArrowRight),
     (egui::Modifiers::NONE, egui::Key::Tab),
     (egui::Modifiers::SHIFT, egui::Key::Tab),
     (egui::Modifiers::NONE, egui::Key::Enter),
@@ -79,8 +87,10 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::NONE, egui::Key::F1),
     (egui::Modifiers::NONE, egui::Key::Delete),
     (egui::Modifiers::NONE, egui::Key::Backspace),
+    (egui::Modifiers::CTRL, egui::Key::A),
     (egui::Modifiers::CTRL, egui::Key::B),
     (egui::Modifiers::CTRL, egui::Key::I),
+    (egui::Modifiers::CTRL, egui::Key::U),
     (egui::Modifiers::CTRL, egui::Key::C),
     (egui::Modifiers::CTRL, egui::Key::V),
     (egui::Modifiers::CTRL, egui::Key::X),
@@ -90,6 +100,7 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::CTRL, egui::Key::D),
     (egui::Modifiers::CTRL, egui::Key::R),
     (egui::Modifiers::CTRL, egui::Key::F),
+    (CTRL_SHIFT, egui::Key::V),
     (CTRL_SHIFT, egui::Key::L),
     (CTRL_SHIFT, egui::Key::E),
     (CTRL_SHIFT, egui::Key::R),
@@ -3113,6 +3124,17 @@ impl eframe::App for TescellateApp {
         for command in self.collect_commands(ctx) {
             self.apply(command, ctx);
         }
+
+        // Menu bar above the ribbon — File / Edit / Format / Data /
+        // View / Help. Items dispatch through the same `RibbonAction`
+        // pipeline so the ribbon and menu share handlers.
+        egui::TopBottomPanel::top("tescellate_menu_bar").show(ctx, |ui| {
+            let can_undo = self.history.can_undo();
+            let can_redo = self.history.can_redo();
+            if let Some(action) = ribbon::menu_bar(ui, can_undo, can_redo) {
+                self.apply_ribbon(action, ctx);
+            }
+        });
 
         egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| match self.active {
             ActiveSheet::Square => {
