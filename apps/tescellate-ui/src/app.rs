@@ -91,6 +91,7 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (CTRL_SHIFT, egui::Key::L),
     (CTRL_SHIFT, egui::Key::E),
     (CTRL_SHIFT, egui::Key::R),
+    (CTRL_SHIFT, egui::Key::Num8),
 ];
 
 /// Key combos handled while editing. Arrows and text are deliberately
@@ -641,6 +642,7 @@ impl TescellateApp {
             Command::Move(dir) => self.move_active(dir),
             Command::Extend(dir) => self.extend_active(dir),
             Command::SelectAll => self.select_all(),
+            Command::SelectRegion => self.select_region(),
             Command::Jump(dir) => self.jump_active(dir),
             Command::JumpExtend(dir) => self.jump_extend_active(dir),
             Command::MoveToRowStart => match self.active {

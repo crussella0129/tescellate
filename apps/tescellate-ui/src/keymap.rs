@@ -40,6 +40,8 @@ pub enum Command {
     JumpExtend(Dir),
     /// Select the whole sheet (Ctrl+A).
     SelectAll,
+    /// Select the contiguous data region around the cursor (Ctrl+Shift+8).
+    SelectRegion,
     /// Move to the first column of the current row (Home).
     MoveToRowStart,
     /// Move to the top-left cell (Ctrl+Home).
@@ -99,6 +101,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl + arrows", "Jump to the data edge"),
     ("Ctrl+Shift + arrows", "Extend to the data edge"),
     ("Ctrl+A", "Select the whole sheet"),
+    ("Ctrl+Shift+8", "Select the data region"),
     ("Tab / Shift+Tab", "Move right / left"),
     ("Enter / Shift+Enter", "Move down / up"),
     ("Home", "Jump to the row start"),
@@ -145,6 +148,7 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::F2 => Command::BeginEdit { replace_with: None },
         Key::Delete | Key::Backspace => Command::Clear,
         Key::A if ctrl => Command::SelectAll,
+        Key::Num8 if ctrl && shift => Command::SelectRegion,
         // Formatting shortcuts. Plain B/I/L/E/R are not commands — typed
         // text begins an edit instead — so each is guarded on Ctrl.
         Key::B if ctrl => Command::ToggleBold,
@@ -446,6 +450,13 @@ mod tests {
         assert_eq!(nav(Key::A, false, true), Some(Command::SelectAll));
         // Plain A is an ordinary typed character, not a command.
         assert_eq!(nav(Key::A, false, false), None);
+    }
+
+    #[test]
+    fn ctrl_shift_8_selects_the_region() {
+        assert_eq!(nav(Key::Num8, true, true), Some(Command::SelectRegion));
+        // Ctrl alone (no Shift) is not the region command.
+        assert_eq!(nav(Key::Num8, false, true), None);
     }
 
     #[test]
