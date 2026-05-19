@@ -8,7 +8,7 @@
 //! interactive too — both sheets share the pure `keymap` command layer.
 
 use eframe::egui;
-use tescellate_core::{CellValue, SheetId};
+use tescellate_core::{CellError, CellValue, SheetId};
 use tescellate_formula::WorkbookEngine;
 use tescellate_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
 use tescellate_tess::{Lattice, LatticeKind, Point2};
@@ -2950,6 +2950,23 @@ fn hex_current_region(
 /// Render a cell value with the engine's natural formatting — no number
 /// format applied. Used for the hex sheet and as the square sheet's
 /// fallback for non-numeric values.
+/// The Excel-style short code for a formula error — what an errored
+/// cell displays.
+fn error_code(err: &CellError) -> &'static str {
+    match err {
+        CellError::Ref => "#REF!",
+        CellError::Cycle => "#CYCLE!",
+        CellError::DivZero => "#DIV/0!",
+        CellError::Num => "#NUM!",
+        CellError::Value => "#VALUE!",
+        CellError::Lang(_) => "#PARSE!",
+        CellError::Compile(_) => "#COMPILE!",
+        CellError::Timeout => "#TIMEOUT!",
+        CellError::Spill => "#SPILL!",
+        CellError::StaleFunction => "#STALE!",
+    }
+}
+
 fn natural_text(value: CellValue) -> String {
     match value {
         CellValue::Empty => String::new(),
@@ -2957,7 +2974,7 @@ fn natural_text(value: CellValue) -> String {
         CellValue::Integer(i) => i.to_string(),
         CellValue::Bool(b) => if b { "TRUE" } else { "FALSE" }.to_string(),
         CellValue::Text(t) => t,
-        CellValue::Error(_) => "#ERROR".to_string(),
+        CellValue::Error(e) => error_code(&e).to_string(),
         CellValue::Array(_) => "{array}".to_string(),
         _ => String::new(),
     }
@@ -3127,6 +3144,20 @@ mod tests {
         assert_eq!(natural_text(CellValue::Bool(true)), "TRUE");
         assert_eq!(natural_text(CellValue::Bool(false)), "FALSE");
         assert_eq!(natural_text(CellValue::Text("hi".to_string())), "hi");
+    }
+
+    #[test]
+    fn error_code_maps_to_excel_style_codes() {
+        assert_eq!(error_code(&CellError::DivZero), "#DIV/0!");
+        assert_eq!(error_code(&CellError::Ref), "#REF!");
+        assert_eq!(error_code(&CellError::Value), "#VALUE!");
+        assert_eq!(error_code(&CellError::Num), "#NUM!");
+        assert_eq!(error_code(&CellError::Lang("bad token".into())), "#PARSE!");
+        // The mapping flows through natural_text.
+        assert_eq!(
+            natural_text(CellValue::Error(CellError::DivZero)),
+            "#DIV/0!",
+        );
     }
 
     #[test]
