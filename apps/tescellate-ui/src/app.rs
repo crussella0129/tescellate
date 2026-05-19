@@ -2121,14 +2121,14 @@ impl TescellateApp {
     /// Set a column's width to fit its widest cell's rendered text —
     /// triggered by a double-click on the column's resize border.
     fn autofit_column(&mut self, col: u32, painter: &egui::Painter) {
-        let font = egui::FontId::proportional(13.0);
         let widths = (0..ROWS).map(|row| {
             let text = self.cell_text(col, row);
             if text.is_empty() {
                 0.0
             } else {
+                let pts = self.formats.get((col, row)).font_size.points();
                 painter
-                    .layout_no_wrap(text, font.clone(), egui::Color32::BLACK)
+                    .layout_no_wrap(text, egui::FontId::proportional(pts), egui::Color32::BLACK)
                     .size()
                     .x
             }
