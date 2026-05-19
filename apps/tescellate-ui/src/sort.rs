@@ -46,6 +46,25 @@ pub fn compare_values(a: &CellValue, b: &CellValue) -> Ordering {
     })
 }
 
+/// The row order that sorts `keys`. `row_order(keys, ascending)[i]` is
+/// the index, in the original `keys`, of the row that belongs at sorted
+/// position `i` — so reordering a table's other columns through this
+/// permutation moves whole rows together. The sort is stable: rows
+/// whose keys compare equal keep their original relative order, in
+/// either direction.
+pub fn row_order(keys: &[CellValue], ascending: bool) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..keys.len()).collect();
+    order.sort_by(|&a, &b| {
+        let ord = compare_values(&keys[a], &keys[b]);
+        if ascending {
+            ord
+        } else {
+            ord.reverse()
+        }
+    });
+    order
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,5 +121,34 @@ mod tests {
             compare_values(&CellValue::Bool(true), &CellValue::Empty),
             Ordering::Less,
         );
+    }
+
+    #[test]
+    fn row_order_sorts_indices_by_their_keys() {
+        let keys = [num(30.0), num(10.0), num(20.0)];
+        // Ascending 10, 20, 30 — original indices 1, 2, 0.
+        assert_eq!(row_order(&keys, true), vec![1, 2, 0]);
+        // Descending reverses the order.
+        assert_eq!(row_order(&keys, false), vec![0, 2, 1]);
+    }
+
+    #[test]
+    fn row_order_is_stable_for_equal_keys() {
+        // Indices 0 and 2 share the key 5; a stable sort keeps 0 before 2.
+        let keys = [num(5.0), text("a"), num(5.0), text("b")];
+        let asc = row_order(&keys, true);
+        let p0 = asc.iter().position(|&i| i == 0).unwrap();
+        let p2 = asc.iter().position(|&i| i == 2).unwrap();
+        assert!(p0 < p2);
+        // Equal keys do not flip when the sort is reversed either.
+        let desc = row_order(&keys, false);
+        let d0 = desc.iter().position(|&i| i == 0).unwrap();
+        let d2 = desc.iter().position(|&i| i == 2).unwrap();
+        assert!(d0 < d2);
+    }
+
+    #[test]
+    fn row_order_of_no_keys_is_empty() {
+        assert!(row_order(&[], true).is_empty());
     }
 }

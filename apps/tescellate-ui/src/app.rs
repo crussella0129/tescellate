@@ -996,58 +996,53 @@ impl TescellateApp {
         }
     }
 
-    /// Sort the cursor's column over the selected row span by evaluated
-    /// value — ascending, or descending when `ascending` is false. The
-    /// cell sources move with their values. One undo step. On the hex
-    /// sheet this sorts the cursor's q-line down the r-axis.
+    /// Sort the selected block by the cursor's column, whole rows moving
+    /// together — ascending, or descending when `ascending` is false. A
+    /// stable sort: rows with equal keys keep their order. Cell sources
+    /// move with their values. One undo step. On the hex sheet the
+    /// cursor's q-line is the key, the rows running down the r-axis.
     fn sort_selection(&mut self, ascending: bool) {
-        let cmp = |a: &(CellValue, String), b: &(CellValue, String)| {
-            let ord = sort::compare_values(&a.0, &b.0);
-            if ascending {
-                ord
-            } else {
-                ord.reverse()
-            }
-        };
         match self.active {
             ActiveSheet::Square => {
-                let ((_, min_r), (_, max_r)) = self.selection.bounds();
-                let col = self.selection.cursor.0;
-                let mut pairs: Vec<(CellValue, String)> = (min_r..=max_r)
-                    .map(|r| (self.cell_value(col, r), self.cell_source(col, r)))
+                let ((min_c, min_r), (max_c, max_r)) = self.selection.bounds();
+                let key_col = self.selection.cursor.0;
+                let keys: Vec<CellValue> = (min_r..=max_r)
+                    .map(|r| self.cell_value(key_col, r))
                     .collect();
-                pairs.sort_by(cmp);
-                let targets: Vec<(String, Option<String>)> = pairs
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, (_, source))| {
+                let order = sort::row_order(&keys, ascending);
+                let mut targets: Vec<(String, Option<String>)> = Vec::new();
+                for c in min_c..=max_c {
+                    let sources: Vec<String> =
+                        (min_r..=max_r).map(|r| self.cell_source(c, r)).collect();
+                    for (i, &src_row) in order.iter().enumerate() {
                         let r = min_r + i as u32;
+                        let source = sources[src_row].clone();
                         let cell = (!source.is_empty()).then_some(source);
-                        (grid::cell_address(col, r), cell)
-                    })
-                    .collect();
+                        targets.push((grid::cell_address(c, r), cell));
+                    }
+                }
                 self.commit_edit();
                 self.apply_edits(self.square_sheet, targets);
             }
             ActiveSheet::Hex => {
-                let ((_, min_r), (_, max_r)) = self.hex_selection.bounds();
-                let q = self.hex_selection.cursor.q;
-                let mut pairs: Vec<(CellValue, String)> = (min_r..=max_r)
-                    .map(|r| {
-                        let c = HexCoord::new(q, r);
-                        (self.hex_cell_value(c), self.hex_cell_source(c))
-                    })
+                let ((min_q, min_r), (max_q, max_r)) = self.hex_selection.bounds();
+                let key_q = self.hex_selection.cursor.q;
+                let keys: Vec<CellValue> = (min_r..=max_r)
+                    .map(|r| self.hex_cell_value(HexCoord::new(key_q, r)))
                     .collect();
-                pairs.sort_by(cmp);
-                let targets: Vec<(String, Option<String>)> = pairs
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, (_, source))| {
+                let order = sort::row_order(&keys, ascending);
+                let mut targets: Vec<(String, Option<String>)> = Vec::new();
+                for q in min_q..=max_q {
+                    let sources: Vec<String> = (min_r..=max_r)
+                        .map(|r| self.hex_cell_source(HexCoord::new(q, r)))
+                        .collect();
+                    for (i, &src_row) in order.iter().enumerate() {
                         let r = min_r + i as i32;
+                        let source = sources[src_row].clone();
                         let cell = (!source.is_empty()).then_some(source);
-                        (hex_address(HexCoord::new(q, r)), cell)
-                    })
-                    .collect();
+                        targets.push((hex_address(HexCoord::new(q, r)), cell));
+                    }
+                }
                 self.commit_edit();
                 self.apply_edits(self.hex_sheet, targets);
             }
