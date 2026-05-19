@@ -713,6 +713,23 @@ impl TescellateApp {
         }
     }
 
+    /// Expand the selection to the current data region around the cursor
+    /// — the contiguous block of non-empty cells, Excel's "current
+    /// region". Square sheet only; the active cell lands at its top-left.
+    fn select_region(&mut self) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let ((min_c, min_r), (max_c, max_r)) =
+            grid::current_region(self.selection.cursor, COLS, ROWS, |c, r| {
+                self.square_occupied(c, r)
+            });
+        self.selection = Selection {
+            anchor: (max_c, max_r),
+            cursor: (min_c, min_r),
+        };
+    }
+
     /// Apply a formatting action from the ribbon across the selection.
     fn apply_ribbon(&mut self, action: RibbonAction, ctx: &egui::Context) {
         match action {
@@ -2059,6 +2076,10 @@ impl TescellateApp {
                 ui.close_menu();
             }
             ui.separator();
+            if ui.button("Select region").clicked() {
+                self.select_region();
+                ui.close_menu();
+            }
             if ui.button("Toggle checkbox").clicked() {
                 self.toggle_widget_cells();
                 ui.close_menu();
