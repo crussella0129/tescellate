@@ -405,6 +405,13 @@ pub struct TescellateApp {
     metrics: GridMetrics,
     /// `Some` while a header border is being dragged.
     resizing: Option<Resize>,
+    /// The pointer position when the user pressed the button — `Some`
+    /// while a press is active. Captured BEFORE egui's drag threshold
+    /// is crossed, so the resize hit-test reflects where the user
+    /// clicked rather than the position the pointer has moved to by
+    /// the time `drag_started` fires (which can be 5+ pixels off the
+    /// border).
+    press_pos: Option<egui::Pos2>,
     /// `Some` while a column or row header is being dragged to sweep a
     /// range selection.
     header_drag: Option<HeaderDrag>,
@@ -516,6 +523,7 @@ impl TescellateApp {
             edit: None,
             metrics: GridMetrics::new(),
             resizing: None,
+            press_pos: None,
             header_drag: None,
             formats: FormatMap::new(),
             hex_formats: {
@@ -2112,6 +2120,13 @@ impl TescellateApp {
     /// Resize the header border under an in-progress drag. The headers
     /// are both frozen, so the hit-tests use their floating origins —
     /// `col_hdr_origin` for column borders, `row_hdr_origin` for row.
+    ///
+    /// The hit-test runs on the **press position** captured in
+    /// [`Self::press_pos`] rather than the pointer's position at the
+    /// moment `drag_started` fires. egui's drag threshold lets the
+    /// pointer travel 5+ pixels before that event arrives — far enough
+    /// to leave the border's grab zone and have the click be misread
+    /// as a header-select drag.
     fn handle_resize(
         &mut self,
         response: &egui::Response,
@@ -2119,7 +2134,7 @@ impl TescellateApp {
         row_hdr_origin: egui::Pos2,
     ) {
         if response.drag_started() {
-            if let Some(p) = response.interact_pointer_pos() {
+            if let Some(p) = self.press_pos.or_else(|| response.interact_pointer_pos()) {
                 self.resizing = self
                     .metrics
                     .col_border_at(col_hdr_origin, p, COLS)
@@ -2221,6 +2236,19 @@ impl TescellateApp {
         let row_hdr_origin = egui::pos2(header_x, origin.y);
         let corner_origin = egui::pos2(header_x, header_y);
 
+        // Capture the press position the moment the button goes down,
+        // before egui's drag threshold has had a chance to fire — its
+        // ~5-pixel slop is enough to leave a border's grab zone and
+        // make a resize attempt read as a header-select drag instead.
+        // `interact_pointer_pos` is `Some` while a press is active, so
+        // the None → Some transition is the press frame.
+        let interact_pos = response.interact_pointer_pos();
+        match (self.press_pos, interact_pos) {
+            (None, Some(p)) => self.press_pos = Some(p),
+            (Some(_), None) => self.press_pos = None,
+            _ => {}
+        }
+
         // Keep the active cell in view when the keyboard moves it past a
         // scroll edge. `None` alignment scrolls the minimum amount, so an
         // already-visible cell (e.g. one just clicked) is left untouched.
@@ -2290,9 +2318,13 @@ impl TescellateApp {
 
         // A drag that didn't start on a header border sweeps a selection:
         // a cell drag a cell range, a header drag a column/row range.
+        // The drag_started arm hit-tests against `press_pos` for the
+        // same reason `handle_resize` does — egui's threshold can leave
+        // the pointer a band-width away from where the user actually
+        // clicked.
         if self.resizing.is_none() {
             if response.drag_started() {
-                if let Some(p) = response.interact_pointer_pos() {
+                if let Some(p) = self.press_pos.or_else(|| response.interact_pointer_pos()) {
                     if let Some(col) = self.metrics.col_header_at(col_hdr_origin, p, COLS) {
                         self.commit_edit();
                         self.header_drag = Some(HeaderDrag::Column(col));
