@@ -425,6 +425,11 @@ pub struct TescellateApp {
     /// where the range text begins, so each dragged frame can truncate
     /// to that anchor and re-emit the latest "A1:Cx".
     formula_drag: Option<((u32, u32), usize)>,
+    /// The (start, end) cells of the formula's last-inserted reference,
+    /// drawn as a visible marquee on the grid so the user can see what
+    /// the formula is pointing at. Set by a formula-mode click or drag;
+    /// the renderer ignores it when no edit is active.
+    formula_highlight: Option<((u32, u32), (u32, u32))>,
     /// Per-cell visual formatting of the square sheet.
     formats: FormatMap<(u32, u32)>,
     /// Per-cell visual formatting of the hex sheet.
@@ -537,6 +542,7 @@ impl TescellateApp {
             header_drag: None,
             format_painter: None,
             formula_drag: None,
+            formula_highlight: None,
             formats: FormatMap::new(),
             hex_formats: {
                 let mut m = FormatMap::new();
@@ -825,7 +831,10 @@ impl TescellateApp {
                 self.commit_edit();
                 self.move_active(dir);
             }
-            Command::Cancel => self.edit = None,
+            Command::Cancel => {
+                self.edit = None;
+                self.formula_highlight = None;
+            }
             Command::ClearMarquee => {
                 if self.clipboard.cut_origin().is_some() {
                     self.clipboard.consume_cut();
@@ -1862,6 +1871,7 @@ impl TescellateApp {
         let Some(edit) = self.edit.take() else {
             return;
         };
+        self.formula_highlight = None;
         let source = commit_source(&edit.buffer);
         let (sheet, addr) = self.active_target();
         self.apply_edits(sheet, vec![(addr, source)]);
@@ -2371,6 +2381,7 @@ impl TescellateApp {
                                 edit.buffer.push_str(&grid::cell_address(cell.0, cell.1));
                                 edit.fresh = true;
                                 self.formula_drag = Some((cell, anchor));
+                                self.formula_highlight = Some((cell, cell));
                             }
                         }
                     } else if let Some(col) = self.metrics.col_header_at(col_hdr_origin, p, COLS) {
@@ -2410,6 +2421,7 @@ impl TescellateApp {
                                 edit.buffer.push_str(&range);
                                 edit.fresh = true;
                             }
+                            self.formula_highlight = Some((start, cell));
                         }
                     } else {
                         match self.header_drag {
@@ -2455,6 +2467,7 @@ impl TescellateApp {
                         edit.buffer.push_str(&addr);
                         edit.fresh = true;
                     }
+                    self.formula_highlight = Some((cell, cell));
                 } else if let Some(fmt) = self.format_painter.take() {
                     // Format painter — paint the captured format onto the
                     // target cell and disarm; selection doesn't move.
@@ -2691,6 +2704,35 @@ impl TescellateApp {
                     &corners,
                     egui::Stroke::new(1.5, sel_color),
                     4.0,
+                    3.0,
+                ));
+            }
+        }
+
+        // The formula-reference marquee — a dashed blue border around
+        // the cells the in-progress formula points at, set by a
+        // formula-mode click or drag (v106/v107). Only drawn while an
+        // edit is active so it disappears as soon as the formula is
+        // committed or cancelled.
+        if self.edit.is_some() {
+            if let Some(((sc, sr), (ec, er))) = self.formula_highlight {
+                let (min_c, max_c) = if sc <= ec { (sc, ec) } else { (ec, sc) };
+                let (min_r, max_r) = if sr <= er { (sr, er) } else { (er, sr) };
+                let tl = self.metrics.cell_rect(origin, min_c, min_r);
+                let br = self.metrics.cell_rect(origin, max_c, max_r);
+                let rect = egui::Rect::from_min_max(tl.min, br.max);
+                let corners = [
+                    rect.left_top(),
+                    rect.right_top(),
+                    rect.right_bottom(),
+                    rect.left_bottom(),
+                    rect.left_top(),
+                ];
+                let formula_color = egui::Color32::from_rgb(70, 120, 220);
+                painter.extend(egui::Shape::dashed_line(
+                    &corners,
+                    egui::Stroke::new(1.8, formula_color),
+                    5.0,
                     3.0,
                 ));
             }
