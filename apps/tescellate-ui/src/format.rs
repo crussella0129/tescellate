@@ -54,6 +54,27 @@ pub fn vertical_offset(align: VAlign, height: f32, content: f32, pad: f32) -> f3
     }
 }
 
+/// The font size of a cell's text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FontSize {
+    Small,
+    /// The standard cell font — the default.
+    #[default]
+    Normal,
+    Large,
+}
+
+impl FontSize {
+    /// The size, in points, the renderer asks egui for.
+    pub fn points(self) -> f32 {
+        match self {
+            FontSize::Small => 11.0,
+            FontSize::Normal => 13.0,
+            FontSize::Large => 18.0,
+        }
+    }
+}
+
 /// How a numeric cell value is rendered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NumberFormat {
@@ -181,6 +202,7 @@ pub struct CellFormat {
     pub underline: bool,
     pub align: HAlign,
     pub valign: VAlign,
+    pub font_size: FontSize,
     pub text_color: Option<Color32>,
     pub fill: Option<Color32>,
     pub number: NumberFormat,
@@ -574,6 +596,15 @@ mod tests {
         assert_eq!(effective_align(HAlign::Left, true), HAlign::Left);
         assert_eq!(effective_align(HAlign::Center, true), HAlign::Center);
         assert_eq!(effective_align(HAlign::Right, false), HAlign::Right);
+    }
+
+    #[test]
+    fn font_size_points_scale_up() {
+        assert!(FontSize::Small.points() < FontSize::Normal.points());
+        assert!(FontSize::Normal.points() < FontSize::Large.points());
+        // Normal is the cell default and the renderer's 13.0 baseline.
+        assert_eq!(FontSize::default(), FontSize::Normal);
+        assert_eq!(FontSize::Normal.points(), 13.0);
     }
 
     #[test]
