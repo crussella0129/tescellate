@@ -18,6 +18,20 @@ pub fn cell_matches(query: &str, text: &str, case_sensitive: bool) -> bool {
     }
 }
 
+/// Whether `text` equals `query` exactly — case-insensitively unless
+/// `case_sensitive`. The whole-cell counterpart of [`cell_matches`]; an
+/// empty query matches nothing.
+pub fn cell_matches_whole(query: &str, text: &str, case_sensitive: bool) -> bool {
+    if query.is_empty() {
+        return false;
+    }
+    if case_sensitive {
+        text == query
+    } else {
+        text.to_lowercase() == query.to_lowercase()
+    }
+}
+
 /// Replace every occurrence of `query` in `source` with `replacement` —
 /// case-insensitively unless `case_sensitive`. Returns the rewritten
 /// string; equal to `source` when `query` is empty or absent. The
@@ -57,6 +71,8 @@ pub struct FindState<K> {
     pub replace: String,
     /// Whether matching is case-sensitive.
     pub case_sensitive: bool,
+    /// Whether a cell must equal the query exactly, not merely contain it.
+    pub whole_cell: bool,
     matches: Vec<K>,
     current: usize,
 }
@@ -67,6 +83,7 @@ impl<K> Default for FindState<K> {
             query: String::new(),
             replace: String::new(),
             case_sensitive: false,
+            whole_cell: false,
             matches: Vec::new(),
             current: 0,
         }
@@ -80,8 +97,15 @@ impl<K: Copy + PartialEq> FindState<K> {
     pub fn refresh(&mut self, cells: impl Iterator<Item = (K, String)>) {
         let query = self.query.clone();
         let case_sensitive = self.case_sensitive;
+        let whole = self.whole_cell;
         self.matches = cells
-            .filter(|(_, text)| cell_matches(&query, text, case_sensitive))
+            .filter(|(_, text)| {
+                if whole {
+                    cell_matches_whole(&query, text, case_sensitive)
+                } else {
+                    cell_matches(&query, text, case_sensitive)
+                }
+            })
             .map(|(cell, _)| cell)
             .collect();
         self.current = 0;
@@ -164,6 +188,19 @@ mod tests {
         assert!(cell_matches("ab", "xabz", true));
     }
 
+    #[test]
+    fn cell_matches_whole_requires_exact_equality() {
+        // Exact equality matches; a mere substring does not.
+        assert!(cell_matches_whole("apple", "apple", false));
+        assert!(!cell_matches_whole("ap", "apple", false));
+        assert!(!cell_matches_whole("apple", "apples", false));
+        // Case-insensitive by default, case-sensitive on request.
+        assert!(cell_matches_whole("APPLE", "apple", false));
+        assert!(!cell_matches_whole("APPLE", "apple", true));
+        // A blank query matches nothing.
+        assert!(!cell_matches_whole("", "", false));
+    }
+
     fn sheet() -> Vec<((u32, u32), String)> {
         vec![
             ((0, 0), "apple".to_string()),
@@ -186,6 +223,28 @@ mod tests {
         assert_eq!(f.current_index(), 1);
         assert!(f.is_match((0, 1)));
         assert!(!f.is_match((1, 1)));
+    }
+
+    #[test]
+    fn refresh_whole_cell_matches_only_exact_cells() {
+        // Whole-cell: a cell whose entire text equals the query matches.
+        let mut f = FindState {
+            query: "apple".to_string(),
+            whole_cell: true,
+            ..Default::default()
+        };
+        f.refresh(sheet().into_iter());
+        assert_eq!(f.match_count(), 1);
+        assert_eq!(f.current_match(), Some((0, 0)));
+        // A mere substring does not — "ap" is inside "apple" and
+        // "Apricot", yet equals neither, so whole-cell finds nothing.
+        let mut g = FindState {
+            query: "ap".to_string(),
+            whole_cell: true,
+            ..Default::default()
+        };
+        g.refresh(sheet().into_iter());
+        assert_eq!(g.match_count(), 0);
     }
 
     #[test]
