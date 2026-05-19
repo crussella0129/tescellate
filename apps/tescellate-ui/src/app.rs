@@ -197,6 +197,9 @@ struct CondDraft {
     fill: egui::Color32,
     /// Whether a matching cell is also rendered bold.
     bold: bool,
+    /// Whether a matching cell's text is recoloured, and to what.
+    text_color_on: bool,
+    text_color: egui::Color32,
 }
 
 impl Default for CondDraft {
@@ -206,6 +209,8 @@ impl Default for CondDraft {
             threshold: "100".to_string(),
             fill: egui::Color32::from_rgb(255, 235, 156),
             bold: false,
+            text_color_on: false,
+            text_color: egui::Color32::from_rgb(190, 40, 40),
         }
     }
 }
@@ -229,6 +234,7 @@ impl CondDraft {
             format: CellFormat {
                 fill: Some(self.fill),
                 bold: self.bold,
+                text_color: self.text_color_on.then_some(self.text_color),
                 ..CellFormat::default()
             },
         })
@@ -1057,6 +1063,8 @@ impl TescellateApp {
                     ui.label("fill");
                     ui.color_edit_button_srgba(&mut self.cond_draft.fill);
                     ui.checkbox(&mut self.cond_draft.bold, "bold");
+                    ui.checkbox(&mut self.cond_draft.text_color_on, "text");
+                    ui.color_edit_button_srgba(&mut self.cond_draft.text_color);
                     if ui.button("Add rule").clicked() {
                         if let Some(rule) = self.cond_draft.build() {
                             self.cond_rules.push(rule);
