@@ -395,6 +395,8 @@ pub struct TescellateApp {
     active: ActiveSheet,
     /// The selected cell range on the square sheet.
     selection: Selection,
+    /// The square cursor as of the last frame — drives scroll-to-cursor.
+    prev_cursor: (u32, u32),
     /// The selected hex range on the hex sheet.
     hex_selection: HexSelection,
     /// `Some` while a cell is being edited (on whichever sheet is active).
@@ -509,6 +511,7 @@ impl TescellateApp {
             hex_lattice: HexLattice::pointy(HEX_SIZE),
             active: ActiveSheet::Square,
             selection: Selection::single((0, 0)),
+            prev_cursor: (0, 0),
             hex_selection: HexSelection::single(HexCoord::new(0, 0)),
             edit: None,
             metrics: GridMetrics::new(),
@@ -2191,6 +2194,19 @@ impl TescellateApp {
         );
         let (response, painter) = ui.allocate_painter(size, egui::Sense::click_and_drag());
         let origin = response.rect.min;
+
+        // Keep the active cell in view when the keyboard moves it past a
+        // scroll edge. `None` alignment scrolls the minimum amount, so an
+        // already-visible cell (e.g. one just clicked) is left untouched.
+        if self.selection.cursor != self.prev_cursor {
+            let (c, r) = self.selection.cursor;
+            let cursor_rect = egui::Rect::from_min_size(
+                origin + egui::vec2(self.metrics.col_left(c), self.metrics.row_top(r)),
+                egui::vec2(self.metrics.col_width(c), self.metrics.row_height(r)),
+            );
+            ui.scroll_to_rect(cursor_rect, None);
+            self.prev_cursor = self.selection.cursor;
+        }
 
         if let Some(p) = response.hover_pos() {
             if self.metrics.col_border_at(origin, p, COLS).is_some() {
