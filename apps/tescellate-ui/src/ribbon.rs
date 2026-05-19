@@ -56,6 +56,10 @@ pub enum RibbonAction {
     /// Toggle whether long cell text wraps onto multiple lines within the
     /// cell instead of clipping at the right edge.
     ToggleWrapText,
+    /// Arm the format painter — capture the active cell's format so the
+    /// next square-cell click applies it. A second click on the button
+    /// (or pressing Escape) disarms it.
+    ToggleFormatPainter,
     /// Open the keyboard-shortcuts help overlay.
     OpenHelp,
     /// Switch between the light and dark colour themes.
@@ -95,12 +99,14 @@ pub fn number_format_label(format: NumberFormat) -> &'static str {
 
 /// Draw the toolbar for the selected cell's `current` format. Returns
 /// the action the user triggered this frame, if any. `can_undo` /
-/// `can_redo` gate the undo/redo buttons.
+/// `can_redo` gate the undo/redo buttons. `painter_armed` lights the
+/// format-painter toggle when it is currently armed.
 pub fn ribbon(
     ui: &mut egui::Ui,
     current: &CellFormat,
     can_undo: bool,
     can_redo: bool,
+    painter_armed: bool,
 ) -> Option<RibbonAction> {
     let mut action = None;
     // Wrapped, so the strip flows onto a second line on a narrow window
@@ -142,6 +148,15 @@ pub fn ribbon(
             .clicked()
         {
             action = Some(RibbonAction::PasteValues);
+        }
+        if ui
+            .selectable_label(painter_armed, "Painter")
+            .on_hover_text(
+                "Format painter — copy this cell's format, then click another cell to apply it",
+            )
+            .clicked()
+        {
+            action = Some(RibbonAction::ToggleFormatPainter);
         }
         ui.separator();
 

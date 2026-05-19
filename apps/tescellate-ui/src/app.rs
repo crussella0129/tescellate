@@ -417,6 +417,9 @@ pub struct TescellateApp {
     /// `Some` while a column or row header is being dragged to sweep a
     /// range selection.
     header_drag: Option<HeaderDrag>,
+    /// `Some` while the format-painter is armed: the captured format
+    /// that the next square-cell click will apply.
+    format_painter: Option<CellFormat>,
     /// Per-cell visual formatting of the square sheet.
     formats: FormatMap<(u32, u32)>,
     /// Per-cell visual formatting of the hex sheet.
@@ -527,6 +530,7 @@ impl TescellateApp {
             resizing: None,
             press_pos: None,
             header_drag: None,
+            format_painter: None,
             formats: FormatMap::new(),
             hex_formats: {
                 let mut m = FormatMap::new();
@@ -820,6 +824,7 @@ impl TescellateApp {
                 if self.clipboard.cut_origin().is_some() {
                     self.clipboard.consume_cut();
                 }
+                self.format_painter = None;
             }
             Command::Clear => self.clear_active(),
             Command::ToggleBold => self.toggle_range(|f| f.bold, |f, v| f.bold = v),
@@ -926,6 +931,13 @@ impl TescellateApp {
             }
             RibbonAction::ToggleWrapText => {
                 self.toggle_range(|f| f.wrap_text, |f, v| f.wrap_text = v);
+            }
+            RibbonAction::ToggleFormatPainter => {
+                if self.format_painter.is_some() {
+                    self.format_painter = None;
+                } else {
+                    self.format_painter = Some(self.formats.get(self.selection.cursor));
+                }
             }
             RibbonAction::OpenHelp => self.help_open = true,
             RibbonAction::ToggleTheme => self.dark_mode = !self.dark_mode,
@@ -2379,12 +2391,19 @@ impl TescellateApp {
         }
         if response.clicked() {
             if let Some(cell) = self.cell_under(&response, origin, header_x, header_y) {
-                self.commit_edit();
-                // Shift-click extends the range; a plain click resets it.
-                if ui.input(|i| i.modifiers.shift) {
-                    self.selection.extend_to(cell);
+                // Format painter — if armed, the click paints the captured
+                // format onto the target cell and disarms; selection
+                // doesn't move. Otherwise the usual shift / plain logic.
+                if let Some(fmt) = self.format_painter.take() {
+                    self.commit_edit();
+                    self.formats.update(cell, |f| *f = fmt);
                 } else {
-                    self.selection.collapse_to(cell);
+                    self.commit_edit();
+                    if ui.input(|i| i.modifiers.shift) {
+                        self.selection.extend_to(cell);
+                    } else {
+                        self.selection.collapse_to(cell);
+                    }
                 }
             } else if let Some(p) = response.interact_pointer_pos() {
                 // A click on a header selects a whole column or row — with
@@ -2995,7 +3014,13 @@ impl eframe::App for TescellateApp {
                 let current = self.formats.get(self.selection.cursor);
                 let can_undo = self.history.can_undo();
                 let can_redo = self.history.can_redo();
-                if let Some(action) = ribbon::ribbon(ui, &current, can_undo, can_redo) {
+                if let Some(action) = ribbon::ribbon(
+                    ui,
+                    &current,
+                    can_undo,
+                    can_redo,
+                    self.format_painter.is_some(),
+                ) {
                     self.apply_ribbon(action, ctx);
                 }
             }
@@ -3017,7 +3042,13 @@ impl eframe::App for TescellateApp {
                 let current = self.hex_formats.get(self.hex_selection.cursor);
                 let can_undo = self.history.can_undo();
                 let can_redo = self.history.can_redo();
-                if let Some(action) = ribbon::ribbon(ui, &current, can_undo, can_redo) {
+                if let Some(action) = ribbon::ribbon(
+                    ui,
+                    &current,
+                    can_undo,
+                    can_redo,
+                    self.format_painter.is_some(),
+                ) {
                     self.apply_ribbon(action, ctx);
                 }
             }
