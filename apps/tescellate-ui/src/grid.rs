@@ -23,7 +23,7 @@ pub const HEADER_W: f32 = 44.0;
 /// Height of the column-letter header row.
 pub const HEADER_H: f32 = 22.0;
 /// Half-width of the border zone that begins a resize drag.
-pub const BORDER_GRAB: f32 = 4.0;
+pub const BORDER_GRAB: f32 = 6.0;
 
 /// The A1-style label of a zero-indexed column: `0 -> "A"`, `25 -> "Z"`,
 /// `26 -> "AA"`. Bijective base-26, as spreadsheets use.
