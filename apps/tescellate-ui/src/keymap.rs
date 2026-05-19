@@ -70,6 +70,8 @@ pub enum Command {
     ToggleBold,
     /// Toggle italic on the selected cell (Ctrl+I).
     ToggleItalic,
+    /// Toggle underline on the selected cell (Ctrl+U).
+    ToggleUnderline,
     /// Set the selected cell's horizontal alignment (Ctrl+Shift+L/E/R).
     SetAlign(HAlign),
     /// Copy the selected range to the clipboard (Ctrl+C).
@@ -115,6 +117,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("F2", "Edit the selected cell"),
     ("Delete / Backspace", "Clear the selection"),
     ("Ctrl+B / Ctrl+I", "Bold / italic"),
+    ("Ctrl+U", "Underline"),
     ("Ctrl+Shift+L / E / R", "Align left / centre / right"),
     ("Ctrl+C / X / V", "Copy / cut / paste"),
     ("Ctrl+Shift+V", "Paste values only"),
@@ -172,6 +175,7 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         // text begins an edit instead — so each is guarded on Ctrl.
         Key::B if ctrl => Command::ToggleBold,
         Key::I if ctrl => Command::ToggleItalic,
+        Key::U if ctrl => Command::ToggleUnderline,
         Key::L if ctrl && shift => Command::SetAlign(HAlign::Left),
         Key::E if ctrl && shift => Command::SetAlign(HAlign::Center),
         Key::R if ctrl && shift => Command::SetAlign(HAlign::Right),
@@ -363,6 +367,13 @@ mod tests {
         // Without Ctrl they are ordinary typed characters, not commands.
         assert_eq!(nav(Key::B, false, false), None);
         assert_eq!(nav(Key::I, false, false), None);
+    }
+
+    #[test]
+    fn ctrl_u_toggles_underline() {
+        assert_eq!(nav(Key::U, false, true), Some(Command::ToggleUnderline));
+        // Plain U is an ordinary typed character, not a command.
+        assert_eq!(nav(Key::U, false, false), None);
     }
 
     #[test]
