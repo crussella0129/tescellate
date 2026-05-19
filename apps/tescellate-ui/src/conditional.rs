@@ -10,7 +10,7 @@ use tescellate_core::CellValue;
 use crate::format::CellFormat;
 
 /// A test applied to a cell's value.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Condition {
     /// A numeric value strictly greater than the threshold.
     GreaterThan(f64),
@@ -27,6 +27,9 @@ pub enum Condition {
     /// A numeric value within the two thresholds' inclusive range,
     /// whichever order the bounds are given in.
     Between(f64, f64),
+    /// The cell's text contains this substring, compared
+    /// case-insensitively. Only `CellValue::Text` cells can match.
+    Contains(String),
     /// The cell holds boolean `TRUE`.
     IsTrue,
     /// The cell holds boolean `FALSE`.
@@ -53,6 +56,10 @@ impl Condition {
             Condition::GreaterOrEqual(t) => number.is_some_and(|n| n >= *t),
             Condition::LessOrEqual(t) => number.is_some_and(|n| n <= *t),
             Condition::Between(a, b) => number.is_some_and(|n| n >= a.min(*b) && n <= a.max(*b)),
+            Condition::Contains(needle) => match value {
+                CellValue::Text(text) => text.to_lowercase().contains(&needle.to_lowercase()),
+                _ => false,
+            },
             Condition::IsTrue => matches!(value, CellValue::Bool(true)),
             Condition::IsFalse => matches!(value, CellValue::Bool(false)),
             Condition::NonEmpty => !matches!(value, CellValue::Empty),
@@ -149,6 +156,19 @@ mod tests {
         // Integers count as numbers; non-numeric values never match.
         assert!(Condition::GreaterOrEqual(2.0).matches(&CellValue::Integer(7)));
         assert!(!Condition::Between(0.0, 9.0).matches(&CellValue::Text("hi".into())));
+    }
+
+    #[test]
+    fn contains_tests_text_case_insensitively() {
+        let urgent = CellValue::Text("Urgent: reply".to_string());
+        assert!(Condition::Contains("urgent".to_string()).matches(&urgent));
+        // Case-insensitive in both directions.
+        assert!(Condition::Contains("REPLY".to_string()).matches(&urgent));
+        // A substring that isn't present does not match.
+        assert!(!Condition::Contains("done".to_string()).matches(&urgent));
+        // Only text cells match — a number is never a Contains hit.
+        assert!(!Condition::Contains("5".to_string()).matches(&CellValue::Number(50.0)));
+        assert!(!Condition::Contains("x".to_string()).matches(&CellValue::Empty));
     }
 
     #[test]
