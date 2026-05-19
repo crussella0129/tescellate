@@ -49,6 +49,9 @@ pub enum NumberFormat {
     Thousands { decimals: u8 },
     /// Scientific notation — a mantissa and a power-of-ten exponent.
     Scientific { decimals: u8 },
+    /// A calendar date — the value, truncated to whole days, read as a
+    /// count of days since 1970-01-01 and shown as `YYYY-MM-DD`.
+    Date,
 }
 
 /// Which sides of a cell carry a border line.
@@ -177,7 +180,32 @@ pub fn render_number(value: f64, format: NumberFormat) -> Option<String> {
         NumberFormat::Currency => Some(format!("${:.2}", value)),
         NumberFormat::Thousands { decimals } => Some(group_thousands(value, decimals)),
         NumberFormat::Scientific { decimals } => Some(format!("{:.*e}", decimals as usize, value)),
+        NumberFormat::Date => Some(render_date(value)),
     }
+}
+
+/// Render `value`, truncated to whole days, as a `YYYY-MM-DD` date —
+/// the day count measured from the 1970-01-01 epoch (day 0).
+fn render_date(value: f64) -> String {
+    let (y, m, d) = civil_from_days(value.trunc() as i64);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// The calendar date `days` days after 1970-01-01, as `(year, month,
+/// day)` — Howard Hinnant's `civil_from_days`, exact for the proleptic
+/// Gregorian calendar with no lookup tables.
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let z = days + 719_468;
+    let era = (if z >= 0 { z } else { z - 146_096 }) / 146_097;
+    let doe = (z - era * 146_097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    (year as i32, m, d)
 }
 
 /// Render `value` with `decimals` decimal places and comma separators
@@ -361,6 +389,22 @@ mod tests {
             render_number(0.0042, NumberFormat::Scientific { decimals: 1 }),
             Some("4.2e-3".to_string()),
         );
+    }
+
+    #[test]
+    fn date_format_reads_the_value_as_a_day_count() {
+        let date = |n: f64| render_number(n, NumberFormat::Date);
+        // Day 0 is the 1970-01-01 epoch.
+        assert_eq!(date(0.0), Some("1970-01-01".to_string()));
+        // A month on, then a (non-leap) year on.
+        assert_eq!(date(31.0), Some("1970-02-01".to_string()));
+        assert_eq!(date(365.0), Some("1971-01-01".to_string()));
+        // 1972 is a leap year — day 789 is its 29th of February.
+        assert_eq!(date(789.0), Some("1972-02-29".to_string()));
+        // Days before the epoch run negative.
+        assert_eq!(date(-1.0), Some("1969-12-31".to_string()));
+        // A fractional value is truncated to whole days.
+        assert_eq!(date(31.9), Some("1970-02-01".to_string()));
     }
 
     #[test]
