@@ -188,6 +188,21 @@ impl CondKind {
             CondKind::Greater | CondKind::Less | CondKind::Equal | CondKind::NotEqual
         )
     }
+
+    /// The kind matching an existing condition — the inverse of the
+    /// `kind` arm of [`CondDraft::build`].
+    fn from_condition(condition: &Condition) -> CondKind {
+        match condition {
+            Condition::GreaterThan(_) => CondKind::Greater,
+            Condition::LessThan(_) => CondKind::Less,
+            Condition::EqualTo(_) => CondKind::Equal,
+            Condition::NotEqualTo(_) => CondKind::NotEqual,
+            Condition::IsTrue => CondKind::IsTrue,
+            Condition::IsFalse => CondKind::IsFalse,
+            Condition::NonEmpty => CondKind::NonEmpty,
+            Condition::IsEmpty => CondKind::IsEmpty,
+        }
+    }
 }
 
 /// The in-progress new rule in the conditional-formatting editor.
@@ -238,6 +253,27 @@ impl CondDraft {
                 ..CellFormat::default()
             },
         })
+    }
+
+    /// Load an existing [`Rule`] back into a draft — the inverse of
+    /// [`CondDraft::build`], for the editor's "Edit" button.
+    fn from_rule(rule: &Rule) -> Self {
+        let defaults = CondDraft::default();
+        let threshold = match rule.condition {
+            Condition::GreaterThan(t)
+            | Condition::LessThan(t)
+            | Condition::EqualTo(t)
+            | Condition::NotEqualTo(t) => t.to_string(),
+            _ => defaults.threshold,
+        };
+        CondDraft {
+            kind: CondKind::from_condition(&rule.condition),
+            threshold,
+            fill: rule.format.fill.unwrap_or(defaults.fill),
+            bold: rule.format.bold,
+            text_color_on: rule.format.text_color.is_some(),
+            text_color: rule.format.text_color.unwrap_or(defaults.text_color),
+        }
     }
 }
 
@@ -1029,6 +1065,7 @@ impl TescellateApp {
                     ui.label(egui::RichText::new("No rules yet — add one below.").weak());
                 }
                 let mut remove = None;
+                let mut edit = None;
                 for (i, rule) in self.cond_rules.iter().enumerate() {
                     ui.horizontal(|ui| {
                         if let Some(fill) = rule.format.fill {
@@ -1037,12 +1074,20 @@ impl TescellateApp {
                             ui.painter().rect_filled(rect, 2.0, fill);
                         }
                         ui.label(describe_condition(&rule.condition));
+                        if ui.small_button("Edit").clicked() {
+                            edit = Some(i);
+                        }
                         if ui.small_button("Remove").clicked() {
                             remove = Some(i);
                         }
                     });
                 }
-                if let Some(i) = remove {
+                // Editing a rule loads it back into the draft and drops it,
+                // so the "Add rule" button re-commits the edited form.
+                if let Some(i) = edit {
+                    self.cond_draft = CondDraft::from_rule(&self.cond_rules[i]);
+                    self.cond_rules.remove(i);
+                } else if let Some(i) = remove {
                     self.cond_rules.remove(i);
                 }
                 ui.separator();
@@ -3203,6 +3248,31 @@ mod tests {
             hex_current_region((0, 0), 3, |_, _| true),
             ((-3, -3), (3, 3)),
         );
+    }
+
+    #[test]
+    fn cond_draft_round_trips_through_a_rule() {
+        // A threshold rule recovers its kind, threshold, and effects.
+        let draft = CondDraft {
+            kind: CondKind::Less,
+            threshold: "42.5".to_string(),
+            bold: true,
+            text_color_on: true,
+            ..CondDraft::default()
+        };
+        let back = CondDraft::from_rule(&draft.build().unwrap());
+        assert_eq!(back.kind, CondKind::Less);
+        assert_eq!(back.threshold, "42.5");
+        assert!(back.bold);
+        assert!(back.text_color_on);
+        // A no-threshold condition recovers its kind.
+        let rule = CondDraft {
+            kind: CondKind::IsEmpty,
+            ..CondDraft::default()
+        }
+        .build()
+        .unwrap();
+        assert_eq!(CondDraft::from_rule(&rule).kind, CondKind::IsEmpty);
     }
 
     #[test]
