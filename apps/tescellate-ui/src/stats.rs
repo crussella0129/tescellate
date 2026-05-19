@@ -12,6 +12,8 @@ pub struct Stats {
     pub sum: f64,
     /// How many of the cells held a number.
     pub count: usize,
+    /// How many of the cells were non-empty — numeric or not.
+    pub nonempty: usize,
     /// Mean of the numeric cells — `None` when none were numeric.
     pub average: Option<f64>,
     /// Smallest numeric value — `None` when none were numeric.
@@ -25,9 +27,13 @@ pub struct Stats {
 pub fn selection_stats(values: &[CellValue]) -> Stats {
     let mut sum = 0.0;
     let mut count = 0usize;
+    let mut nonempty = 0usize;
     let mut min: Option<f64> = None;
     let mut max: Option<f64> = None;
     for value in values {
+        if !matches!(value, CellValue::Empty) {
+            nonempty += 1;
+        }
         let number = match value {
             CellValue::Number(n) => Some(*n),
             CellValue::Integer(i) => Some(*i as f64),
@@ -48,6 +54,7 @@ pub fn selection_stats(values: &[CellValue]) -> Stats {
     Stats {
         sum,
         count,
+        nonempty,
         average,
         min,
         max,
@@ -62,6 +69,7 @@ mod tests {
     fn an_empty_selection_has_no_numbers() {
         let s = selection_stats(&[]);
         assert_eq!(s.count, 0);
+        assert_eq!(s.nonempty, 0);
         assert_eq!(s.sum, 0.0);
         assert_eq!(s.average, None);
         assert_eq!(s.min, None);
@@ -77,6 +85,8 @@ mod tests {
         ];
         let s = selection_stats(&values);
         assert_eq!(s.count, 0);
+        // Text and Bool are non-empty even though they are not numeric.
+        assert_eq!(s.nonempty, 2);
         assert_eq!(s.average, None);
         assert_eq!(s.min, None);
         assert_eq!(s.max, None);
@@ -123,5 +133,20 @@ mod tests {
         let one = selection_stats(&[CellValue::Number(4.0)]);
         assert_eq!(one.min, Some(4.0));
         assert_eq!(one.max, Some(4.0));
+    }
+
+    #[test]
+    fn nonempty_counts_filled_cells_numeric_or_not() {
+        let values = [
+            CellValue::Number(1.0),
+            CellValue::Empty,
+            CellValue::Text("x".to_string()),
+            CellValue::Empty,
+            CellValue::Bool(false),
+        ];
+        let s = selection_stats(&values);
+        // Three cells are filled; only one of them is numeric.
+        assert_eq!(s.nonempty, 3);
+        assert_eq!(s.count, 1);
     }
 }
