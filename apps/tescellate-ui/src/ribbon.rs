@@ -36,6 +36,8 @@ pub enum RibbonAction {
     Cut,
     /// Paste the clipboard at the active cell.
     Paste,
+    /// Paste only the clipboard's values, dropping formulas.
+    PasteValues,
     /// Open the conditional-formatting rule editor.
     OpenConditional,
     /// Turn the selection into (or out of) boolean checkbox cells.
@@ -117,6 +119,13 @@ pub fn ribbon(
         }
         if ui.button("Paste").on_hover_text("Paste (Ctrl+V)").clicked() {
             action = Some(RibbonAction::Paste);
+        }
+        if ui
+            .button("Paste values")
+            .on_hover_text("Paste values only — drops formulas (Ctrl+Shift+V)")
+            .clicked()
+        {
+            action = Some(RibbonAction::PasteValues);
         }
         ui.separator();
 

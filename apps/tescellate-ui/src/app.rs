@@ -13,7 +13,7 @@ use tescellate_formula::WorkbookEngine;
 use tescellate_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
 use tescellate_tess::{Lattice, LatticeKind, Point2};
 
-use crate::clipboard::{Clipboard, CopiedCell};
+use crate::clipboard::{Clipboard, CopiedCell, PasteMode};
 use crate::conditional::{self, Condition, Rule};
 use crate::find::{self, FindState};
 use crate::format::{self, BorderMode, Borders, CellFormat, FormatMap, HAlign, HexBorders};
@@ -786,7 +786,8 @@ impl TescellateApp {
             Command::SetAlign(align) => self.format_range(|f| f.align = align),
             Command::Copy => self.copy_selection(ctx),
             Command::Cut => self.cut_selection(ctx),
-            Command::Paste => self.paste(),
+            Command::Paste => self.paste(PasteMode::Normal),
+            Command::PasteValues => self.paste(PasteMode::ValuesOnly),
             Command::Undo => self.undo(),
             Command::Redo => self.redo(),
             Command::FillDown => self.fill(FillDir::Down),
@@ -862,7 +863,8 @@ impl TescellateApp {
             RibbonAction::Redo => self.redo(),
             RibbonAction::Copy => self.copy_selection(ctx),
             RibbonAction::Cut => self.cut_selection(ctx),
-            RibbonAction::Paste => self.paste(),
+            RibbonAction::Paste => self.paste(PasteMode::Normal),
+            RibbonAction::PasteValues => self.paste(PasteMode::ValuesOnly),
             RibbonAction::OpenConditional => self.cond_window_open = true,
             RibbonAction::ToggleWidget => self.toggle_widget_cells(),
             RibbonAction::Aggregate(func) => self.autosum(func),
@@ -1850,7 +1852,7 @@ impl TescellateApp {
     /// recorded as one undo step. Pasting onto the same kind of sheet
     /// the copy came from writes the cell sources; pasting onto a
     /// different lattice writes each cell's value instead.
-    fn paste(&mut self) {
+    fn paste(&mut self, mode: PasteMode) {
         if self.clipboard.is_empty() {
             return;
         }
@@ -1877,7 +1879,7 @@ impl TescellateApp {
                     if c >= COLS || r >= ROWS {
                         continue;
                     }
-                    let source = self.clipboard.source_for(cell, false);
+                    let source = self.clipboard.paste_text(cell, false, mode);
                     targets.push((grid::cell_address(c, r), source));
                 }
                 self.apply_edits(self.square_sheet, targets);
@@ -1909,7 +1911,7 @@ impl TescellateApp {
                     if !hex_in_view(coord) {
                         continue;
                     }
-                    let source = self.clipboard.source_for(cell, true);
+                    let source = self.clipboard.paste_text(cell, true, mode);
                     targets.push((hex_address(coord), source));
                 }
                 self.apply_edits(self.hex_sheet, targets);
@@ -2228,7 +2230,11 @@ impl TescellateApp {
                 ui.close_menu();
             }
             if ui.button("Paste").clicked() {
-                self.paste();
+                self.paste(PasteMode::Normal);
+                ui.close_menu();
+            }
+            if ui.button("Paste values").clicked() {
+                self.paste(PasteMode::ValuesOnly);
                 ui.close_menu();
             }
             if ui.button("Clear").clicked() {
@@ -2561,7 +2567,11 @@ impl TescellateApp {
                 ui.close_menu();
             }
             if ui.button("Paste").clicked() {
-                self.paste();
+                self.paste(PasteMode::Normal);
+                ui.close_menu();
+            }
+            if ui.button("Paste values").clicked() {
+                self.paste(PasteMode::ValuesOnly);
                 ui.close_menu();
             }
             if ui.button("Clear").clicked() {
