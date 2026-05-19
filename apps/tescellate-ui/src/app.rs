@@ -715,19 +715,32 @@ impl TescellateApp {
 
     /// Expand the selection to the current data region around the cursor
     /// — the contiguous block of non-empty cells, Excel's "current
-    /// region". Square sheet only; the active cell lands at its top-left.
+    /// region". The active cell lands at the region's top-left.
     fn select_region(&mut self) {
-        if self.active != ActiveSheet::Square {
-            return;
+        match self.active {
+            ActiveSheet::Square => {
+                let ((min_c, min_r), (max_c, max_r)) =
+                    grid::current_region(self.selection.cursor, COLS, ROWS, |c, r| {
+                        self.square_occupied(c, r)
+                    });
+                self.selection = Selection {
+                    anchor: (max_c, max_r),
+                    cursor: (min_c, min_r),
+                };
+            }
+            ActiveSheet::Hex => {
+                let cursor = self.hex_selection.cursor;
+                let ((min_q, min_r), (max_q, max_r)) =
+                    hex_current_region((cursor.q, cursor.r), HEX_VIEW_RADIUS, |q, r| {
+                        let c = HexCoord::new(q, r);
+                        hex_in_view(c) && self.hex_occupied(c)
+                    });
+                self.hex_selection = HexSelection {
+                    anchor: HexCoord::new(max_q, max_r),
+                    cursor: HexCoord::new(min_q, min_r),
+                };
+            }
         }
-        let ((min_c, min_r), (max_c, max_r)) =
-            grid::current_region(self.selection.cursor, COLS, ROWS, |c, r| {
-                self.square_occupied(c, r)
-            });
-        self.selection = Selection {
-            anchor: (max_c, max_r),
-            cursor: (min_c, min_r),
-        };
     }
 
     /// Apply a formatting action from the ribbon across the selection.
@@ -2409,6 +2422,10 @@ impl TescellateApp {
                 ui.close_menu();
             }
             ui.separator();
+            if ui.button("Select region").clicked() {
+                self.select_region();
+                ui.close_menu();
+            }
             if ui.button("Fill series").clicked() {
                 self.fill_series();
                 ui.close_menu();
@@ -2810,6 +2827,43 @@ fn hex_autosum(bounds: ((i32, i32), (i32, i32)), func: &str) -> Option<(HexCoord
     Some((target, format!("={func}({range})")))
 }
 
+/// The current hex data region around `cursor` — the axial analogue of
+/// [`grid::current_region`]. The `(q, r)` box grows outward to a
+/// fixpoint while the row or column just past an edge holds an
+/// `occupied` cell within the box's span; `occupied` reports `false`
+/// for out-of-view cells, so the grow halts at the disc. `radius`
+/// bounds the walk.
+fn hex_current_region(
+    cursor: (i32, i32),
+    radius: i32,
+    occupied: impl Fn(i32, i32) -> bool,
+) -> ((i32, i32), (i32, i32)) {
+    let (mut min_q, mut min_r) = cursor;
+    let (mut max_q, mut max_r) = cursor;
+    loop {
+        let mut grew = false;
+        if min_r > -radius && (min_q..=max_q).any(|q| occupied(q, min_r - 1)) {
+            min_r -= 1;
+            grew = true;
+        }
+        if max_r < radius && (min_q..=max_q).any(|q| occupied(q, max_r + 1)) {
+            max_r += 1;
+            grew = true;
+        }
+        if min_q > -radius && (min_r..=max_r).any(|r| occupied(min_q - 1, r)) {
+            min_q -= 1;
+            grew = true;
+        }
+        if max_q < radius && (min_r..=max_r).any(|r| occupied(max_q + 1, r)) {
+            max_q += 1;
+            grew = true;
+        }
+        if !grew {
+            return ((min_q, min_r), (max_q, max_r));
+        }
+    }
+}
+
 /// Render a cell value with the engine's natural formatting — no number
 /// format applied. Used for the hex sheet and as the square sheet's
 /// fallback for non-numeric values.
@@ -3084,6 +3138,31 @@ mod tests {
         // H(3,0) is the last in-view cell going right; jumping right stays.
         let target = hex_jump(HexCoord::new(3, 0), Dir::Right, hex_in_view, |_| true);
         assert_eq!(target, HexCoord::new(3, 0));
+    }
+
+    #[test]
+    fn hex_current_region_grows_to_the_block() {
+        // A 2x2 axial block at (0,0)..(1,1).
+        let filled = |q, r| (0..=1).contains(&q) && (0..=1).contains(&r);
+        assert_eq!(hex_current_region((0, 0), 3, filled), ((0, 0), (1, 1)));
+        assert_eq!(hex_current_region((1, 1), 3, filled), ((0, 0), (1, 1)));
+    }
+
+    #[test]
+    fn hex_current_region_isolated_cell() {
+        assert_eq!(
+            hex_current_region((0, 0), 3, |_, _| false),
+            ((0, 0), (0, 0)),
+        );
+    }
+
+    #[test]
+    fn hex_current_region_clamps_to_the_radius() {
+        // Everything occupied — the grow stops at the radius bound.
+        assert_eq!(
+            hex_current_region((0, 0), 3, |_, _| true),
+            ((-3, -3), (3, 3)),
+        );
     }
 
     #[test]
