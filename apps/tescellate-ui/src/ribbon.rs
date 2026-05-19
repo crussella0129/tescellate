@@ -103,7 +103,7 @@ pub fn ribbon(
         ui.label(egui::RichText::new("Tescellate").strong());
         ui.separator();
 
-        // Undo / redo — disabled when there is nothing to do.
+        // History — undo / redo.
         if ui
             .add_enabled(can_undo, egui::Button::new("Undo"))
             .on_hover_text("Undo (Ctrl+Z)")
@@ -139,8 +139,8 @@ pub fn ribbon(
         }
         ui.separator();
 
-        // Bold / italic — `selectable_label` shows the button pressed-in
-        // when the selected cell already has that style.
+        // Font — bold / italic / strikethrough / underline, size, and
+        // text / fill colours.
         if ui
             .selectable_label(current.bold, egui::RichText::new("B").strong())
             .on_hover_text("Bold (Ctrl+B)")
@@ -172,33 +172,6 @@ pub fn ribbon(
         {
             action = Some(RibbonAction::ToggleUnderline);
         }
-        ui.separator();
-
-        // Alignment — a three-way segmented control.
-        for (align, label) in [
-            (HAlign::Left, "Left"),
-            (HAlign::Center, "Center"),
-            (HAlign::Right, "Right"),
-        ] {
-            if ui.selectable_label(current.align == align, label).clicked() {
-                action = Some(RibbonAction::SetAlign(align));
-            }
-        }
-        for (valign, label) in [
-            (VAlign::Top, "Top"),
-            (VAlign::Middle, "Middle"),
-            (VAlign::Bottom, "Bottom"),
-        ] {
-            if ui
-                .selectable_label(current.valign == valign, label)
-                .clicked()
-            {
-                action = Some(RibbonAction::SetVAlign(valign));
-            }
-        }
-        ui.separator();
-
-        // Font size.
         egui::ComboBox::from_label("Size")
             .selected_text(match current.font_size {
                 FontSize::Small => "Small",
@@ -219,8 +192,47 @@ pub fn ribbon(
                     }
                 }
             });
+        ui.label("Text");
+        let mut text_color = current.text_color.unwrap_or(Color32::BLACK);
+        if ui.color_edit_button_srgba(&mut text_color).changed() {
+            action = Some(RibbonAction::SetTextColor(Some(text_color)));
+        }
+        ui.label("Fill");
+        let mut fill = current.fill.unwrap_or(Color32::WHITE);
+        if ui.color_edit_button_srgba(&mut fill).changed() {
+            action = Some(RibbonAction::SetFill(Some(fill)));
+        }
         ui.separator();
-        // Number format.
+
+        // Alignment — horizontal and vertical, each a three-way control,
+        // split with H/V labels so the two are not mistaken for one band.
+        ui.label("H");
+        for (align, label) in [
+            (HAlign::Left, "Left"),
+            (HAlign::Center, "Center"),
+            (HAlign::Right, "Right"),
+        ] {
+            if ui.selectable_label(current.align == align, label).clicked() {
+                action = Some(RibbonAction::SetAlign(align));
+            }
+        }
+        ui.separator();
+        ui.label("V");
+        for (valign, label) in [
+            (VAlign::Top, "Top"),
+            (VAlign::Middle, "Middle"),
+            (VAlign::Bottom, "Bottom"),
+        ] {
+            if ui
+                .selectable_label(current.valign == valign, label)
+                .clicked()
+            {
+                action = Some(RibbonAction::SetVAlign(valign));
+            }
+        }
+        ui.separator();
+
+        // Number format + decimal-place steppers, as a spreadsheet pairs them.
         egui::ComboBox::from_label("Number")
             .selected_text(number_format_label(current.number))
             .show_ui(ui, |ui| {
@@ -231,7 +243,6 @@ pub fn ribbon(
                     }
                 }
             });
-        // Decimal-place steppers, the way a spreadsheet toolbar pairs them.
         if ui
             .button("+.0")
             .on_hover_text("Increase decimal places")
@@ -246,53 +257,6 @@ pub fn ribbon(
         {
             action = Some(RibbonAction::AdjustDecimals(-1));
         }
-        ui.separator();
-
-        // Colours. The picker yields a concrete colour; the action wraps
-        // it in `Some`. `Clear` (below) is how a colour is removed.
-        ui.label("Text");
-        let mut text_color = current.text_color.unwrap_or(Color32::BLACK);
-        if ui.color_edit_button_srgba(&mut text_color).changed() {
-            action = Some(RibbonAction::SetTextColor(Some(text_color)));
-        }
-        ui.label("Fill");
-        let mut fill = current.fill.unwrap_or(Color32::WHITE);
-        if ui.color_edit_button_srgba(&mut fill).changed() {
-            action = Some(RibbonAction::SetFill(Some(fill)));
-        }
-        ui.separator();
-
-        if ui
-            .button("Clear")
-            .on_hover_text("Reset this cell to the default format")
-            .clicked()
-        {
-            action = Some(RibbonAction::ClearFormat);
-        }
-        ui.separator();
-
-        if ui
-            .button("Conditional…")
-            .on_hover_text("Conditional-formatting rules")
-            .clicked()
-        {
-            action = Some(RibbonAction::OpenConditional);
-        }
-        if ui
-            .button("Checkbox")
-            .on_hover_text("Turn the selected cells into boolean checkboxes")
-            .clicked()
-        {
-            action = Some(RibbonAction::ToggleWidget);
-        }
-        ui.menu_button("AutoSum", |ui| {
-            for func in ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"] {
-                if ui.button(func).clicked() {
-                    action = Some(RibbonAction::Aggregate(func));
-                    ui.close_menu();
-                }
-            }
-        });
         ui.separator();
 
         // Borders — one-shot commands across the selection.
@@ -320,6 +284,44 @@ pub fn ribbon(
         }
         ui.separator();
 
+        // Cell rules and widgets — clearing formatting, conditional rules,
+        // and the boolean-checkbox widget conversion.
+        if ui
+            .button("Clear")
+            .on_hover_text("Reset this cell to the default format")
+            .clicked()
+        {
+            action = Some(RibbonAction::ClearFormat);
+        }
+        if ui
+            .button("Conditional…")
+            .on_hover_text("Conditional-formatting rules")
+            .clicked()
+        {
+            action = Some(RibbonAction::OpenConditional);
+        }
+        if ui
+            .button("Checkbox")
+            .on_hover_text("Turn the selected cells into boolean checkboxes")
+            .clicked()
+        {
+            action = Some(RibbonAction::ToggleWidget);
+        }
+        ui.separator();
+
+        // Data — aggregate the selection into the cell just past its
+        // bottom edge.
+        ui.menu_button("AutoSum", |ui| {
+            for func in ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"] {
+                if ui.button(func).clicked() {
+                    action = Some(RibbonAction::Aggregate(func));
+                    ui.close_menu();
+                }
+            }
+        });
+        ui.separator();
+
+        // View / help.
         if ui
             .button("?")
             .on_hover_text("Keyboard shortcuts (F1)")
