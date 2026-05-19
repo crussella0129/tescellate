@@ -52,6 +52,9 @@ pub enum NumberFormat {
     /// A calendar date — the value, truncated to whole days, read as a
     /// count of days since 1970-01-01 and shown as `YYYY-MM-DD`.
     Date,
+    /// A time of day — the value's fractional part (a fraction of a
+    /// day) shown as `HH:MM:SS`.
+    Time,
 }
 
 /// Which sides of a cell carry a border line.
@@ -181,6 +184,7 @@ pub fn render_number(value: f64, format: NumberFormat) -> Option<String> {
         NumberFormat::Thousands { decimals } => Some(group_thousands(value, decimals)),
         NumberFormat::Scientific { decimals } => Some(format!("{:.*e}", decimals as usize, value)),
         NumberFormat::Date => Some(render_date(value)),
+        NumberFormat::Time => Some(render_time(value)),
     }
 }
 
@@ -206,6 +210,15 @@ fn civil_from_days(days: i64) -> (i32, u32, u32) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = if m <= 2 { y + 1 } else { y };
     (year as i32, m, d)
+}
+
+/// Render `value`'s fractional part — a fraction of a day — as a
+/// `HH:MM:SS` time of day. The whole-day part is ignored; a negative
+/// value wraps so its time of day stays within the day.
+fn render_time(value: f64) -> String {
+    let secs = (value.rem_euclid(1.0) * 86_400.0).round() as u32 % 86_400;
+    let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
+    format!("{h:02}:{m:02}:{s:02}")
 }
 
 /// Render `value` with `decimals` decimal places and comma separators
@@ -405,6 +418,22 @@ mod tests {
         assert_eq!(date(-1.0), Some("1969-12-31".to_string()));
         // A fractional value is truncated to whole days.
         assert_eq!(date(31.9), Some("1970-02-01".to_string()));
+    }
+
+    #[test]
+    fn time_format_reads_the_fractional_day() {
+        let time = |n: f64| render_number(n, NumberFormat::Time);
+        // The fraction of a day: 0 is midnight, 0.5 is noon.
+        assert_eq!(time(0.0), Some("00:00:00".to_string()));
+        assert_eq!(time(0.5), Some("12:00:00".to_string()));
+        assert_eq!(time(0.25), Some("06:00:00".to_string()));
+        assert_eq!(time(0.75), Some("18:00:00".to_string()));
+        // The whole-day part is ignored.
+        assert_eq!(time(1.5), Some("12:00:00".to_string()));
+        // A negative value wraps to a time within the day.
+        assert_eq!(time(-0.25), Some("18:00:00".to_string()));
+        // One minute and one second past midnight.
+        assert_eq!(time(61.0 / 86_400.0), Some("00:01:01".to_string()));
     }
 
     #[test]
