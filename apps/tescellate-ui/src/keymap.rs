@@ -121,6 +121,21 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("F1", "This shortcuts list"),
 ];
 
+/// The mouse gestures, as `(gesture, description)` — the data behind the
+/// F1 help overlay's "Mouse" section, so feature discovery does not
+/// depend on the user guessing.
+pub const GESTURES: &[(&str, &str)] = &[
+    ("Click", "Select a cell"),
+    ("Drag", "Select a range"),
+    ("Shift+click", "Extend the selection"),
+    ("Double-click", "Edit the cell"),
+    ("Click a header", "Select the column or row"),
+    ("Drag headers", "Select a column or row range"),
+    ("Click the corner", "Select the whole sheet"),
+    ("Double-click a border", "Autofit the column"),
+    ("Right-click", "Cell actions menu"),
+];
+
 /// Interpret a non-text key press.
 pub fn command_for_key(key: Key, shift: bool, ctrl: bool, mode: Mode) -> Option<Command> {
     match mode {
@@ -467,5 +482,11 @@ mod tests {
         assert!(SHORTCUTS
             .iter()
             .all(|(k, d)| !k.is_empty() && !d.is_empty()));
+    }
+
+    #[test]
+    fn gestures_list_is_well_formed() {
+        assert!(!GESTURES.is_empty());
+        assert!(GESTURES.iter().all(|(g, d)| !g.is_empty() && !d.is_empty()));
     }
 }

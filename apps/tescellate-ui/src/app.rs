@@ -1188,15 +1188,27 @@ impl TescellateApp {
             return;
         }
         let mut open = self.help_open;
-        egui::Window::new("Keyboard shortcuts")
+        egui::Window::new("Help")
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
+                ui.heading("Keyboard");
                 egui::Grid::new("shortcuts_grid")
                     .striped(true)
                     .show(ui, |ui| {
                         for &(keys, desc) in keymap::SHORTCUTS {
                             ui.monospace(keys);
+                            ui.label(desc);
+                            ui.end_row();
+                        }
+                    });
+                ui.add_space(8.0);
+                ui.heading("Mouse");
+                egui::Grid::new("gestures_grid")
+                    .striped(true)
+                    .show(ui, |ui| {
+                        for &(gesture, desc) in keymap::GESTURES {
+                            ui.monospace(gesture);
                             ui.label(desc);
                             ui.end_row();
                         }
