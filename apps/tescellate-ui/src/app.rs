@@ -243,6 +243,12 @@ struct CondDraft {
     fill: egui::Color32,
     /// Whether a matching cell is also rendered bold.
     bold: bool,
+    /// Whether a matching cell is also rendered italic.
+    italic: bool,
+    /// Whether a matching cell is also struck through.
+    strikethrough: bool,
+    /// Whether a matching cell is also underlined.
+    underline: bool,
     /// Whether a matching cell's text is recoloured, and to what.
     text_color_on: bool,
     text_color: egui::Color32,
@@ -256,6 +262,9 @@ impl Default for CondDraft {
             threshold2: "200".to_string(),
             fill: egui::Color32::from_rgb(255, 235, 156),
             bold: false,
+            italic: false,
+            strikethrough: false,
+            underline: false,
             text_color_on: false,
             text_color: egui::Color32::from_rgb(190, 40, 40),
         }
@@ -296,6 +305,9 @@ impl CondDraft {
             format: CellFormat {
                 fill: Some(self.fill),
                 bold: self.bold,
+                italic: self.italic,
+                strikethrough: self.strikethrough,
+                underline: self.underline,
                 text_color: self.text_color_on.then_some(self.text_color),
                 ..CellFormat::default()
             },
@@ -327,6 +339,9 @@ impl CondDraft {
             threshold2,
             fill: rule.format.fill.unwrap_or(defaults.fill),
             bold: rule.format.bold,
+            italic: rule.format.italic,
+            strikethrough: rule.format.strikethrough,
+            underline: rule.format.underline,
             text_color_on: rule.format.text_color.is_some(),
             text_color: rule.format.text_color.unwrap_or(defaults.text_color),
         }
@@ -1200,6 +1215,9 @@ impl TescellateApp {
                     ui.label("fill");
                     ui.color_edit_button_srgba(&mut self.cond_draft.fill);
                     ui.checkbox(&mut self.cond_draft.bold, "bold");
+                    ui.checkbox(&mut self.cond_draft.italic, "italic");
+                    ui.checkbox(&mut self.cond_draft.strikethrough, "strike");
+                    ui.checkbox(&mut self.cond_draft.underline, "underline");
                     ui.checkbox(&mut self.cond_draft.text_color_on, "text");
                     ui.color_edit_button_srgba(&mut self.cond_draft.text_color);
                     if ui.button("Add rule").clicked() {
@@ -3506,6 +3524,9 @@ mod tests {
             kind: CondKind::Less,
             threshold: "42.5".to_string(),
             bold: true,
+            italic: true,
+            strikethrough: true,
+            underline: true,
             text_color_on: true,
             ..CondDraft::default()
         };
@@ -3513,6 +3534,7 @@ mod tests {
         assert_eq!(back.kind, CondKind::Less);
         assert_eq!(back.threshold, "42.5");
         assert!(back.bold);
+        assert!(back.italic && back.strikethrough && back.underline);
         assert!(back.text_color_on);
         // A no-threshold condition recovers its kind.
         let rule = CondDraft {
