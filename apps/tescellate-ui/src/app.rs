@@ -149,19 +149,23 @@ enum CondKind {
     Greater,
     Less,
     Equal,
+    NotEqual,
     IsTrue,
     IsFalse,
     NonEmpty,
+    IsEmpty,
 }
 
 impl CondKind {
-    const ALL: [CondKind; 6] = [
+    const ALL: [CondKind; 8] = [
         CondKind::Greater,
         CondKind::Less,
         CondKind::Equal,
+        CondKind::NotEqual,
         CondKind::IsTrue,
         CondKind::IsFalse,
         CondKind::NonEmpty,
+        CondKind::IsEmpty,
     ];
 
     fn label(self) -> &'static str {
@@ -169,15 +173,20 @@ impl CondKind {
             CondKind::Greater => "greater than",
             CondKind::Less => "less than",
             CondKind::Equal => "equal to",
+            CondKind::NotEqual => "not equal to",
             CondKind::IsTrue => "is TRUE",
             CondKind::IsFalse => "is FALSE",
             CondKind::NonEmpty => "non-empty",
+            CondKind::IsEmpty => "empty",
         }
     }
 
     /// Whether this kind needs the numeric threshold field.
     fn needs_threshold(self) -> bool {
-        matches!(self, CondKind::Greater | CondKind::Less | CondKind::Equal)
+        matches!(
+            self,
+            CondKind::Greater | CondKind::Less | CondKind::Equal | CondKind::NotEqual
+        )
     }
 }
 
@@ -206,9 +215,11 @@ impl CondDraft {
             CondKind::Greater => Condition::GreaterThan(self.threshold.trim().parse().ok()?),
             CondKind::Less => Condition::LessThan(self.threshold.trim().parse().ok()?),
             CondKind::Equal => Condition::EqualTo(self.threshold.trim().parse().ok()?),
+            CondKind::NotEqual => Condition::NotEqualTo(self.threshold.trim().parse().ok()?),
             CondKind::IsTrue => Condition::IsTrue,
             CondKind::IsFalse => Condition::IsFalse,
             CondKind::NonEmpty => Condition::NonEmpty,
+            CondKind::IsEmpty => Condition::IsEmpty,
         };
         Some(Rule {
             condition,
@@ -2900,9 +2911,11 @@ fn describe_condition(condition: &Condition) -> String {
         Condition::GreaterThan(t) => format!("value > {}", format_number(*t)),
         Condition::LessThan(t) => format!("value < {}", format_number(*t)),
         Condition::EqualTo(t) => format!("value = {}", format_number(*t)),
+        Condition::NotEqualTo(t) => format!("value != {}", format_number(*t)),
         Condition::IsTrue => "value is TRUE".to_string(),
         Condition::IsFalse => "value is FALSE".to_string(),
         Condition::NonEmpty => "cell is non-empty".to_string(),
+        Condition::IsEmpty => "cell is empty".to_string(),
     }
 }
 

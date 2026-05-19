@@ -18,12 +18,16 @@ pub enum Condition {
     LessThan(f64),
     /// A numeric value equal to the threshold.
     EqualTo(f64),
+    /// A numeric value not equal to the threshold.
+    NotEqualTo(f64),
     /// The cell holds boolean `TRUE`.
     IsTrue,
     /// The cell holds boolean `FALSE`.
     IsFalse,
     /// The cell is not empty.
     NonEmpty,
+    /// The cell is empty.
+    IsEmpty,
 }
 
 impl Condition {
@@ -38,9 +42,11 @@ impl Condition {
             Condition::GreaterThan(t) => number.is_some_and(|n| n > *t),
             Condition::LessThan(t) => number.is_some_and(|n| n < *t),
             Condition::EqualTo(t) => number.is_some_and(|n| n == *t),
+            Condition::NotEqualTo(t) => number.is_some_and(|n| n != *t),
             Condition::IsTrue => matches!(value, CellValue::Bool(true)),
             Condition::IsFalse => matches!(value, CellValue::Bool(false)),
             Condition::NonEmpty => !matches!(value, CellValue::Empty),
+            Condition::IsEmpty => matches!(value, CellValue::Empty),
         }
     }
 }
@@ -101,6 +107,18 @@ mod tests {
         assert!(Condition::IsFalse.matches(&CellValue::Bool(false)));
         assert!(Condition::NonEmpty.matches(&CellValue::Number(0.0)));
         assert!(!Condition::NonEmpty.matches(&CellValue::Empty));
+    }
+
+    #[test]
+    fn not_equal_and_is_empty_conditions() {
+        let v = CellValue::Number(50.0);
+        assert!(Condition::NotEqualTo(10.0).matches(&v));
+        assert!(!Condition::NotEqualTo(50.0).matches(&v));
+        // Non-numeric values never satisfy a numeric condition.
+        assert!(!Condition::NotEqualTo(0.0).matches(&CellValue::Text("hi".into())));
+        // IsEmpty is the mirror of NonEmpty.
+        assert!(Condition::IsEmpty.matches(&CellValue::Empty));
+        assert!(!Condition::IsEmpty.matches(&CellValue::Number(0.0)));
     }
 
     #[test]
