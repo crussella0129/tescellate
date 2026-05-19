@@ -11,7 +11,7 @@
 
 use egui::Color32;
 
-use crate::format::{BorderMode, CellFormat, HAlign, NumberFormat};
+use crate::format::{BorderMode, CellFormat, HAlign, NumberFormat, VAlign};
 
 /// A formatting change the user triggered on the ribbon.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -21,6 +21,7 @@ pub enum RibbonAction {
     ToggleStrikethrough,
     ToggleUnderline,
     SetAlign(HAlign),
+    SetVAlign(VAlign),
     SetNumber(NumberFormat),
     /// Increase (`+1`) or decrease (`-1`) the selected cells' decimal places.
     AdjustDecimals(i32),
@@ -180,6 +181,18 @@ pub fn ribbon(
         ] {
             if ui.selectable_label(current.align == align, label).clicked() {
                 action = Some(RibbonAction::SetAlign(align));
+            }
+        }
+        for (valign, label) in [
+            (VAlign::Top, "Top"),
+            (VAlign::Middle, "Middle"),
+            (VAlign::Bottom, "Bottom"),
+        ] {
+            if ui
+                .selectable_label(current.valign == valign, label)
+                .clicked()
+            {
+                action = Some(RibbonAction::SetVAlign(valign));
             }
         }
         ui.separator();

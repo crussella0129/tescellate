@@ -33,6 +33,27 @@ pub fn effective_align(align: HAlign, numeric: bool) -> HAlign {
     }
 }
 
+/// Vertical text alignment within a cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VAlign {
+    Top,
+    /// Centred — the default.
+    #[default]
+    Middle,
+    Bottom,
+}
+
+/// The y-offset, measured from the top of a `height`-tall cell, at
+/// which to place `content`-tall text under `align`. `pad` insets the
+/// Top and Bottom positions from the cell edge; Middle ignores it.
+pub fn vertical_offset(align: VAlign, height: f32, content: f32, pad: f32) -> f32 {
+    match align {
+        VAlign::Top => pad,
+        VAlign::Middle => (height - content) / 2.0,
+        VAlign::Bottom => height - content - pad,
+    }
+}
+
 /// How a numeric cell value is rendered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NumberFormat {
@@ -159,6 +180,7 @@ pub struct CellFormat {
     pub strikethrough: bool,
     pub underline: bool,
     pub align: HAlign,
+    pub valign: VAlign,
     pub text_color: Option<Color32>,
     pub fill: Option<Color32>,
     pub number: NumberFormat,
@@ -552,6 +574,16 @@ mod tests {
         assert_eq!(effective_align(HAlign::Left, true), HAlign::Left);
         assert_eq!(effective_align(HAlign::Center, true), HAlign::Center);
         assert_eq!(effective_align(HAlign::Right, false), HAlign::Right);
+    }
+
+    #[test]
+    fn vertical_offset_places_text_within_the_cell() {
+        // A 100-tall cell holding 20-tall text, padded by 4: Top sits at
+        // the pad, Bottom a pad up from the base.
+        assert_eq!(vertical_offset(VAlign::Top, 100.0, 20.0, 4.0), 4.0);
+        assert_eq!(vertical_offset(VAlign::Bottom, 100.0, 20.0, 4.0), 76.0);
+        // Middle centres the text and ignores the pad.
+        assert_eq!(vertical_offset(VAlign::Middle, 100.0, 20.0, 4.0), 40.0);
     }
 
     #[test]
