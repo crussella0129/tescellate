@@ -101,6 +101,23 @@ pub fn effective_format(base: &CellFormat, value: &CellValue, rules: &[Rule]) ->
     f
 }
 
+/// The index pair to swap to move the rule at `index` one step toward
+/// the front (`up`) or the back of a list of `len` rules — `None` when
+/// that rule is already at the end it would move toward. Rules are
+/// first-match-wins, so a move changes the rule's priority.
+pub fn swap_for_move(len: usize, index: usize, up: bool) -> Option<(usize, usize)> {
+    if index >= len {
+        return None;
+    }
+    if up && index > 0 {
+        Some((index, index - 1))
+    } else if !up && index + 1 < len {
+        Some((index, index + 1))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,5 +288,20 @@ mod tests {
         };
         let miss = effective_format(&base, &CellValue::Number(-1.0), std::slice::from_ref(&rule));
         assert!(miss.strikethrough && !miss.underline);
+    }
+
+    #[test]
+    fn swap_for_move_finds_the_neighbour_or_stops_at_the_end() {
+        // An interior rule swaps with the neighbour toward the move.
+        assert_eq!(swap_for_move(4, 2, true), Some((2, 1)));
+        assert_eq!(swap_for_move(4, 2, false), Some((2, 3)));
+        // The first rule cannot move up; the last cannot move down.
+        assert_eq!(swap_for_move(4, 0, true), None);
+        assert_eq!(swap_for_move(4, 3, false), None);
+        // A lone rule cannot move either way.
+        assert_eq!(swap_for_move(1, 0, true), None);
+        assert_eq!(swap_for_move(1, 0, false), None);
+        // An out-of-range index yields nothing.
+        assert_eq!(swap_for_move(3, 9, true), None);
     }
 }
