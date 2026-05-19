@@ -97,6 +97,24 @@ pub fn number_format_label(format: NumberFormat) -> &'static str {
     }
 }
 
+/// Draw a single bordered ribbon group titled `title`, with `content`
+/// laid out horizontally inside the frame and the title shown as a
+/// small caption underneath. The frame keeps its contents together
+/// even when the parent `horizontal_wrapped` flows to a new line — so
+/// each group is one persistent visual block rather than dissolving
+/// into a flat strip of buttons.
+fn ribbon_group(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::group(ui.style())
+        .inner_margin(egui::Margin::symmetric(6.0, 3.0))
+        .show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.horizontal(|ui| content(ui));
+                ui.add_space(1.0);
+                ui.small(egui::RichText::new(title).weak());
+            });
+        });
+}
+
 /// Draw the toolbar for the selected cell's `current` format. Returns
 /// the action the user triggered this frame, if any. `can_undo` /
 /// `can_redo` gate the undo/redo buttons. `painter_armed` lights the
@@ -109,273 +127,442 @@ pub fn ribbon(
     painter_armed: bool,
 ) -> Option<RibbonAction> {
     let mut action = None;
-    // Wrapped, so the strip flows onto a second line on a narrow window
-    // rather than running its last controls off the edge.
+    // The ribbon is a flow of named, bordered groups — each group's
+    // controls stay together inside its frame, and groups wrap to a new
+    // line on narrow windows. This mirrors how Excel/Sheets partition
+    // their ribbons so a wide window does not just become one long
+    // line of icons.
     ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new("Tescellate").strong());
-        ui.separator();
-
-        // History — undo / redo.
-        if ui
-            .add_enabled(can_undo, egui::Button::new("Undo"))
-            .on_hover_text("Undo (Ctrl+Z)")
-            .clicked()
-        {
-            action = Some(RibbonAction::Undo);
-        }
-        if ui
-            .add_enabled(can_redo, egui::Button::new("Redo"))
-            .on_hover_text("Redo (Ctrl+Y)")
-            .clicked()
-        {
-            action = Some(RibbonAction::Redo);
-        }
-        ui.separator();
-
-        // Clipboard.
-        if ui.button("Copy").on_hover_text("Copy (Ctrl+C)").clicked() {
-            action = Some(RibbonAction::Copy);
-        }
-        if ui.button("Cut").on_hover_text("Cut (Ctrl+X)").clicked() {
-            action = Some(RibbonAction::Cut);
-        }
-        if ui.button("Paste").on_hover_text("Paste (Ctrl+V)").clicked() {
-            action = Some(RibbonAction::Paste);
-        }
-        if ui
-            .button("Paste values")
-            .on_hover_text("Paste values only — drops formulas (Ctrl+Shift+V)")
-            .clicked()
-        {
-            action = Some(RibbonAction::PasteValues);
-        }
-        if ui
-            .selectable_label(painter_armed, "Painter")
-            .on_hover_text(
-                "Format painter — copy this cell's format, then click another cell to apply it",
-            )
-            .clicked()
-        {
-            action = Some(RibbonAction::ToggleFormatPainter);
-        }
-        ui.separator();
-
-        // Font — bold / italic / strikethrough / underline, size, and
-        // text / fill colours.
-        if ui
-            .selectable_label(current.bold, egui::RichText::new("B").strong())
-            .on_hover_text("Bold (Ctrl+B)")
-            .clicked()
-        {
-            action = Some(RibbonAction::ToggleBold);
-        }
-        if ui
-            .selectable_label(current.italic, egui::RichText::new("I").italics())
-            .on_hover_text("Italic (Ctrl+I)")
-            .clicked()
-        {
-            action = Some(RibbonAction::ToggleItalic);
-        }
-        if ui
-            .selectable_label(
-                current.strikethrough,
-                egui::RichText::new("S").strikethrough(),
-            )
-            .on_hover_text("Strikethrough")
-            .clicked()
-        {
-            action = Some(RibbonAction::ToggleStrikethrough);
-        }
-        if ui
-            .selectable_label(current.underline, egui::RichText::new("U").underline())
-            .on_hover_text("Underline (Ctrl+U)")
-            .clicked()
-        {
-            action = Some(RibbonAction::ToggleUnderline);
-        }
-        if ui
-            .selectable_label(current.wrap_text, "Wrap")
-            .on_hover_text("Wrap long text onto multiple lines within the cell")
-            .clicked()
-        {
-            action = Some(RibbonAction::ToggleWrapText);
-        }
-        egui::ComboBox::from_label("Size")
-            .selected_text(match current.font_size {
-                FontSize::Small => "Small",
-                FontSize::Normal => "Normal",
-                FontSize::Large => "Large",
-            })
-            .show_ui(ui, |ui| {
-                for (size, label) in [
-                    (FontSize::Small, "Small"),
-                    (FontSize::Normal, "Normal"),
-                    (FontSize::Large, "Large"),
-                ] {
-                    if ui
-                        .selectable_label(current.font_size == size, label)
-                        .clicked()
-                    {
-                        action = Some(RibbonAction::SetFontSize(size));
-                    }
-                }
-            });
-        ui.label("Text");
-        let mut text_color = current.text_color.unwrap_or(Color32::BLACK);
-        if ui.color_edit_button_srgba(&mut text_color).changed() {
-            action = Some(RibbonAction::SetTextColor(Some(text_color)));
-        }
-        ui.label("Fill");
-        let mut fill = current.fill.unwrap_or(Color32::WHITE);
-        if ui.color_edit_button_srgba(&mut fill).changed() {
-            action = Some(RibbonAction::SetFill(Some(fill)));
-        }
-        ui.separator();
-
-        // Alignment — horizontal and vertical, each a three-way control,
-        // split with H/V labels so the two are not mistaken for one band.
-        ui.label("H");
-        for (align, label) in [
-            (HAlign::Left, "Left"),
-            (HAlign::Center, "Center"),
-            (HAlign::Right, "Right"),
-        ] {
-            if ui.selectable_label(current.align == align, label).clicked() {
-                action = Some(RibbonAction::SetAlign(align));
-            }
-        }
-        ui.separator();
-        ui.label("V");
-        for (valign, label) in [
-            (VAlign::Top, "Top"),
-            (VAlign::Middle, "Middle"),
-            (VAlign::Bottom, "Bottom"),
-        ] {
+        ribbon_group(ui, "History", |ui| {
             if ui
-                .selectable_label(current.valign == valign, label)
+                .add_enabled(can_undo, egui::Button::new("Undo"))
+                .on_hover_text("Undo (Ctrl+Z)")
                 .clicked()
             {
-                action = Some(RibbonAction::SetVAlign(valign));
+                action = Some(RibbonAction::Undo);
             }
-        }
-        ui.separator();
+            if ui
+                .add_enabled(can_redo, egui::Button::new("Redo"))
+                .on_hover_text("Redo (Ctrl+Y)")
+                .clicked()
+            {
+                action = Some(RibbonAction::Redo);
+            }
+        });
 
-        // Number format + decimal-place steppers, as a spreadsheet pairs them.
-        egui::ComboBox::from_label("Number")
-            .selected_text(number_format_label(current.number))
-            .show_ui(ui, |ui| {
-                let current_label = number_format_label(current.number);
-                for &(format, label) in NUMBER_FORMATS {
-                    if ui.selectable_label(current_label == label, label).clicked() {
-                        action = Some(RibbonAction::SetNumber(format));
+        ribbon_group(ui, "Clipboard", |ui| {
+            if ui.button("Copy").on_hover_text("Copy (Ctrl+C)").clicked() {
+                action = Some(RibbonAction::Copy);
+            }
+            if ui.button("Cut").on_hover_text("Cut (Ctrl+X)").clicked() {
+                action = Some(RibbonAction::Cut);
+            }
+            if ui.button("Paste").on_hover_text("Paste (Ctrl+V)").clicked() {
+                action = Some(RibbonAction::Paste);
+            }
+            if ui
+                .button("Paste values")
+                .on_hover_text("Paste values only — drops formulas (Ctrl+Shift+V)")
+                .clicked()
+            {
+                action = Some(RibbonAction::PasteValues);
+            }
+            if ui
+                .selectable_label(painter_armed, "Painter")
+                .on_hover_text("Format painter — capture this cell's format, then click another")
+                .clicked()
+            {
+                action = Some(RibbonAction::ToggleFormatPainter);
+            }
+        });
+
+        ribbon_group(ui, "Font", |ui| {
+            if ui
+                .selectable_label(current.bold, egui::RichText::new("B").strong())
+                .on_hover_text("Bold (Ctrl+B)")
+                .clicked()
+            {
+                action = Some(RibbonAction::ToggleBold);
+            }
+            if ui
+                .selectable_label(current.italic, egui::RichText::new("I").italics())
+                .on_hover_text("Italic (Ctrl+I)")
+                .clicked()
+            {
+                action = Some(RibbonAction::ToggleItalic);
+            }
+            if ui
+                .selectable_label(
+                    current.strikethrough,
+                    egui::RichText::new("S").strikethrough(),
+                )
+                .on_hover_text("Strikethrough")
+                .clicked()
+            {
+                action = Some(RibbonAction::ToggleStrikethrough);
+            }
+            if ui
+                .selectable_label(current.underline, egui::RichText::new("U").underline())
+                .on_hover_text("Underline (Ctrl+U)")
+                .clicked()
+            {
+                action = Some(RibbonAction::ToggleUnderline);
+            }
+            if ui
+                .selectable_label(current.wrap_text, "Wrap")
+                .on_hover_text("Wrap long text onto multiple lines within the cell")
+                .clicked()
+            {
+                action = Some(RibbonAction::ToggleWrapText);
+            }
+            egui::ComboBox::from_id_salt("ribbon_font_size")
+                .selected_text(match current.font_size {
+                    FontSize::Small => "Small",
+                    FontSize::Normal => "Normal",
+                    FontSize::Large => "Large",
+                })
+                .show_ui(ui, |ui| {
+                    for (size, label) in [
+                        (FontSize::Small, "Small"),
+                        (FontSize::Normal, "Normal"),
+                        (FontSize::Large, "Large"),
+                    ] {
+                        if ui
+                            .selectable_label(current.font_size == size, label)
+                            .clicked()
+                        {
+                            action = Some(RibbonAction::SetFontSize(size));
+                        }
                     }
+                });
+            let mut text_color = current.text_color.unwrap_or(Color32::BLACK);
+            if ui
+                .color_edit_button_srgba(&mut text_color)
+                .on_hover_text("Text colour")
+                .changed()
+            {
+                action = Some(RibbonAction::SetTextColor(Some(text_color)));
+            }
+            let mut fill = current.fill.unwrap_or(Color32::WHITE);
+            if ui
+                .color_edit_button_srgba(&mut fill)
+                .on_hover_text("Fill colour")
+                .changed()
+            {
+                action = Some(RibbonAction::SetFill(Some(fill)));
+            }
+        });
+
+        ribbon_group(ui, "Alignment", |ui| {
+            for (align, label) in [
+                (HAlign::Left, "Left"),
+                (HAlign::Center, "Center"),
+                (HAlign::Right, "Right"),
+            ] {
+                if ui.selectable_label(current.align == align, label).clicked() {
+                    action = Some(RibbonAction::SetAlign(align));
                 }
-            });
-        if ui
-            .button("+.0")
-            .on_hover_text("Increase decimal places")
-            .clicked()
-        {
-            action = Some(RibbonAction::AdjustDecimals(1));
-        }
-        if ui
-            .button("-.0")
-            .on_hover_text("Decrease decimal places")
-            .clicked()
-        {
-            action = Some(RibbonAction::AdjustDecimals(-1));
-        }
-        // Accounting "red negative" toggle — paints negative numbers in
-        // red when the cell has no explicit text colour.
-        if ui
-            .selectable_label(
-                current.negative_red,
-                egui::RichText::new("(-)").color(Color32::from_rgb(220, 50, 50)),
-            )
-            .on_hover_text("Show negative numbers in red")
-            .clicked()
-        {
-            action = Some(RibbonAction::ToggleNegativeRed);
-        }
-        ui.separator();
-
-        // Borders — one-shot commands across the selection.
-        ui.label("Borders");
-        if ui
-            .button("All")
-            .on_hover_text("Border every selected cell")
-            .clicked()
-        {
-            action = Some(RibbonAction::SetBorders(BorderMode::All));
-        }
-        if ui
-            .button("Outer")
-            .on_hover_text("Border the selection's outer edge")
-            .clicked()
-        {
-            action = Some(RibbonAction::SetBorders(BorderMode::Outer));
-        }
-        if ui
-            .button("None")
-            .on_hover_text("Remove borders from the selection")
-            .clicked()
-        {
-            action = Some(RibbonAction::SetBorders(BorderMode::None));
-        }
-        ui.separator();
-
-        // Cell rules and widgets — clearing formatting, conditional rules,
-        // and the boolean-checkbox widget conversion.
-        if ui
-            .button("Clear")
-            .on_hover_text("Reset this cell to the default format")
-            .clicked()
-        {
-            action = Some(RibbonAction::ClearFormat);
-        }
-        if ui
-            .button("Conditional…")
-            .on_hover_text("Conditional-formatting rules")
-            .clicked()
-        {
-            action = Some(RibbonAction::OpenConditional);
-        }
-        if ui
-            .button("Checkbox")
-            .on_hover_text("Turn the selected cells into boolean checkboxes")
-            .clicked()
-        {
-            action = Some(RibbonAction::ToggleWidget);
-        }
-        ui.separator();
-
-        // Data — aggregate the selection into the cell just past its
-        // bottom edge.
-        ui.menu_button("AutoSum", |ui| {
-            for func in ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"] {
-                if ui.button(func).clicked() {
-                    action = Some(RibbonAction::Aggregate(func));
-                    ui.close_menu();
+            }
+            ui.separator();
+            for (valign, label) in [
+                (VAlign::Top, "Top"),
+                (VAlign::Middle, "Mid"),
+                (VAlign::Bottom, "Btm"),
+            ] {
+                if ui
+                    .selectable_label(current.valign == valign, label)
+                    .clicked()
+                {
+                    action = Some(RibbonAction::SetVAlign(valign));
                 }
             }
         });
-        ui.separator();
 
-        // View / help.
-        if ui
-            .button("?")
-            .on_hover_text("Keyboard shortcuts (F1)")
-            .clicked()
-        {
-            action = Some(RibbonAction::OpenHelp);
-        }
-        if ui
-            .button("Theme")
-            .on_hover_text("Toggle the light / dark theme")
-            .clicked()
-        {
-            action = Some(RibbonAction::ToggleTheme);
-        }
+        ribbon_group(ui, "Number", |ui| {
+            egui::ComboBox::from_id_salt("ribbon_number_format")
+                .selected_text(number_format_label(current.number))
+                .show_ui(ui, |ui| {
+                    let current_label = number_format_label(current.number);
+                    for &(format, label) in NUMBER_FORMATS {
+                        if ui.selectable_label(current_label == label, label).clicked() {
+                            action = Some(RibbonAction::SetNumber(format));
+                        }
+                    }
+                });
+            if ui
+                .button("+.0")
+                .on_hover_text("Increase decimal places")
+                .clicked()
+            {
+                action = Some(RibbonAction::AdjustDecimals(1));
+            }
+            if ui
+                .button("-.0")
+                .on_hover_text("Decrease decimal places")
+                .clicked()
+            {
+                action = Some(RibbonAction::AdjustDecimals(-1));
+            }
+            if ui
+                .selectable_label(
+                    current.negative_red,
+                    egui::RichText::new("(-)").color(Color32::from_rgb(220, 50, 50)),
+                )
+                .on_hover_text("Show negative numbers in red")
+                .clicked()
+            {
+                action = Some(RibbonAction::ToggleNegativeRed);
+            }
+        });
+
+        ribbon_group(ui, "Borders", |ui| {
+            if ui
+                .button("All")
+                .on_hover_text("Border every selected cell")
+                .clicked()
+            {
+                action = Some(RibbonAction::SetBorders(BorderMode::All));
+            }
+            if ui
+                .button("Outer")
+                .on_hover_text("Border the selection's outer edge")
+                .clicked()
+            {
+                action = Some(RibbonAction::SetBorders(BorderMode::Outer));
+            }
+            if ui
+                .button("None")
+                .on_hover_text("Remove borders from the selection")
+                .clicked()
+            {
+                action = Some(RibbonAction::SetBorders(BorderMode::None));
+            }
+        });
+
+        ribbon_group(ui, "Cells", |ui| {
+            if ui
+                .button("Clear")
+                .on_hover_text("Reset this cell to the default format")
+                .clicked()
+            {
+                action = Some(RibbonAction::ClearFormat);
+            }
+            if ui
+                .button("Conditional…")
+                .on_hover_text("Conditional-formatting rules")
+                .clicked()
+            {
+                action = Some(RibbonAction::OpenConditional);
+            }
+            if ui
+                .button("Checkbox")
+                .on_hover_text("Turn the selected cells into boolean checkboxes")
+                .clicked()
+            {
+                action = Some(RibbonAction::ToggleWidget);
+            }
+        });
+
+        ribbon_group(ui, "Data", |ui| {
+            ui.menu_button("AutoSum", |ui| {
+                for func in ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"] {
+                    if ui.button(func).clicked() {
+                        action = Some(RibbonAction::Aggregate(func));
+                        ui.close_menu();
+                    }
+                }
+            });
+        });
+
+        ribbon_group(ui, "View", |ui| {
+            if ui
+                .button("?")
+                .on_hover_text("Keyboard shortcuts (F1)")
+                .clicked()
+            {
+                action = Some(RibbonAction::OpenHelp);
+            }
+            if ui
+                .button("Theme")
+                .on_hover_text("Toggle the light / dark theme")
+                .clicked()
+            {
+                action = Some(RibbonAction::ToggleTheme);
+            }
+        });
+    });
+    action
+}
+
+/// Draw the application's menu bar — File / Edit / Insert / Format /
+/// Data / View / Help — above the ribbon. Each menu item dispatches an
+/// existing [`RibbonAction`] so the menu and ribbon share handlers in
+/// `app.rs`. `File` entries that need engine support (Save/Open/Export)
+/// are shown disabled so users can see where they'll live.
+pub fn menu_bar(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<RibbonAction> {
+    let mut action = None;
+    egui::menu::bar(ui, |ui| {
+        ui.label(egui::RichText::new("Tescellate").strong());
+        ui.separator();
+        ui.menu_button("File", |ui| {
+            ui.add_enabled(false, egui::Button::new("New"));
+            ui.add_enabled(false, egui::Button::new("Open…"));
+            ui.add_enabled(false, egui::Button::new("Save"));
+            ui.add_enabled(false, egui::Button::new("Save As…"));
+            ui.separator();
+            ui.add_enabled(false, egui::Button::new("Export…"));
+            ui.separator();
+            ui.label(egui::RichText::new("(Save/Open need engine support)").weak());
+        });
+        ui.menu_button("Edit", |ui| {
+            if ui
+                .add_enabled(can_undo, egui::Button::new("Undo  Ctrl+Z"))
+                .clicked()
+            {
+                action = Some(RibbonAction::Undo);
+                ui.close_menu();
+            }
+            if ui
+                .add_enabled(can_redo, egui::Button::new("Redo  Ctrl+Y"))
+                .clicked()
+            {
+                action = Some(RibbonAction::Redo);
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("Cut  Ctrl+X").clicked() {
+                action = Some(RibbonAction::Cut);
+                ui.close_menu();
+            }
+            if ui.button("Copy  Ctrl+C").clicked() {
+                action = Some(RibbonAction::Copy);
+                ui.close_menu();
+            }
+            if ui.button("Paste  Ctrl+V").clicked() {
+                action = Some(RibbonAction::Paste);
+                ui.close_menu();
+            }
+            if ui.button("Paste values  Ctrl+Shift+V").clicked() {
+                action = Some(RibbonAction::PasteValues);
+                ui.close_menu();
+            }
+        });
+        ui.menu_button("Format", |ui| {
+            if ui.button("Bold  Ctrl+B").clicked() {
+                action = Some(RibbonAction::ToggleBold);
+                ui.close_menu();
+            }
+            if ui.button("Italic  Ctrl+I").clicked() {
+                action = Some(RibbonAction::ToggleItalic);
+                ui.close_menu();
+            }
+            if ui.button("Underline  Ctrl+U").clicked() {
+                action = Some(RibbonAction::ToggleUnderline);
+                ui.close_menu();
+            }
+            if ui.button("Strikethrough").clicked() {
+                action = Some(RibbonAction::ToggleStrikethrough);
+                ui.close_menu();
+            }
+            ui.separator();
+            ui.menu_button("Align", |ui| {
+                if ui.button("Left").clicked() {
+                    action = Some(RibbonAction::SetAlign(HAlign::Left));
+                    ui.close_menu();
+                }
+                if ui.button("Center").clicked() {
+                    action = Some(RibbonAction::SetAlign(HAlign::Center));
+                    ui.close_menu();
+                }
+                if ui.button("Right").clicked() {
+                    action = Some(RibbonAction::SetAlign(HAlign::Right));
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Top").clicked() {
+                    action = Some(RibbonAction::SetVAlign(VAlign::Top));
+                    ui.close_menu();
+                }
+                if ui.button("Middle").clicked() {
+                    action = Some(RibbonAction::SetVAlign(VAlign::Middle));
+                    ui.close_menu();
+                }
+                if ui.button("Bottom").clicked() {
+                    action = Some(RibbonAction::SetVAlign(VAlign::Bottom));
+                    ui.close_menu();
+                }
+            });
+            ui.menu_button("Borders", |ui| {
+                if ui.button("All").clicked() {
+                    action = Some(RibbonAction::SetBorders(BorderMode::All));
+                    ui.close_menu();
+                }
+                if ui.button("Outer").clicked() {
+                    action = Some(RibbonAction::SetBorders(BorderMode::Outer));
+                    ui.close_menu();
+                }
+                if ui.button("None").clicked() {
+                    action = Some(RibbonAction::SetBorders(BorderMode::None));
+                    ui.close_menu();
+                }
+            });
+            ui.menu_button("Number format", |ui| {
+                for &(format, label) in NUMBER_FORMATS {
+                    if ui.button(label).clicked() {
+                        action = Some(RibbonAction::SetNumber(format));
+                        ui.close_menu();
+                    }
+                }
+            });
+            ui.separator();
+            if ui.button("Wrap text").clicked() {
+                action = Some(RibbonAction::ToggleWrapText);
+                ui.close_menu();
+            }
+            if ui.button("Negative red").clicked() {
+                action = Some(RibbonAction::ToggleNegativeRed);
+                ui.close_menu();
+            }
+            if ui.button("Format painter").clicked() {
+                action = Some(RibbonAction::ToggleFormatPainter);
+                ui.close_menu();
+            }
+            ui.separator();
+            if ui.button("Conditional formatting…").clicked() {
+                action = Some(RibbonAction::OpenConditional);
+                ui.close_menu();
+            }
+            if ui.button("Toggle checkbox").clicked() {
+                action = Some(RibbonAction::ToggleWidget);
+                ui.close_menu();
+            }
+            if ui.button("Clear format").clicked() {
+                action = Some(RibbonAction::ClearFormat);
+                ui.close_menu();
+            }
+        });
+        ui.menu_button("Data", |ui| {
+            ui.menu_button("AutoSum", |ui| {
+                for func in ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"] {
+                    if ui.button(func).clicked() {
+                        action = Some(RibbonAction::Aggregate(func));
+                        ui.close_menu();
+                    }
+                }
+            });
+        });
+        ui.menu_button("View", |ui| {
+            if ui.button("Toggle theme").clicked() {
+                action = Some(RibbonAction::ToggleTheme);
+                ui.close_menu();
+            }
+        });
+        ui.menu_button("Help", |ui| {
+            if ui.button("Keyboard shortcuts  F1").clicked() {
+                action = Some(RibbonAction::OpenHelp);
+                ui.close_menu();
+            }
+        });
     });
     action
 }
