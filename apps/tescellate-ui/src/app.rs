@@ -74,6 +74,8 @@ const NAV_KEYS: &[(egui::Modifiers, egui::Key)] = &[
     (egui::Modifiers::NONE, egui::Key::PageDown),
     (egui::Modifiers::NONE, egui::Key::Escape),
     (egui::Modifiers::NONE, egui::Key::F2),
+    (egui::Modifiers::NONE, egui::Key::F3),
+    (egui::Modifiers::SHIFT, egui::Key::F3),
     (egui::Modifiers::NONE, egui::Key::F1),
     (egui::Modifiers::NONE, egui::Key::Delete),
     (egui::Modifiers::NONE, egui::Key::Backspace),
@@ -836,6 +838,8 @@ impl TescellateApp {
                 self.find_open = true;
                 self.find_just_opened = true;
             }
+            Command::FindNext => self.find_step(true),
+            Command::FindPrev => self.find_step(false),
             Command::OpenHelp => self.help_open = true,
         }
     }
