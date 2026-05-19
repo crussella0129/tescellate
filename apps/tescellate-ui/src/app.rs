@@ -420,6 +420,11 @@ pub struct TescellateApp {
     /// `Some` while the format-painter is armed: the captured format
     /// that the next square-cell click will apply.
     format_painter: Option<CellFormat>,
+    /// `Some` while a drag inside formula-mode is building a range
+    /// reference: the start cell and the byte offset in `edit.buffer`
+    /// where the range text begins, so each dragged frame can truncate
+    /// to that anchor and re-emit the latest "A1:Cx".
+    formula_drag: Option<((u32, u32), usize)>,
     /// Per-cell visual formatting of the square sheet.
     formats: FormatMap<(u32, u32)>,
     /// Per-cell visual formatting of the hex sheet.
@@ -531,6 +536,7 @@ impl TescellateApp {
             press_pos: None,
             header_drag: None,
             format_painter: None,
+            formula_drag: None,
             formats: FormatMap::new(),
             hex_formats: {
                 let mut m = FormatMap::new();
@@ -2345,9 +2351,29 @@ impl TescellateApp {
         // the pointer a band-width away from where the user actually
         // clicked.
         if self.resizing.is_none() {
+            let in_formula = self
+                .edit
+                .as_ref()
+                .is_some_and(|e| e.buffer.trim_start().starts_with('='));
             if response.drag_started() {
                 if let Some(p) = self.press_pos.or_else(|| response.interact_pointer_pos()) {
-                    if let Some(col) = self.metrics.col_header_at(col_hdr_origin, p, COLS) {
+                    if in_formula {
+                        // Formula-mode drag: anchor at the buffer's current
+                        // end, append the start cell's address, and let
+                        // subsequent dragged frames overwrite from `anchor`
+                        // with "A1:Cx" — see the `formula_drag` field.
+                        if let Some(cell) = self
+                            .metrics
+                            .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
+                        {
+                            if let Some(edit) = self.edit.as_mut() {
+                                let anchor = edit.buffer.len();
+                                edit.buffer.push_str(&grid::cell_address(cell.0, cell.1));
+                                edit.fresh = true;
+                                self.formula_drag = Some((cell, anchor));
+                            }
+                        }
+                    } else if let Some(col) = self.metrics.col_header_at(col_hdr_origin, p, COLS) {
                         self.commit_edit();
                         self.header_drag = Some(HeaderDrag::Column(col));
                         self.selection = Selection::column(col, ROWS);
@@ -2365,21 +2391,43 @@ impl TescellateApp {
                 }
             } else if response.dragged() {
                 if let Some(p) = response.interact_pointer_pos() {
-                    match self.header_drag {
-                        Some(HeaderDrag::Column(c0)) => {
-                            let c1 = self.metrics.col_at_x(origin, p, COLS);
-                            self.selection = Selection::column_range(c0, c1, ROWS);
+                    if let Some((start, anchor)) = self.formula_drag {
+                        if let Some(cell) = self
+                            .metrics
+                            .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
+                        {
+                            let range = if cell == start {
+                                grid::cell_address(start.0, start.1)
+                            } else {
+                                format!(
+                                    "{}:{}",
+                                    grid::cell_address(start.0, start.1),
+                                    grid::cell_address(cell.0, cell.1),
+                                )
+                            };
+                            if let Some(edit) = self.edit.as_mut() {
+                                edit.buffer.truncate(anchor);
+                                edit.buffer.push_str(&range);
+                                edit.fresh = true;
+                            }
                         }
-                        Some(HeaderDrag::Row(r0)) => {
-                            let r1 = self.metrics.row_at_y(origin, p, ROWS);
-                            self.selection = Selection::row_range(r0, r1, COLS);
-                        }
-                        None => {
-                            if let Some(cell) = self
-                                .metrics
-                                .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
-                            {
-                                self.selection.extend_to(cell);
+                    } else {
+                        match self.header_drag {
+                            Some(HeaderDrag::Column(c0)) => {
+                                let c1 = self.metrics.col_at_x(origin, p, COLS);
+                                self.selection = Selection::column_range(c0, c1, ROWS);
+                            }
+                            Some(HeaderDrag::Row(r0)) => {
+                                let r1 = self.metrics.row_at_y(origin, p, ROWS);
+                                self.selection = Selection::row_range(r0, r1, COLS);
+                            }
+                            None => {
+                                if let Some(cell) = self
+                                    .metrics
+                                    .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
+                                {
+                                    self.selection.extend_to(cell);
+                                }
                             }
                         }
                     }
@@ -2388,6 +2436,7 @@ impl TescellateApp {
         }
         if response.drag_stopped() {
             self.header_drag = None;
+            self.formula_drag = None;
         }
         if response.clicked() {
             if let Some(cell) = self.cell_under(&response, origin, header_x, header_y) {
