@@ -148,6 +148,8 @@ pub fn hex_outer_borders(cell: HexCoord, selected: impl Fn(HexCoord) -> bool) ->
 pub struct CellFormat {
     pub bold: bool,
     pub italic: bool,
+    pub strikethrough: bool,
+    pub underline: bool,
     pub align: HAlign,
     pub text_color: Option<Color32>,
     pub fill: Option<Color32>,

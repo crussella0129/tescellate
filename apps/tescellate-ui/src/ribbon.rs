@@ -18,6 +18,8 @@ use crate::format::{BorderMode, CellFormat, HAlign, NumberFormat};
 pub enum RibbonAction {
     ToggleBold,
     ToggleItalic,
+    ToggleStrikethrough,
+    ToggleUnderline,
     SetAlign(HAlign),
     SetNumber(NumberFormat),
     /// Increase (`+1`) or decrease (`-1`) the selected cells' decimal places.
@@ -144,6 +146,23 @@ pub fn ribbon(
             .clicked()
         {
             action = Some(RibbonAction::ToggleItalic);
+        }
+        if ui
+            .selectable_label(
+                current.strikethrough,
+                egui::RichText::new("S").strikethrough(),
+            )
+            .on_hover_text("Strikethrough")
+            .clicked()
+        {
+            action = Some(RibbonAction::ToggleStrikethrough);
+        }
+        if ui
+            .selectable_label(current.underline, egui::RichText::new("U").underline())
+            .on_hover_text("Underline (Ctrl+U)")
+            .clicked()
+        {
+            action = Some(RibbonAction::ToggleUnderline);
         }
         ui.separator();
 

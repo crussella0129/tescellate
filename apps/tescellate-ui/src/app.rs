@@ -796,6 +796,7 @@ impl TescellateApp {
             Command::Clear => self.clear_active(),
             Command::ToggleBold => self.toggle_range(|f| f.bold, |f, v| f.bold = v),
             Command::ToggleItalic => self.toggle_range(|f| f.italic, |f, v| f.italic = v),
+            Command::ToggleUnderline => self.toggle_range(|f| f.underline, |f, v| f.underline = v),
             Command::SetAlign(align) => self.format_range(|f| f.align = align),
             Command::Copy => self.copy_selection(ctx),
             Command::Cut => self.cut_selection(ctx),
@@ -864,6 +865,12 @@ impl TescellateApp {
         match action {
             RibbonAction::ToggleBold => self.toggle_range(|f| f.bold, |f, v| f.bold = v),
             RibbonAction::ToggleItalic => self.toggle_range(|f| f.italic, |f, v| f.italic = v),
+            RibbonAction::ToggleStrikethrough => {
+                self.toggle_range(|f| f.strikethrough, |f, v| f.strikethrough = v)
+            }
+            RibbonAction::ToggleUnderline => {
+                self.toggle_range(|f| f.underline, |f, v| f.underline = v)
+            }
             RibbonAction::SetAlign(align) => self.format_range(|f| f.align = align),
             RibbonAction::SetNumber(number) => self.format_range(|f| f.number = number),
             RibbonAction::AdjustDecimals(delta) => {
@@ -2516,11 +2523,12 @@ impl TescellateApp {
             let (anchor, pos) = hex_text_layout(align, centroid, HEX_SIZE * 0.6);
             let color = fmt.text_color.unwrap_or(text_color);
             let font = egui::FontId::proportional(13.0);
-            painter.text(pos, anchor, &text, font.clone(), color);
+            let text_rect = painter.text(pos, anchor, &text, font.clone(), color);
             if fmt.bold {
                 // Faux-bold: a second pass nudged half a pixel across.
                 painter.text(egui::pos2(pos.x + 0.5, pos.y), anchor, &text, font, color);
             }
+            draw_text_decorations(painter, text_rect, &fmt, color);
         }
         // A note marker — a small dot near the hexagon's top.
         if self.hex_notes.has(coord) {
@@ -2948,6 +2956,25 @@ fn draw_cell_text(
     painter.galley(pos, galley.clone(), color);
     if fmt.bold {
         painter.galley(pos + egui::vec2(0.55, 0.0), galley, color);
+    }
+    draw_text_decorations(painter, egui::Rect::from_min_size(pos, size), fmt, color);
+}
+
+/// Draw the strikethrough / underline lines for `fmt` across a text's
+/// bounding `rect`, in `color`. A no-op when neither decoration is set —
+/// shared by the square and hex cell-text drawing.
+fn draw_text_decorations(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    fmt: &CellFormat,
+    color: egui::Color32,
+) {
+    let stroke = egui::Stroke::new(1.0, color);
+    if fmt.strikethrough {
+        painter.hline(rect.x_range(), rect.center().y, stroke);
+    }
+    if fmt.underline {
+        painter.hline(rect.x_range(), rect.bottom() - 1.0, stroke);
     }
 }
 

@@ -87,6 +87,8 @@ pub fn effective_format(base: &CellFormat, value: &CellValue, rules: &[Rule]) ->
             let effect = &rule.format;
             f.bold = f.bold || effect.bold;
             f.italic = f.italic || effect.italic;
+            f.strikethrough = f.strikethrough || effect.strikethrough;
+            f.underline = f.underline || effect.underline;
             if effect.text_color.is_some() {
                 f.text_color = effect.text_color;
             }
@@ -242,5 +244,32 @@ mod tests {
         ];
         let got = effective_format(&CellFormat::default(), &CellValue::Number(5.0), &rules);
         assert_eq!(got.fill, Some(Color32::RED));
+    }
+
+    #[test]
+    fn a_matching_rule_adds_strikethrough_and_underline() {
+        let rule = Rule {
+            condition: Condition::GreaterThan(0.0),
+            format: CellFormat {
+                strikethrough: true,
+                underline: true,
+                ..CellFormat::default()
+            },
+        };
+        // A plain cell gains both decorations from the matching rule.
+        let got = effective_format(
+            &CellFormat::default(),
+            &CellValue::Number(5.0),
+            std::slice::from_ref(&rule),
+        );
+        assert!(got.strikethrough && got.underline);
+        // The rule only adds: a cell already struck through stays so
+        // even when its value does not match the rule.
+        let base = CellFormat {
+            strikethrough: true,
+            ..CellFormat::default()
+        };
+        let miss = effective_format(&base, &CellValue::Number(-1.0), std::slice::from_ref(&rule));
+        assert!(miss.strikethrough && !miss.underline);
     }
 }
