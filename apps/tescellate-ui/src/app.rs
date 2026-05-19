@@ -924,6 +924,9 @@ impl TescellateApp {
             RibbonAction::ToggleNegativeRed => {
                 self.toggle_range(|f| f.negative_red, |f, v| f.negative_red = v);
             }
+            RibbonAction::ToggleWrapText => {
+                self.toggle_range(|f| f.wrap_text, |f, v| f.wrap_text = v);
+            }
             RibbonAction::OpenHelp => self.help_open = true,
             RibbonAction::ToggleTheme => self.dark_mode = !self.dark_mode,
         }
@@ -3170,7 +3173,11 @@ fn draw_cell_text(
     default_color: egui::Color32,
 ) {
     let color = format::effective_text_color(fmt, is_negative, default_color);
+    let pad = 5.0;
     let mut job = egui::text::LayoutJob::default();
+    if fmt.wrap_text {
+        job.wrap.max_width = (rect.width() - 2.0 * pad).max(0.0);
+    }
     job.append(
         text,
         0.0,
@@ -3182,7 +3189,6 @@ fn draw_cell_text(
         },
     );
     let galley = painter.layout_job(job);
-    let pad = 5.0;
     let size = galley.size();
     let y = rect.top() + format::vertical_offset(fmt.valign, rect.height(), size.y, pad);
     let x = match format::effective_align(fmt.align, numeric) {

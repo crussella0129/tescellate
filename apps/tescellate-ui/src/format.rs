@@ -212,6 +212,10 @@ pub struct CellFormat {
     /// An explicit [`Self::text_color`] always wins; this only colours
     /// otherwise-default text.
     pub negative_red: bool,
+    /// Wrap long cell text into multiple lines instead of clipping at the
+    /// cell's right edge. Square-grid only — the hex paint path keeps the
+    /// single-line glyph layout that fits the hexagon geometry.
+    pub wrap_text: bool,
 }
 
 /// The colour `fmt`'s text should render in for a cell whose value's
