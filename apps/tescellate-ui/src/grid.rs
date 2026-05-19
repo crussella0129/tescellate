@@ -140,6 +140,24 @@ impl GridMetrics {
         Some((col, row))
     }
 
+    /// Like [`GridMetrics::cell_at`], but with the column header frozen
+    /// at viewport-y `header_y`: a point inside the floating header's
+    /// band `[header_y, header_y + HEADER_H)` hits no cell, so a click
+    /// there is not mistaken for the cell scrolled beneath it.
+    pub fn cell_at_frozen(
+        &self,
+        origin: Pos2,
+        header_y: f32,
+        p: Pos2,
+        cols: u32,
+        rows: u32,
+    ) -> Option<(u32, u32)> {
+        if p.y < header_y + HEADER_H {
+            return None;
+        }
+        self.cell_at(origin, p, cols, rows)
+    }
+
     /// Walk an axis, accumulating sizes, to find which index `local`
     /// (a grid-relative coordinate) lands in. `header` is the leading band.
     fn axis_index(
@@ -782,5 +800,26 @@ mod tests {
         // Content fills columns 0..1 and rows 0..1; beyond is empty.
         let filled = |c, r| c <= 1 && r <= 1;
         assert_eq!(current_region((0, 0), 16, 32, filled), ((0, 0), (1, 1)));
+    }
+
+    #[test]
+    fn cell_at_frozen_excludes_the_floating_header_band() {
+        let m = GridMetrics::new();
+        let origin = pos2(0.0, 0.0);
+        // Unscrolled (header_y == origin.y) it matches cell_at exactly.
+        let deep = pos2(HEADER_W + 10.0, HEADER_H + 10.0);
+        assert_eq!(
+            m.cell_at_frozen(origin, origin.y, deep, 100, 100),
+            m.cell_at(origin, deep, 100, 100),
+        );
+        assert!(m.cell_at_frozen(origin, origin.y, deep, 100, 100).is_some());
+        // Scrolled, the header floats to y = 300: a point inside that
+        // floating band hits no cell, though cell_at alone would.
+        let in_band = pos2(HEADER_W + 10.0, 300.0 + HEADER_H / 2.0);
+        assert!(m.cell_at(origin, in_band, 100, 100).is_some());
+        assert_eq!(m.cell_at_frozen(origin, 300.0, in_band, 100, 100), None);
+        // Just past the floating band a cell is found again.
+        let below = pos2(HEADER_W + 10.0, 300.0 + HEADER_H + 5.0);
+        assert!(m.cell_at_frozen(origin, 300.0, below, 100, 100).is_some());
     }
 }
