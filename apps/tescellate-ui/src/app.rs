@@ -2476,7 +2476,6 @@ impl TescellateApp {
                     painter.rect_filled(rect, 0.0, find_tint);
                 }
                 painter.rect_stroke(rect, 0.0, grid_line);
-                draw_borders(&painter, rect, &fmt.borders, border_stroke);
                 if editing_cell == Some((c, r)) {
                     continue;
                 }
@@ -2497,6 +2496,26 @@ impl TescellateApp {
                 }
             }
         }
+
+        // A second pass for the heavy format borders, so a neighbouring
+        // cell's grid line does not overpaint a bordered range's right
+        // or bottom perimeter.
+        for r in 0..ROWS {
+            for c in 0..COLS {
+                let base = self.formats.get((c, r));
+                let fmt = if self.cond_rules.is_empty() {
+                    base
+                } else {
+                    conditional::effective_format(&base, &self.cell_value(c, r), &self.cond_rules)
+                };
+                if fmt.borders == Borders::default() {
+                    continue;
+                }
+                let rect = self.metrics.cell_rect(origin, c, r);
+                draw_borders(&painter, rect, &fmt.borders, border_stroke);
+            }
+        }
+
         // The range border, when the selection spans more than one cell.
         if self.selection.is_range() {
             let ((min_c, min_r), (max_c, max_r)) = self.selection.bounds();
