@@ -2037,10 +2037,18 @@ impl TescellateApp {
         }
         self.handle_resize(&response, origin);
 
-        // A noted cell shows its note as a tooltip while it is hovered.
+        // A hovered cell shows its error detail, or failing that its note.
         if let Some(p) = response.hover_pos() {
             if let Some(cell) = self.metrics.cell_at(origin, p, COLS, ROWS) {
-                if self.notes.has(cell) {
+                if let CellValue::Error(e) = self.cell_value(cell.0, cell.1) {
+                    let detail = error_detail(&e);
+                    egui::show_tooltip_at_pointer(
+                        ui.ctx(),
+                        ui.layer_id(),
+                        egui::Id::new("cell_error_tooltip"),
+                        |ui| ui.label(detail),
+                    );
+                } else if self.notes.has(cell) {
                     let note = self.notes.get(cell).to_string();
                     egui::show_tooltip_at_pointer(
                         ui.ctx(),
@@ -2950,6 +2958,24 @@ fn hex_current_region(
 /// Render a cell value with the engine's natural formatting — no number
 /// format applied. Used for the hex sheet and as the square sheet's
 /// fallback for non-numeric values.
+/// A friendly description of a formula error — shown as a tooltip when
+/// an errored cell is hovered. `Lang` / `Compile` carry the engine's
+/// own message.
+fn error_detail(err: &CellError) -> String {
+    match err {
+        CellError::Ref => "Reference to a missing cell".to_string(),
+        CellError::Cycle => "Part of a dependency cycle".to_string(),
+        CellError::DivZero => "Division by zero".to_string(),
+        CellError::Num => "Numeric overflow or invalid number".to_string(),
+        CellError::Value => "Wrong type of value".to_string(),
+        CellError::Lang(msg) => format!("Formula error: {msg}"),
+        CellError::Compile(msg) => format!("Compile error: {msg}"),
+        CellError::Timeout => "Formula timed out".to_string(),
+        CellError::Spill => "Spill range is blocked".to_string(),
+        CellError::StaleFunction => "Stored function needs recalculation".to_string(),
+    }
+}
+
 /// The Excel-style short code for a formula error — what an errored
 /// cell displays.
 fn error_code(err: &CellError) -> &'static str {
@@ -3158,6 +3184,15 @@ mod tests {
             natural_text(CellValue::Error(CellError::DivZero)),
             "#DIV/0!",
         );
+    }
+
+    #[test]
+    fn error_detail_describes_each_error() {
+        assert_eq!(error_detail(&CellError::DivZero), "Division by zero");
+        assert!(error_detail(&CellError::Ref).contains("missing cell"));
+        // Lang / Compile carry the engine's own message.
+        assert!(error_detail(&CellError::Lang("unexpected }".into())).contains("unexpected }"));
+        assert!(error_detail(&CellError::Compile("E0382".into())).contains("E0382"));
     }
 
     #[test]
