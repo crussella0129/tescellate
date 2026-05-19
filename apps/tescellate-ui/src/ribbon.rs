@@ -53,6 +53,9 @@ pub enum RibbonAction {
     /// Toggle the accounting "negative numbers in red" rendering on the
     /// selected cells.
     ToggleNegativeRed,
+    /// Toggle whether long cell text wraps onto multiple lines within the
+    /// cell instead of clipping at the right edge.
+    ToggleWrapText,
     /// Open the keyboard-shortcuts help overlay.
     OpenHelp,
     /// Switch between the light and dark colour themes.
@@ -174,6 +177,13 @@ pub fn ribbon(
             .clicked()
         {
             action = Some(RibbonAction::ToggleUnderline);
+        }
+        if ui
+            .selectable_label(current.wrap_text, "Wrap")
+            .on_hover_text("Wrap long text onto multiple lines within the cell")
+            .clicked()
+        {
+            action = Some(RibbonAction::ToggleWrapText);
         }
         egui::ComboBox::from_label("Size")
             .selected_text(match current.font_size {
