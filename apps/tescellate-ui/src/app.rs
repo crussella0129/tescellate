@@ -917,6 +917,9 @@ impl TescellateApp {
             RibbonAction::ToggleWidget => self.toggle_widget_cells(),
             RibbonAction::Aggregate(func) => self.autosum(func),
             RibbonAction::SetBorders(mode) => self.apply_border(mode),
+            RibbonAction::ToggleNegativeRed => {
+                self.toggle_range(|f| f.negative_red, |f, v| f.negative_red = v);
+            }
             RibbonAction::OpenHelp => self.help_open = true,
             RibbonAction::ToggleTheme => self.dark_mode = !self.dark_mode,
         }
@@ -2517,11 +2520,22 @@ impl TescellateApp {
                 }
                 let text = self.cell_text(c, r);
                 if !text.is_empty() {
-                    let numeric = matches!(
-                        self.cell_value(c, r),
-                        CellValue::Number(_) | CellValue::Integer(_)
+                    let value = self.cell_value(c, r);
+                    let numeric = matches!(value, CellValue::Number(_) | CellValue::Integer(_));
+                    let is_negative = match value {
+                        CellValue::Number(n) => n < 0.0,
+                        CellValue::Integer(i) => i < 0,
+                        _ => false,
+                    };
+                    draw_cell_text(
+                        &painter,
+                        &text,
+                        rect,
+                        &fmt,
+                        numeric,
+                        is_negative,
+                        text_color,
                     );
-                    draw_cell_text(&painter, &text, rect, &fmt, numeric, text_color);
                 }
                 if self.notes.has((c, r)) {
                     draw_note_marker(&painter, rect);
@@ -2722,10 +2736,13 @@ impl TescellateApp {
 
         let text = self.hex_cell_text(coord);
         if !text.is_empty() {
-            let numeric = matches!(
-                self.hex_cell_value(coord),
-                CellValue::Number(_) | CellValue::Integer(_)
-            );
+            let value = self.hex_cell_value(coord);
+            let numeric = matches!(value, CellValue::Number(_) | CellValue::Integer(_));
+            let is_negative = match value {
+                CellValue::Number(n) => n < 0.0,
+                CellValue::Integer(i) => i < 0,
+                _ => false,
+            };
             let c = self.hex_lattice.centroid(coord);
             let vshift = match fmt.valign {
                 VAlign::Top => -HEX_SIZE * 0.5,
@@ -2735,7 +2752,7 @@ impl TescellateApp {
             let centroid = egui::pos2(origin.x + c.x, origin.y + c.y + vshift);
             let align = format::effective_align(fmt.align, numeric);
             let (anchor, pos) = hex_text_layout(align, centroid, HEX_SIZE * 0.6);
-            let color = fmt.text_color.unwrap_or(text_color);
+            let color = format::effective_text_color(&fmt, is_negative, text_color);
             let font = egui::FontId::proportional(fmt.font_size.points());
             let text_rect = painter.text(pos, anchor, &text, font.clone(), color);
             if fmt.bold {
@@ -3145,9 +3162,10 @@ fn draw_cell_text(
     rect: egui::Rect,
     fmt: &CellFormat,
     numeric: bool,
+    is_negative: bool,
     default_color: egui::Color32,
 ) {
-    let color = fmt.text_color.unwrap_or(default_color);
+    let color = format::effective_text_color(fmt, is_negative, default_color);
     let mut job = egui::text::LayoutJob::default();
     job.append(
         text,

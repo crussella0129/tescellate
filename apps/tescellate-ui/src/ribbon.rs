@@ -50,6 +50,9 @@ pub enum RibbonAction {
     Aggregate(&'static str),
     /// Apply a border mode across the selection.
     SetBorders(BorderMode),
+    /// Toggle the accounting "negative numbers in red" rendering on the
+    /// selected cells.
+    ToggleNegativeRed,
     /// Open the keyboard-shortcuts help overlay.
     OpenHelp,
     /// Switch between the light and dark colour themes.
@@ -256,6 +259,18 @@ pub fn ribbon(
             .clicked()
         {
             action = Some(RibbonAction::AdjustDecimals(-1));
+        }
+        // Accounting "red negative" toggle — paints negative numbers in
+        // red when the cell has no explicit text colour.
+        if ui
+            .selectable_label(
+                current.negative_red,
+                egui::RichText::new("(-)").color(Color32::from_rgb(220, 50, 50)),
+            )
+            .on_hover_text("Show negative numbers in red")
+            .clicked()
+        {
+            action = Some(RibbonAction::ToggleNegativeRed);
         }
         ui.separator();
 

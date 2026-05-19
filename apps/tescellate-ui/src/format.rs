@@ -208,6 +208,24 @@ pub struct CellFormat {
     pub number: NumberFormat,
     pub borders: Borders,
     pub hex_borders: HexBorders,
+    /// Render negative numeric values in red — the accounting convention.
+    /// An explicit [`Self::text_color`] always wins; this only colours
+    /// otherwise-default text.
+    pub negative_red: bool,
+}
+
+/// The colour `fmt`'s text should render in for a cell whose value's
+/// negativity is `is_negative`. An explicit `text_color` wins; otherwise
+/// a negative numeric cell with `negative_red` set goes red, and
+/// everything else takes the theme's `default`.
+pub fn effective_text_color(fmt: &CellFormat, is_negative: bool, default: Color32) -> Color32 {
+    if let Some(c) = fmt.text_color {
+        return c;
+    }
+    if fmt.negative_red && is_negative {
+        return Color32::from_rgb(220, 50, 50);
+    }
+    default
 }
 
 impl CellFormat {
@@ -596,6 +614,23 @@ mod tests {
         assert_eq!(effective_align(HAlign::Left, true), HAlign::Left);
         assert_eq!(effective_align(HAlign::Center, true), HAlign::Center);
         assert_eq!(effective_align(HAlign::Right, false), HAlign::Right);
+    }
+
+    #[test]
+    fn effective_text_color_honours_explicit_first() {
+        let default = Color32::BLACK;
+        let mut f = CellFormat::default();
+        // No flag, no override — the theme default.
+        assert_eq!(effective_text_color(&f, true, default), default);
+        // negative_red set but the value is non-negative — theme default.
+        f.negative_red = true;
+        assert_eq!(effective_text_color(&f, false, default), default);
+        // negative_red set and the value is negative — red.
+        let red = Color32::from_rgb(220, 50, 50);
+        assert_eq!(effective_text_color(&f, true, default), red);
+        // An explicit text_color wins over negative_red.
+        f.text_color = Some(Color32::BLUE);
+        assert_eq!(effective_text_color(&f, true, default), Color32::BLUE);
     }
 
     #[test]
