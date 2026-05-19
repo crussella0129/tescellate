@@ -2400,6 +2400,10 @@ impl TescellateApp {
                 egui::vec2(self.metrics.col_width(c), grid::HEADER_H),
             );
             painter.rect_filled(rect, 0.0, header_bg);
+            // Tint the active cell's column header.
+            if c == self.selection.cursor.0 {
+                painter.rect_filled(rect, 0.0, sel_tint);
+            }
             painter.rect_stroke(rect, 0.0, grid_line);
             painter.text(
                 rect.center(),
@@ -2416,6 +2420,10 @@ impl TescellateApp {
                 egui::vec2(grid::HEADER_W, self.metrics.row_height(r)),
             );
             painter.rect_filled(rect, 0.0, header_bg);
+            // Tint the active cell's row header.
+            if r == self.selection.cursor.1 {
+                painter.rect_filled(rect, 0.0, sel_tint);
+            }
             painter.rect_stroke(rect, 0.0, grid_line);
             painter.text(
                 rect.center(),
