@@ -11,7 +11,7 @@
 
 use egui::Color32;
 
-use crate::format::{BorderMode, CellFormat, HAlign, NumberFormat, VAlign};
+use crate::format::{BorderMode, CellFormat, FontSize, HAlign, NumberFormat, VAlign};
 
 /// A formatting change the user triggered on the ribbon.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -22,6 +22,7 @@ pub enum RibbonAction {
     ToggleUnderline,
     SetAlign(HAlign),
     SetVAlign(VAlign),
+    SetFontSize(FontSize),
     SetNumber(NumberFormat),
     /// Increase (`+1`) or decrease (`-1`) the selected cells' decimal places.
     AdjustDecimals(i32),
@@ -197,6 +198,28 @@ pub fn ribbon(
         }
         ui.separator();
 
+        // Font size.
+        egui::ComboBox::from_label("Size")
+            .selected_text(match current.font_size {
+                FontSize::Small => "Small",
+                FontSize::Normal => "Normal",
+                FontSize::Large => "Large",
+            })
+            .show_ui(ui, |ui| {
+                for (size, label) in [
+                    (FontSize::Small, "Small"),
+                    (FontSize::Normal, "Normal"),
+                    (FontSize::Large, "Large"),
+                ] {
+                    if ui
+                        .selectable_label(current.font_size == size, label)
+                        .clicked()
+                    {
+                        action = Some(RibbonAction::SetFontSize(size));
+                    }
+                }
+            });
+        ui.separator();
         // Number format.
         egui::ComboBox::from_label("Number")
             .selected_text(number_format_label(current.number))

@@ -873,6 +873,7 @@ impl TescellateApp {
             }
             RibbonAction::SetAlign(align) => self.format_range(|f| f.align = align),
             RibbonAction::SetVAlign(valign) => self.format_range(|f| f.valign = valign),
+            RibbonAction::SetFontSize(size) => self.format_range(|f| f.font_size = size),
             RibbonAction::SetNumber(number) => self.format_range(|f| f.number = number),
             RibbonAction::AdjustDecimals(delta) => {
                 self.format_range(|f| f.number = format::adjust_decimals(f.number, delta))
@@ -2546,7 +2547,7 @@ impl TescellateApp {
             let align = format::effective_align(fmt.align, numeric);
             let (anchor, pos) = hex_text_layout(align, centroid, HEX_SIZE * 0.6);
             let color = fmt.text_color.unwrap_or(text_color);
-            let font = egui::FontId::proportional(13.0);
+            let font = egui::FontId::proportional(fmt.font_size.points());
             let text_rect = painter.text(pos, anchor, &text, font.clone(), color);
             if fmt.bold {
                 // Faux-bold: a second pass nudged half a pixel across.
@@ -2963,7 +2964,7 @@ fn draw_cell_text(
         text,
         0.0,
         egui::TextFormat {
-            font_id: egui::FontId::proportional(13.0),
+            font_id: egui::FontId::proportional(fmt.font_size.points()),
             color,
             italics: fmt.italic,
             ..Default::default()
