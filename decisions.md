@@ -121,6 +121,30 @@ Restricting the continuation to alphabetic chars also keeps the rule
 visually distinct — `A1.X` doesn't get swallowed into a strange ident
 because `A1` is a CellRef token before the dot rule runs.
 
+## ADR-009 — Voronoi lattice carries its seed set; cells are bounded (sprint 5)
+**Date:** 2026-05-20
+**Status:** Adopted, shipped in v149 (PR #180).
+
+`VoronoiLattice` stores `seeds: Vec<Point2>` + `bounds: Rect` as part of
+its struct, unlike `SquareLattice` / `HexLattice` / `TriangleLattice`
+which are uniform tilings parametrised only by a cell size. The seeds
+ARE the lattice — every Voronoi cell is determined by the seed
+configuration plus the bounding rectangle (used to clip otherwise-
+unbounded cells against the demo region).
+
+Why bounded: a real Voronoi cell on the convex hull of the seeds is
+unbounded (extends to infinity). Clipping against `bounds` gives every
+cell a finite convex polygon, which is correct for the "Static
+Voronoi" demo the launch brief describes and keeps the polygon-as-
+Vec<Point2> type signature consistent with the other lattices. If a
+user later needs unbounded cells, the public API stays the same and
+the internal algorithm swaps for a half-plane / ray-segment hybrid.
+
+Why brute-force O(N²) Sutherland-Hodgman over Delaunay: smaller diff,
+no external crate dep, fast enough for N ≤ 15. A Delaunay-driven
+O(N log N) build can replace `vertices()` behind the same public API
+when N grows past launch.
+
 ## ADR-008 — XLOOKUP ships parallel-array semantics; 2D-result variant deferred (sprint 3)
 **Date:** 2026-05-20
 **Status:** Adopted, shipped in v147.
