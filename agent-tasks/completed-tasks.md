@@ -112,4 +112,10 @@
 - **Description:** Extended `Widgets<K>` to the triangle sheet. `TescellateApp` gains `triangle_widgets: Widgets<TriCoord>`; capture/restore round-trip the field; UiSnapshot gains `triangle_widgets` with `#[serde(default)]` so older snapshots tolerate the addition. `draw_triangle_grid` got a widget dispatch pass (Button + Toggle) before the in-cell edit overlay, mirroring the hex pattern from sprint 2. Slider/ProgressBar still fall through to text per ADR-006. Demo seed at T(2,-1) — a Toggle on a cell that starts FALSE. Tests: `widgets_generic_with_tri_coord_round_trip` + extended `snapshot_round_trips_through_ui_state` fixture. 249/249 UI tests pass.
 - **Completed:** 2026-05-20T23:00:00Z
 - **Files modified:** apps/tescellate-ui/src/app.rs, apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/widget.rs
-- **Commit:** PENDING
+- **Commit:** (PR #179 squash-merged as `b03fc73`)
+
+## T-501..T-505 (sprint 5) — Voronoi lattice engine bringup
+- **Description:** New `crates/tescellate-tess/src/voronoi.rs` module: `VoronoiCoord(u32)` + `VoronoiLattice { seeds, bounds }`. Lattice trait impl: `cell_at` via nearest-seed Euclidean, `centroid` returns seed, `vertices` via Sutherland-Hodgman polygon clipping of bounds against every other seed's perpendicular bisector, `neighbors` returns every other seed (Direction::N placeholder; Delaunay-correct adjacency deferred to v150). `LatticeKind::Voronoi`, `LatticeHandle::Voronoi`, `ParsedCoord::Voronoi` variants threaded through `lib.rs` (every match arm updated). Address format `V(N)`. 8-seed default config in a 400×400 box. 10 new unit tests + 2 handle round-trip tests. Engine `add_sheet` integration + UI render deferred to v150.
+- **Completed:** 2026-05-20T23:45:00Z
+- **Files modified:** crates/tescellate-tess/src/voronoi.rs (new), crates/tescellate-tess/src/lib.rs, crates/tescellate-core/src/extent.rs
+- **Commit:** `e050c37`

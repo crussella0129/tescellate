@@ -107,6 +107,10 @@ impl SheetExtent {
             ParsedCoord::Square(c) => self.contains_square(c.col, c.row),
             ParsedCoord::Hex(c) => self.contains_hex(c.q, c.r),
             ParsedCoord::Triangle(c) => self.contains_triangle(c.col, c.row),
+            // Voronoi has no row/col bounds — the lattice carries its
+            // own seed list as the source of truth. Any V(N) that
+            // parsed cleanly is by construction in range, so accept.
+            ParsedCoord::Voronoi(_) => true,
         }
     }
 }

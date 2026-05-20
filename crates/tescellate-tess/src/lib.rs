@@ -12,10 +12,12 @@ use thiserror::Error;
 pub mod hex;
 pub mod square;
 pub mod triangle;
+pub mod voronoi;
 
 use hex::{HexCoord, HexLattice};
 use square::{SquareCoord, SquareLattice};
 use triangle::{TriCoord, TriangleLattice};
+use voronoi::{VoronoiCoord, VoronoiLattice};
 
 /// String-keyed lattice dispatch. Wraps `SquareLattice` / `HexLattice` so
 /// upstream code (the workbook engine, the formula stdlib) can talk to a
@@ -28,6 +30,7 @@ pub enum LatticeHandle {
     Square(SquareLattice),
     Hex(HexLattice),
     Triangle(TriangleLattice),
+    Voronoi(VoronoiLattice),
 }
 
 /// Lattice-specific parsed coordinate. Returned by `LatticeHandle::parse_coord`
@@ -38,6 +41,7 @@ pub enum ParsedCoord {
     Square(SquareCoord),
     Hex(HexCoord),
     Triangle(TriCoord),
+    Voronoi(VoronoiCoord),
 }
 
 impl LatticeHandle {
@@ -51,6 +55,7 @@ impl LatticeHandle {
             LatticeKind::HexFlat => Some(LatticeHandle::Hex(HexLattice::flat(32.0))),
             LatticeKind::Triangle => Some(LatticeHandle::Triangle(TriangleLattice::default())),
             LatticeKind::Parallelogram => None,
+            LatticeKind::Voronoi => Some(LatticeHandle::Voronoi(VoronoiLattice::default())),
         }
     }
 
@@ -59,6 +64,7 @@ impl LatticeHandle {
             LatticeHandle::Square(l) => l.kind(),
             LatticeHandle::Hex(l) => l.kind(),
             LatticeHandle::Triangle(l) => l.kind(),
+            LatticeHandle::Voronoi(l) => l.kind(),
         }
     }
 
@@ -70,6 +76,7 @@ impl LatticeHandle {
             LatticeHandle::Square(l) => Ok(ParsedCoord::Square(l.parse_address(addr)?)),
             LatticeHandle::Hex(l) => Ok(ParsedCoord::Hex(l.parse_address(addr)?)),
             LatticeHandle::Triangle(l) => Ok(ParsedCoord::Triangle(l.parse_address(addr)?)),
+            LatticeHandle::Voronoi(l) => Ok(ParsedCoord::Voronoi(l.parse_address(addr)?)),
         }
     }
 
@@ -79,10 +86,12 @@ impl LatticeHandle {
             (LatticeHandle::Square(l), ParsedCoord::Square(c)) => l.address(c),
             (LatticeHandle::Hex(l), ParsedCoord::Hex(c)) => l.address(c),
             (LatticeHandle::Triangle(l), ParsedCoord::Triangle(c)) => l.address(c),
+            (LatticeHandle::Voronoi(l), ParsedCoord::Voronoi(c)) => l.address(c),
             // Coord/lattice mismatch — degenerate, just stringify the coord.
             (_, ParsedCoord::Square(c)) => format!("[c{},r{}]", c.col, c.row + 1),
             (_, ParsedCoord::Hex(c)) => format!("H({},{})", c.q, c.r),
             (_, ParsedCoord::Triangle(c)) => format!("T({},{})", c.col, c.row),
+            (_, ParsedCoord::Voronoi(c)) => format!("V({})", c.0),
         }
     }
 
@@ -99,6 +108,10 @@ impl LatticeHandle {
                 Ok(l.address(c))
             }
             LatticeHandle::Triangle(l) => {
+                let c = l.parse_address(addr)?;
+                Ok(l.address(c))
+            }
+            LatticeHandle::Voronoi(l) => {
                 let c = l.parse_address(addr)?;
                 Ok(l.address(c))
             }
@@ -138,6 +151,15 @@ impl LatticeHandle {
                     .map(|c| l.address(c))
                     .collect())
             }
+            LatticeHandle::Voronoi(l) => {
+                // Voronoi has no natural rectangular range — interpret
+                // `V(a):V(b)` as the inclusive index span. Useful for
+                // SUM(V(0):V(3)) and similar batch references.
+                let a = l.parse_address(start)?;
+                let b = l.parse_address(end)?;
+                let (lo, hi) = (a.0.min(b.0), a.0.max(b.0));
+                Ok((lo..=hi).map(|i| l.address(VoronoiCoord(i))).collect())
+            }
         }
     }
 
@@ -161,6 +183,13 @@ impl LatticeHandle {
                     .collect())
             }
             LatticeHandle::Triangle(l) => {
+                let c = l.parse_address(addr)?;
+                Ok(l.neighbors(c)
+                    .into_iter()
+                    .map(|(_, c)| l.address(c))
+                    .collect())
+            }
+            LatticeHandle::Voronoi(l) => {
                 let c = l.parse_address(addr)?;
                 Ok(l.neighbors(c)
                     .into_iter()
@@ -219,6 +248,28 @@ impl LatticeHandle {
                 }
                 Ok(out)
             }
+            LatticeHandle::Voronoi(l) => {
+                // Voronoi distance isn't well-defined in cell-step
+                // terms — fall back to "everyone within `radius` of the
+                // seed in Euclidean distance". For radius == 0 this
+                // means only the center cell; positive radii return
+                // every seed whose centroid is within `radius` of the
+                // anchor seed's centroid. Good enough for the launch
+                // demo; a Delaunay-driven cell-step distance lands
+                // alongside the v150 follow-up.
+                let c = l.parse_address(addr)?;
+                let anchor = l.centroid(c);
+                let r2 = (radius as f32) * (radius as f32);
+                let mut out = Vec::new();
+                for i in 0..l.seeds.len() as u32 {
+                    let cand = VoronoiCoord(i);
+                    let d2 = (l.centroid(cand) - anchor).length_squared();
+                    if d2 <= r2 + 1e-3 {
+                        out.push(l.address(cand));
+                    }
+                }
+                Ok(out)
+            }
         }
     }
 
@@ -249,6 +300,14 @@ impl LatticeHandle {
                 let a = l.parse_address(a)?;
                 let b = l.parse_address(b)?;
                 Ok((a.col - b.col).abs().max((a.row - b.row).abs()) as i64)
+            }
+            LatticeHandle::Voronoi(l) => {
+                // No canonical cell-step distance yet — return the
+                // Euclidean distance between seed centroids rounded to
+                // an integer. Same caveat as `cells_within_addresses`.
+                let a = l.parse_address(a)?;
+                let b = l.parse_address(b)?;
+                Ok((l.centroid(a) - l.centroid(b)).length().round() as i64)
             }
         }
     }
@@ -300,6 +359,24 @@ mod handle_tests {
         let h = LatticeHandle::for_kind(LatticeKind::Triangle).unwrap();
         assert_eq!(h.canonicalize("T(0,0)").unwrap(), "T(0,0)");
         assert_eq!(h.canonicalize("T(-3,5)").unwrap(), "T(-3,5)");
+    }
+
+    #[test]
+    fn voronoi_handle_canonicalises() {
+        let h = LatticeHandle::for_kind(LatticeKind::Voronoi).unwrap();
+        assert_eq!(h.canonicalize("V(0)").unwrap(), "V(0)");
+        assert_eq!(h.canonicalize("V(3)").unwrap(), "V(3)");
+        // Default config has 8 seeds; V(99) is out of range.
+        assert!(h.canonicalize("V(99)").is_err());
+    }
+
+    #[test]
+    fn voronoi_handle_neighbors_returns_other_seeds() {
+        let h = LatticeHandle::for_kind(LatticeKind::Voronoi).unwrap();
+        let n = h.neighbor_addresses("V(0)").unwrap();
+        // First-cut: every other seed is a neighbor. Default has 8 seeds.
+        assert_eq!(n.len(), 7);
+        assert!(!n.contains(&"V(0)".to_string()));
     }
 
     #[test]
@@ -383,6 +460,7 @@ pub enum LatticeKind {
     HexFlat,
     Triangle,
     Parallelogram,
+    Voronoi,
 }
 
 /// A 2D point in lattice space (pre-zoom). Renderer applies camera/zoom.
