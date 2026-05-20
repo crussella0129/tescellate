@@ -76,3 +76,31 @@ updating it.
 If autosave becomes a hotspot in the future, the right tightening is a
 "genuinely-mutating commands" allowlist in `apply()`, not adding
 mark_dirty to each call site.
+
+## ADR-005 — `Widgets<K>` follows the lattice-generic pattern (sprint 2)
+**Date:** 2026-05-20
+**Status:** Adopted, shipped in v146 (PR #177).
+
+`Widgets` joined `FormatMap<K>` and `NoteMap<K>` as a lattice-generic
+collection keyed by an `Eq + Hash + Copy` coord type. The square sheet
+uses `Widgets<(u32, u32)>`, the hex sheet uses `Widgets<HexCoord>`.
+This is consistent with the per-lattice surface established in sprint 0
+and means future widget surfaces (triangle, eventually Voronoi) plug in
+without further refactor.
+
+JSON encoding is a `Vec<(K, WidgetKind)>` via a `WidgetsRepr<K>` adapter —
+HashMap keys can't be tuples/structs in JSON. `UiSnapshot.widgets`
+became `square_widgets` with `#[serde(alias = "widgets")]` so v145
+autosaves continue to load.
+
+## ADR-006 — Hex widgets ship Button + Toggle; Slider/ProgressBar deferred (sprint 2)
+**Date:** 2026-05-20
+**Status:** Adopted, shipped in v146.
+
+The hex render path dispatches Button (re-fires source on click) and
+Toggle (writes `bool_source` on change) for cells in `hex_widgets`.
+Slider and ProgressBar fall through to the ordinary text render —
+36-point hexagons don't accommodate the egui slider thumb + value
+display. If a real use case lands, the right answer is a different
+control shape (vertical handle inside the hex polygon), not a layout
+tweak to the existing rectangular slider.

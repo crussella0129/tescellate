@@ -95,3 +95,9 @@
 - **Completed:** 2026-05-20T21:25:00Z
 - **Files modified:** apps/tescellate-ui/src/widget.rs, apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/app.rs
 - **Commit:** `189fdbb`
+
+## T-202+T-203 (sprint 2) — CI gate + ship
+- **Description:** Local CI gate green (fmt, clippy, test, wasm build). PR #177 opened, all 7 CI checks green (rustfmt+clippy, ubuntu/windows build+test, renderer, native-compile, python engine, wasm front-end), squash-merged to main as `a33692f`.
+- **Completed:** 2026-05-20T21:50:00Z
+- **Files modified:** (verification + git)
+- **Commit:** PENDING
