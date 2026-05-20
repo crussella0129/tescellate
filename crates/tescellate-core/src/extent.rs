@@ -84,12 +84,29 @@ impl SheetExtent {
         }
     }
 
+    /// True if a triangle address `(col, row)` falls within the sheet.
+    /// Bounded extent uses a `side` square-shaped region centred on
+    /// `(0, 0)` — half-base columns × row rows — same shape as the hex
+    /// disc but on triangle coords. Other bounded variants accept (the
+    /// lattice has already validated the address).
+    pub fn contains_triangle(&self, col: i32, row: i32) -> bool {
+        match self {
+            SheetExtent::Unbounded => true,
+            SheetExtent::Bounded(BoundedExtent::Triangle { side }) => {
+                let s = *side as i32;
+                col >= -s && col <= s && row >= -s && row <= s
+            }
+            SheetExtent::Bounded(_) => true,
+        }
+    }
+
     /// Lattice-dispatched bounds check. Engine.rs uses this so it doesn't
     /// have to match on lattice kind at every call site.
     pub fn contains(&self, coord: ParsedCoord) -> bool {
         match coord {
             ParsedCoord::Square(c) => self.contains_square(c.col, c.row),
             ParsedCoord::Hex(c) => self.contains_hex(c.q, c.r),
+            ParsedCoord::Triangle(c) => self.contains_triangle(c.col, c.row),
         }
     }
 }

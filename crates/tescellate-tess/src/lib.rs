@@ -11,9 +11,11 @@ use thiserror::Error;
 
 pub mod hex;
 pub mod square;
+pub mod triangle;
 
 use hex::{HexCoord, HexLattice};
 use square::{SquareCoord, SquareLattice};
+use triangle::{TriCoord, TriangleLattice};
 
 /// String-keyed lattice dispatch. Wraps `SquareLattice` / `HexLattice` so
 /// upstream code (the workbook engine, the formula stdlib) can talk to a
@@ -25,6 +27,7 @@ use square::{SquareCoord, SquareLattice};
 pub enum LatticeHandle {
     Square(SquareLattice),
     Hex(HexLattice),
+    Triangle(TriangleLattice),
 }
 
 /// Lattice-specific parsed coordinate. Returned by `LatticeHandle::parse_coord`
@@ -34,6 +37,7 @@ pub enum LatticeHandle {
 pub enum ParsedCoord {
     Square(SquareCoord),
     Hex(HexCoord),
+    Triangle(TriCoord),
 }
 
 impl LatticeHandle {
@@ -45,8 +49,8 @@ impl LatticeHandle {
             LatticeKind::Square => Some(LatticeHandle::Square(SquareLattice::default())),
             LatticeKind::HexPointy => Some(LatticeHandle::Hex(HexLattice::pointy(32.0))),
             LatticeKind::HexFlat => Some(LatticeHandle::Hex(HexLattice::flat(32.0))),
-            // Triangle / parallelogram land in Phase 3.
-            LatticeKind::Triangle | LatticeKind::Parallelogram => None,
+            LatticeKind::Triangle => Some(LatticeHandle::Triangle(TriangleLattice::default())),
+            LatticeKind::Parallelogram => None,
         }
     }
 
@@ -54,6 +58,7 @@ impl LatticeHandle {
         match self {
             LatticeHandle::Square(l) => l.kind(),
             LatticeHandle::Hex(l) => l.kind(),
+            LatticeHandle::Triangle(l) => l.kind(),
         }
     }
 
@@ -64,6 +69,7 @@ impl LatticeHandle {
         match self {
             LatticeHandle::Square(l) => Ok(ParsedCoord::Square(l.parse_address(addr)?)),
             LatticeHandle::Hex(l) => Ok(ParsedCoord::Hex(l.parse_address(addr)?)),
+            LatticeHandle::Triangle(l) => Ok(ParsedCoord::Triangle(l.parse_address(addr)?)),
         }
     }
 
@@ -72,9 +78,11 @@ impl LatticeHandle {
         match (self, coord) {
             (LatticeHandle::Square(l), ParsedCoord::Square(c)) => l.address(c),
             (LatticeHandle::Hex(l), ParsedCoord::Hex(c)) => l.address(c),
+            (LatticeHandle::Triangle(l), ParsedCoord::Triangle(c)) => l.address(c),
             // Coord/lattice mismatch — degenerate, just stringify the coord.
             (_, ParsedCoord::Square(c)) => format!("[c{},r{}]", c.col, c.row + 1),
             (_, ParsedCoord::Hex(c)) => format!("H({},{})", c.q, c.r),
+            (_, ParsedCoord::Triangle(c)) => format!("T({},{})", c.col, c.row),
         }
     }
 
@@ -87,6 +95,10 @@ impl LatticeHandle {
                 Ok(l.address(c))
             }
             LatticeHandle::Hex(l) => {
+                let c = l.parse_address(addr)?;
+                Ok(l.address(c))
+            }
+            LatticeHandle::Triangle(l) => {
                 let c = l.parse_address(addr)?;
                 Ok(l.address(c))
             }
@@ -118,11 +130,20 @@ impl LatticeHandle {
                     .map(|c| l.address(c))
                     .collect())
             }
+            LatticeHandle::Triangle(l) => {
+                let a = l.parse_address(start)?;
+                let b = l.parse_address(end)?;
+                Ok(triangle::triangle_rect(a, b)
+                    .into_iter()
+                    .map(|c| l.address(c))
+                    .collect())
+            }
         }
     }
 
     /// Edge-neighbors of `addr` in canonical neighbor order. 4 cells on
-    /// square, 6 on hex. Each returned address is the canonical form.
+    /// square, 6 on hex, 3 on triangle. Each returned address is the
+    /// canonical form.
     pub fn neighbor_addresses(&self, addr: &str) -> Result<Vec<String>, AddressError> {
         match self {
             LatticeHandle::Square(l) => {
@@ -133,6 +154,13 @@ impl LatticeHandle {
                     .collect())
             }
             LatticeHandle::Hex(l) => {
+                let c = l.parse_address(addr)?;
+                Ok(l.neighbors(c)
+                    .into_iter()
+                    .map(|(_, c)| l.address(c))
+                    .collect())
+            }
+            LatticeHandle::Triangle(l) => {
                 let c = l.parse_address(addr)?;
                 Ok(l.neighbors(c)
                     .into_iter()
@@ -173,6 +201,24 @@ impl LatticeHandle {
                     .map(|c| l.address(c))
                     .collect())
             }
+            LatticeHandle::Triangle(l) => {
+                let c = l.parse_address(addr)?;
+                let r = radius.max(0) as i32;
+                // For triangles use the (col±r, row±r) rectangle in
+                // triangle coords — same convention as the square
+                // lattice, since triangles step similarly along their
+                // half-base/row axes.
+                let mut out = Vec::new();
+                for dr in -r..=r {
+                    for dc in -r..=r {
+                        out.push(l.address(TriCoord {
+                            col: c.col + dc,
+                            row: c.row + dr,
+                        }));
+                    }
+                }
+                Ok(out)
+            }
         }
     }
 }
@@ -195,6 +241,34 @@ mod handle_tests {
         assert_eq!(cells.len(), 4);
         assert!(cells.contains(&"H(0,0)".to_string()));
         assert!(cells.contains(&"H(1,1)".to_string()));
+    }
+
+    #[test]
+    fn triangle_range_via_handle() {
+        let h = LatticeHandle::for_kind(LatticeKind::Triangle).unwrap();
+        let cells = h.enumerate_range("T(0,0)", "T(2,1)").unwrap();
+        // 3 columns × 2 rows = 6 triangles.
+        assert_eq!(cells.len(), 6);
+        assert!(cells.contains(&"T(0,0)".to_string()));
+        assert!(cells.contains(&"T(2,1)".to_string()));
+    }
+
+    #[test]
+    fn triangle_neighbors_via_handle() {
+        let h = LatticeHandle::for_kind(LatticeKind::Triangle).unwrap();
+        // Up △ at T(0,0) has neighbours T(-1,0), T(1,0), T(0,1).
+        let n = h.neighbor_addresses("T(0,0)").unwrap();
+        assert_eq!(n.len(), 3);
+        assert!(n.contains(&"T(-1,0)".to_string()));
+        assert!(n.contains(&"T(1,0)".to_string()));
+        assert!(n.contains(&"T(0,1)".to_string()));
+    }
+
+    #[test]
+    fn triangle_canonicalize_round_trips() {
+        let h = LatticeHandle::for_kind(LatticeKind::Triangle).unwrap();
+        assert_eq!(h.canonicalize("T(0,0)").unwrap(), "T(0,0)");
+        assert_eq!(h.canonicalize("T(-3,5)").unwrap(), "T(-3,5)");
     }
 
     #[test]
