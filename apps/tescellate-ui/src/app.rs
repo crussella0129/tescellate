@@ -482,6 +482,8 @@ pub struct TescellateApp {
     find_just_opened: bool,
     /// Whether the keyboard-shortcuts help overlay is open.
     help_open: bool,
+    /// Whether the About / app-info window is open.
+    about_open: bool,
     /// Free-text notes on square-sheet cells.
     notes: NoteMap<(u32, u32)>,
     /// Free-text notes on hex-sheet cells.
@@ -589,6 +591,7 @@ impl TescellateApp {
             find_open: false,
             find_just_opened: false,
             help_open: false,
+            about_open: false,
             notes: NoteMap::new(),
             hex_notes: NoteMap::new(),
             note_open: false,
@@ -984,6 +987,18 @@ impl TescellateApp {
             RibbonAction::Quit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+            RibbonAction::SortAscending => self.sort_selection(true),
+            RibbonAction::SortDescending => self.sort_selection(false),
+            RibbonAction::ZoomIn => {
+                let z = (ctx.zoom_factor() + 0.1).min(3.0);
+                ctx.set_zoom_factor(z);
+            }
+            RibbonAction::ZoomOut => {
+                let z = (ctx.zoom_factor() - 0.1).max(0.5);
+                ctx.set_zoom_factor(z);
+            }
+            RibbonAction::ResetZoom => ctx.set_zoom_factor(1.0),
+            RibbonAction::OpenAbout => self.about_open = true,
         }
     }
 
@@ -1503,6 +1518,35 @@ impl TescellateApp {
                     });
             });
         self.help_open = open;
+    }
+
+    /// The About window — a small overlay describing the app, its
+    /// stack, and its main capabilities. Opened from Help > About.
+    fn about_window(&mut self, ctx: &egui::Context) {
+        if !self.about_open {
+            return;
+        }
+        let mut open = self.about_open;
+        egui::Window::new("About Tescellate")
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.heading("Tescellate");
+                ui.label(egui::RichText::new(env!("CARGO_PKG_VERSION")).weak());
+                ui.add_space(6.0);
+                ui.label(
+                    "A pure-Rust spreadsheet with non-square tessellating cells \
+                     (squares, hexagons) and a DAG-evaluated formula core.",
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    "Built with egui / eframe; compiles native and to \
+                     WebAssembly. Engine: tescellate-core / -tess / -formula.",
+                );
+                ui.add_space(8.0);
+                ui.hyperlink_to("Source", "https://github.com/crussella0129/tescellate");
+            });
+        self.about_open = open;
     }
 
     /// The cell-note editor — a small window with a multiline field for
@@ -3198,62 +3242,74 @@ impl eframe::App for TescellateApp {
             }
         });
 
-        egui::TopBottomPanel::top("tescellate_formula_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let (addr, source) = self.active_address_and_source();
-                match self.active {
-                    ActiveSheet::Square => {
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.name_box)
-                                .desired_width(64.0)
-                                .font(egui::TextStyle::Monospace),
-                        );
-                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            // Enter jumps the selection to the typed address.
-                            if let Some((c, r)) = grid::parse_address(&self.name_box) {
-                                if c < COLS && r < ROWS {
-                                    self.selection.collapse_to((c, r));
+        egui::TopBottomPanel::top("tescellate_formula_bar")
+            .resizable(true)
+            .min_height(28.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    let (addr, source) = self.active_address_and_source();
+                    match self.active {
+                        ActiveSheet::Square => {
+                            let response = ui.add(
+                                egui::TextEdit::singleline(&mut self.name_box)
+                                    .desired_width(64.0)
+                                    .font(egui::TextStyle::Monospace),
+                            );
+                            if response.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                            {
+                                // Enter jumps the selection to the typed address.
+                                if let Some((c, r)) = grid::parse_address(&self.name_box) {
+                                    if c < COLS && r < ROWS {
+                                        self.selection.collapse_to((c, r));
+                                    }
                                 }
+                            } else if !response.has_focus() {
+                                self.name_box = addr.clone();
                             }
-                        } else if !response.has_focus() {
-                            self.name_box = addr.clone();
+                        }
+                        ActiveSheet::Hex => {
+                            ui.monospace(addr.clone());
                         }
                     }
-                    ActiveSheet::Hex => {
-                        ui.monospace(addr.clone());
+                    match self.active {
+                        ActiveSheet::Square if self.selection.is_range() => {
+                            let (cols, rows) = self.selection.dimensions();
+                            ui.label(egui::RichText::new(format!("{cols}C × {rows}R")).weak());
+                        }
+                        ActiveSheet::Hex if self.hex_selection.is_range() => {
+                            let (q, r) = self.hex_selection.dimensions();
+                            ui.label(egui::RichText::new(format!("{q}q × {r}r")).weak());
+                        }
+                        _ => {}
                     }
-                }
-                match self.active {
-                    ActiveSheet::Square if self.selection.is_range() => {
-                        let (cols, rows) = self.selection.dimensions();
-                        ui.label(egui::RichText::new(format!("{cols}C × {rows}R")).weak());
+                    ui.separator();
+                    let width = ui.available_width();
+                    let height = ui.available_height();
+                    // Multiline so long formulas wrap and the panel-drag
+                    // resize actually adds usable space. Tab or click-outside
+                    // commits (the singleline path used Enter, but multiline
+                    // reserves Enter for newline so we don't override it).
+                    let response = ui.add_sized(
+                        [width, height.max(20.0)],
+                        egui::TextEdit::multiline(&mut self.formula_bar)
+                            .desired_width(width)
+                            .desired_rows(1)
+                            .font(egui::TextStyle::Monospace)
+                            .hint_text("value or =formula — drag the bottom of the bar to expand"),
+                    );
+                    if response.lost_focus() {
+                        // Click-outside or Tab commits the bar to the cell.
+                        self.edit = None;
+                        let (sheet, addr) = self.active_target();
+                        let new_source = commit_source(&self.formula_bar);
+                        self.apply_edits(sheet, vec![(addr, new_source)]);
+                    } else if !response.has_focus() {
+                        // Not being edited — mirror the active cell's source.
+                        self.formula_bar = source;
                     }
-                    ActiveSheet::Hex if self.hex_selection.is_range() => {
-                        let (q, r) = self.hex_selection.dimensions();
-                        ui.label(egui::RichText::new(format!("{q}q × {r}r")).weak());
-                    }
-                    _ => {}
-                }
-                ui.separator();
-                let width = ui.available_width();
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.formula_bar)
-                        .desired_width(width)
-                        .font(egui::TextStyle::Monospace)
-                        .hint_text("value or =formula"),
-                );
-                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    // Enter commits the bar to the active cell.
-                    self.edit = None;
-                    let (sheet, addr) = self.active_target();
-                    let new_source = commit_source(&self.formula_bar);
-                    self.apply_edits(sheet, vec![(addr, new_source)]);
-                } else if !response.has_focus() {
-                    // Not being edited — mirror the active cell's source.
-                    self.formula_bar = source;
-                }
+                });
             });
-        });
 
         egui::TopBottomPanel::bottom("tescellate_sheet_tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -3314,6 +3370,7 @@ impl eframe::App for TescellateApp {
         self.conditional_window(ctx);
         self.find_window(ctx);
         self.help_window(ctx);
+        self.about_window(ctx);
         self.note_window(ctx);
     }
 }

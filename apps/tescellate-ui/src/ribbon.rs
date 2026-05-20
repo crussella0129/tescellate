@@ -79,6 +79,18 @@ pub enum RibbonAction {
     OpenNote,
     /// Close the application window.
     Quit,
+    /// Sort the current column / range ascending.
+    SortAscending,
+    /// Sort the current column / range descending.
+    SortDescending,
+    /// Step the egui zoom factor up.
+    ZoomIn,
+    /// Step the egui zoom factor down.
+    ZoomOut,
+    /// Reset the egui zoom factor to 1.0.
+    ResetZoom,
+    /// Open the About / app-info window.
+    OpenAbout,
 }
 
 /// The number formats the ribbon's combo offers, with display labels. The
@@ -497,11 +509,30 @@ pub fn menu_bar(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<Rib
                     }
                 }
             });
+            ui.menu_button("Widget", |ui| {
+                if ui.button("Checkbox").clicked() {
+                    action = Some(RibbonAction::ToggleWidget);
+                    ui.close_menu();
+                }
+                ui.add_enabled(false, egui::Button::new("Button (coming soon)"));
+                ui.add_enabled(false, egui::Button::new("Switch (coming soon)"));
+                ui.add_enabled(false, egui::Button::new("Slider (coming soon)"));
+            });
             ui.separator();
             if ui.button("Note for active cell…").clicked() {
                 action = Some(RibbonAction::OpenNote);
                 ui.close_menu();
             }
+            ui.separator();
+            ui.add_enabled(false, egui::Button::new("Function… (coming soon)"));
+            ui.add_enabled(false, egui::Button::new("Hyperlink… (coming soon)"));
+            ui.add_enabled(false, egui::Button::new("Image… (coming soon)"));
+            ui.add_enabled(false, egui::Button::new("Chart… (coming soon)"));
+            ui.add_enabled(false, egui::Button::new("Row above"));
+            ui.add_enabled(false, egui::Button::new("Row below"));
+            ui.add_enabled(false, egui::Button::new("Column left"));
+            ui.add_enabled(false, egui::Button::new("Column right"));
+            ui.label(egui::RichText::new("(Row/column insert needs engine support)").weak());
         });
         ui.menu_button("Format", |ui| {
             if ui.button("Bold  Ctrl+B").clicked() {
@@ -598,6 +629,15 @@ pub fn menu_bar(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<Rib
             }
         });
         ui.menu_button("Data", |ui| {
+            if ui.button("Sort ascending").clicked() {
+                action = Some(RibbonAction::SortAscending);
+                ui.close_menu();
+            }
+            if ui.button("Sort descending").clicked() {
+                action = Some(RibbonAction::SortDescending);
+                ui.close_menu();
+            }
+            ui.separator();
             ui.menu_button("AutoSum", |ui| {
                 for func in ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"] {
                     if ui.button(func).clicked() {
@@ -606,16 +646,43 @@ pub fn menu_bar(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<Rib
                     }
                 }
             });
+            ui.separator();
+            ui.add_enabled(false, egui::Button::new("Filter… (coming soon)"));
+            ui.add_enabled(false, egui::Button::new("Remove duplicates… (coming soon)"));
+            ui.add_enabled(false, egui::Button::new("Data validation… (coming soon)"));
+            ui.add_enabled(false, egui::Button::new("Split text to columns…"));
         });
         ui.menu_button("View", |ui| {
             if ui.button("Toggle theme").clicked() {
                 action = Some(RibbonAction::ToggleTheme);
                 ui.close_menu();
             }
+            ui.separator();
+            if ui.button("Zoom in").clicked() {
+                action = Some(RibbonAction::ZoomIn);
+                ui.close_menu();
+            }
+            if ui.button("Zoom out").clicked() {
+                action = Some(RibbonAction::ZoomOut);
+                ui.close_menu();
+            }
+            if ui.button("Reset zoom").clicked() {
+                action = Some(RibbonAction::ResetZoom);
+                ui.close_menu();
+            }
+            ui.separator();
+            ui.add_enabled(false, egui::Button::new("Show formula bar (always on)"));
+            ui.add_enabled(false, egui::Button::new("Show gridlines (always on)"));
+            ui.add_enabled(false, egui::Button::new("Freeze panes (coming soon)"));
+            ui.add_enabled(false, egui::Button::new("Full screen (coming soon)"));
         });
         ui.menu_button("Help", |ui| {
             if ui.button("Keyboard shortcuts  F1").clicked() {
                 action = Some(RibbonAction::OpenHelp);
+                ui.close_menu();
+            }
+            if ui.button("About Tescellate…").clicked() {
+                action = Some(RibbonAction::OpenAbout);
                 ui.close_menu();
             }
         });
