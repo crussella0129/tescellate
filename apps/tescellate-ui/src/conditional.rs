@@ -5,12 +5,13 @@
 //! value satisfies the condition, the rule's format is layered over the
 //! cell's own. Pure — no egui, no engine — so `cargo test` covers it.
 
+use serde::{Deserialize, Serialize};
 use tescellate_core::CellValue;
 
 use crate::format::CellFormat;
 
 /// A test applied to a cell's value.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Condition {
     /// A numeric value strictly greater than the threshold.
     GreaterThan(f64),
@@ -70,7 +71,7 @@ impl Condition {
 
 /// A conditional-formatting rule: a condition, and the format effect to
 /// layer on when a cell's value satisfies it.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Rule {
     pub condition: Condition,
     pub format: CellFormat,

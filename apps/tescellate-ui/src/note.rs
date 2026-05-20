@@ -7,10 +7,16 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 /// Free-text notes attached to cells, keyed by a lattice's coordinate
 /// type `K` — `(u32, u32)` for the square sheet, `HexCoord` for the hex
 /// sheet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "K: Serialize + Eq + std::hash::Hash",
+    deserialize = "K: Deserialize<'de> + Eq + std::hash::Hash"
+))]
 pub struct NoteMap<K> {
     notes: HashMap<K, String>,
 }

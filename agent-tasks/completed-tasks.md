@@ -23,3 +23,9 @@
 - **Completed:** 2026-05-20T18:00:00Z
 - **Files modified:** crates/tescellate-formula/src/engine.rs, crates/tescellate-formula/Cargo.toml
 - **Commit:** `e17f6de`
+
+## T-005 (sprint 0)
+- **Description:** Serde derives on UI types (WidgetKind/Widgets, CellFormat/Borders/HexBorders/HAlign/VAlign/FontSize/NumberFormat, FormatMap, Condition/Rule, NoteMap). Color32 round-trips as `[r,g,b,a]` via `to_srgba_unmultiplied`. Widgets serializes as a Vec of (cell, kind) pairs (JSON object keys must be strings).
+- **Completed:** 2026-05-20T18:25:00Z
+- **Files modified:** apps/tescellate-ui/Cargo.toml, apps/tescellate-ui/src/format.rs, apps/tescellate-ui/src/widget.rs, apps/tescellate-ui/src/conditional.rs, apps/tescellate-ui/src/note.rs
+- **Commit:** `712f626`
