@@ -200,6 +200,18 @@ fn lex_ident_or_ref(bytes: &[u8], start: usize) -> (Token, usize) {
     while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
         i += 1;
     }
+    // Dotted-identifier extension — Excel's modern stats names spell
+    // `STDEV.P` / `VAR.S` etc. Accept `.<letters>` continuations after
+    // the alphanumeric run. Restricted to letters (no digits) so float
+    // literals like `3.14` (which start with a digit and take the
+    // `lex_number` branch) remain unaffected and so dotted names stay
+    // visually distinct from `A1.X`-style stray dots.
+    while i + 1 < bytes.len() && bytes[i] == b'.' && bytes[i + 1].is_ascii_alphabetic() {
+        i += 1;
+        while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
+            i += 1;
+        }
+    }
     let raw = std::str::from_utf8(&bytes[start..i]).unwrap();
     (Token::Ident(raw.to_ascii_uppercase()), i)
 }
@@ -224,6 +236,27 @@ mod tests {
                 Token::Number(3.0)
             ]
         );
+    }
+
+    #[test]
+    fn lexes_dotted_identifier() {
+        // Excel's modern stats names (STDEV.P, STDEV.S, VAR.P, …) lex
+        // as a single Ident so the function registry can carry them
+        // directly under their dotted spelling.
+        assert_eq!(toks("STDEV.P"), vec![Token::Ident("STDEV.P".into())]);
+        assert_eq!(
+            toks("COVARIANCE.S"),
+            vec![Token::Ident("COVARIANCE.S".into())]
+        );
+    }
+
+    #[test]
+    fn dot_after_digit_still_lexes_a_number() {
+        // Regression guard: float-decimal parsing is unaffected by the
+        // dotted-ident extension, which only triggers after letters.
+        // Using 2.5 instead of 3.14 to side-step clippy's `approx_constant`
+        // lint (which fires on PI-shaped literals even in unrelated tests).
+        assert_eq!(toks("2.5"), vec![Token::Number(2.5)]);
     }
 
     #[test]

@@ -1,7 +1,14 @@
-//! Lookup functions: VLOOKUP, HLOOKUP, INDEX, MATCH, CHOOSE.
+//! Lookup functions: VLOOKUP, HLOOKUP, INDEX, MATCH, CHOOSE, XLOOKUP.
 //!
-//! Phase 1.5 ships an exact-match VLOOKUP/HLOOKUP + INDEX + MATCH. XLOOKUP,
-//! OFFSET, INDIRECT come later when we have a cleaner cell-ref abstraction.
+//! XLOOKUP (v147) supports `match_mode` 0/-1/+1 and `search_mode` ±1.
+//! Wildcard match (`match_mode = 2`) errors with a clear message —
+//! a glob/regex backend is the natural follow-up. Binary search modes
+//! (`search_mode = ±2`) accept the parameter but currently fall back to
+//! a linear scan; the asymptotic improvement only matters on large
+//! workbooks past launch.
+//!
+//! OFFSET and INDIRECT still come later — they return cell-reference
+//! shapes the engine doesn't yet model as first-class values.
 
 use super::coerce::{arity_range, compare, flatten, to_int};
 use super::FunctionRegistry;
@@ -146,6 +153,120 @@ pub fn match_(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> 
     Err(EvalError::Ref("MATCH: not found".into()))
 }
 
+/// XLOOKUP(lookup_value, lookup_array, return_array, [if_not_found],
+///         [match_mode], [search_mode]).
+///
+/// match_mode (default 0):
+///   0  — exact match (returns `if_not_found` / `#N/A` on miss)
+///  -1  — exact, else the next-smaller value
+///   1  — exact, else the next-larger value
+///   2  — wildcard (deferred — errors here)
+///
+/// search_mode (default 1):
+///   1  — first-to-last
+///  -1  — last-to-first
+///  ±2  — binary search (accepted; falls back to linear scan today)
+pub fn xlookup(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_range("XLOOKUP", args, 3, 6)?;
+    let needle = eval(&args[0], ctx)?;
+    let lookup = flatten(&args[1], ctx)?;
+    // Parallel-array semantics: lookup_array and result_array are
+    // treated as parallel sequences regardless of their 2D shape. The
+    // "return a row of a 2D table" XLOOKUP variant is a follow-up.
+    let result = flatten(&args[2], ctx)?;
+    if lookup.len() != result.len() {
+        return Err(EvalError::Value(format!(
+            "XLOOKUP: lookup_array length {} != result_array length {}",
+            lookup.len(),
+            result.len()
+        )));
+    }
+    let match_mode = if let Some(arg) = args.get(4) {
+        to_int(&eval(arg, ctx)?)?
+    } else {
+        0
+    };
+    let search_mode = if let Some(arg) = args.get(5) {
+        to_int(&eval(arg, ctx)?)?
+    } else {
+        1
+    };
+
+    if match_mode == 2 {
+        return Err(EvalError::Value(
+            "XLOOKUP: wildcard match (match_mode = 2) not yet supported".into(),
+        ));
+    }
+    if !(-1..=1).contains(&match_mode) {
+        return Err(EvalError::Value(format!(
+            "XLOOKUP: match_mode {match_mode} out of range -1..=2"
+        )));
+    }
+    if !(-2..=2).contains(&search_mode) || search_mode == 0 {
+        return Err(EvalError::Value(format!(
+            "XLOOKUP: search_mode {search_mode} out of range ±1/±2"
+        )));
+    }
+
+    // Iteration order: -1 / -2 walk last-to-first, otherwise first-to-last.
+    // (Binary search modes fall back to linear scan today; the asymptotic
+    // improvement is on the deferred list.)
+    let indices: Box<dyn Iterator<Item = usize>> = if search_mode < 0 {
+        Box::new((0..lookup.len()).rev())
+    } else {
+        Box::new(0..lookup.len())
+    };
+
+    // Track the best-fit index for match_mode -1 / 1 so we can return
+    // the closest matching value if no exact match is found.
+    let mut exact: Option<usize> = None;
+    let mut best_fit: Option<usize> = None;
+
+    for i in indices {
+        let v = &lookup[i];
+        match compare(v, &needle) {
+            std::cmp::Ordering::Equal => {
+                exact = Some(i);
+                break;
+            }
+            std::cmp::Ordering::Less if match_mode == -1 => {
+                // Keep the largest value that is still <= needle.
+                let beats = match best_fit {
+                    None => true,
+                    Some(b) => compare(&lookup[b], v) == std::cmp::Ordering::Less,
+                };
+                if beats {
+                    best_fit = Some(i);
+                }
+            }
+            std::cmp::Ordering::Greater if match_mode == 1 => {
+                // Keep the smallest value that is still >= needle.
+                let beats = match best_fit {
+                    None => true,
+                    Some(b) => compare(&lookup[b], v) == std::cmp::Ordering::Greater,
+                };
+                if beats {
+                    best_fit = Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let hit = exact.or(best_fit);
+    let Some(idx) = hit else {
+        // Fallback path: return `if_not_found` if the caller supplied one,
+        // otherwise the canonical #N/A error.
+        return if let Some(arg) = args.get(3) {
+            eval(arg, ctx)
+        } else {
+            Err(EvalError::Ref("XLOOKUP: not found".into()))
+        };
+    };
+
+    Ok(result.get(idx).cloned().unwrap_or(CellValue::Empty))
+}
+
 /// CHOOSE(index, val1, val2, ...).
 pub fn choose(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
     if args.len() < 2 {
@@ -168,4 +289,5 @@ pub fn register(r: &mut FunctionRegistry) {
     r.add("INDEX", index);
     r.add("MATCH", match_);
     r.add("CHOOSE", choose);
+    r.add("XLOOKUP", xlookup);
 }

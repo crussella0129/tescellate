@@ -369,4 +369,15 @@ pub fn register(r: &mut FunctionRegistry) {
     r.add("INTERCEPT", intercept);
     r.add("FORECAST", forecast);
     r.add("RSQ", rsq);
+    // Excel 2010's "modern" dotted-name aliases. Same implementation
+    // as the legacy spellings — registered separately so users typing
+    // either form land on the same function pointer.
+    r.add("STDEV.P", stdevp);
+    r.add("STDEV.S", stdev);
+    r.add("VAR.P", varp);
+    r.add("VAR.S", var);
+    r.add("COVARIANCE.P", covarp);
+    r.add("COVARIANCE.S", covars);
+    r.add("MODE.SNGL", mode);
+    r.add("RANK.EQ", rank);
 }

@@ -100,4 +100,10 @@
 - **Description:** Local CI gate green (fmt, clippy, test, wasm build). PR #177 opened, all 7 CI checks green (rustfmt+clippy, ubuntu/windows build+test, renderer, native-compile, python engine, wasm front-end), squash-merged to main as `a33692f`.
 - **Completed:** 2026-05-20T21:50:00Z
 - **Files modified:** (verification + git)
-- **Commit:** PENDING
+- **Commit:** (sprint 2 cleanup commit `7f3d732`)
+
+## T-301..T-305 (sprint 3) — Carbide P2 hardening: XLOOKUP + dotted aliases
+- **Description:** Lexer accepts `.<letters>` continuations after the alphanumeric ident run so `STDEV.P` lexes as one Ident. XLOOKUP added in `lookup.rs` (full Excel signature: `lookup_value, lookup_array, return_array, [if_not_found], [match_mode], [search_mode]`; match_modes 0/-1/+1 implemented; wildcard mode=2 errors with clear message; search_modes ±1 implemented; ±2 accepted as linear-scan fallback; parallel-array semantics: lookup and result must be equal-length). Eight dotted-name aliases registered in `stats.rs`: STDEV.P/STDEV.S/VAR.P/VAR.S/COVARIANCE.P/COVARIANCE.S/MODE.SNGL/RANK.EQ. 14 new tests in `reference_examples.rs` (7 XLOOKUP, 5 aliases, plus 2 lexer tests in lex.rs).
+- **Completed:** 2026-05-20T22:20:00Z
+- **Files modified:** crates/tescellate-formula/src/excellite/lex.rs, crates/tescellate-formula/src/excellite/funcs/lookup.rs, crates/tescellate-formula/src/excellite/funcs/stats.rs, crates/tescellate-formula/tests/reference_examples.rs
+- **Commit:** `025d2d8`
