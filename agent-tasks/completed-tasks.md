@@ -41,3 +41,9 @@
 - **Completed:** 2026-05-20T18:55:00Z
 - **Files modified:** crates/tescellate-formula/src/engine.rs, apps/tescellate-ui/src/widget.rs, apps/tescellate-ui/src/state_io.rs
 - **Commit:** `5e8b46c`
+
+## T-016 (sprint 0)
+- **Description:** Pushed `webui-v144-tscl-persistence`, opened PR #175, CI fully green (7 checks: rustfmt+clippy, ubuntu build+test, windows build+test, renderer, native compile, python engine, wasm front-end), squash-merged to main as commit `b7ffff1`.
+- **Completed:** 2026-05-20T19:00:00Z
+- **Files modified:** (git only)
+- **Commit:** `d9bca5c`
