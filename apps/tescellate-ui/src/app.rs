@@ -1236,6 +1236,8 @@ impl TescellateApp {
             }
             RibbonAction::ResetZoom => ctx.set_zoom_factor(1.0),
             RibbonAction::OpenAbout => self.about_open = true,
+            RibbonAction::Save => self.handle_save(false),
+            RibbonAction::Open => self.handle_open(),
         }
     }
 

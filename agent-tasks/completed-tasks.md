@@ -59,3 +59,9 @@
 - **Completed:** 2026-05-20T19:25:00Z
 - **Files modified:** apps/tescellate-ui/src/keymap.rs, apps/tescellate-ui/src/app.rs
 - **Commit:** `07aa911`
+
+## T-101c (sprint 1)
+- **Description:** Ribbon File group added at index 0 (leftmost). Save + Open buttons emit `RibbonAction::{Save,Open}`. GROUP_WIDTHS gains the File row (108px), all subsequent group indices shifted by 1 in both the inline and overflow-menu render paths. App-side `apply_ribbon_action` routes the new actions to the stub handlers.
+- **Completed:** 2026-05-20T19:30:00Z
+- **Files modified:** apps/tescellate-ui/src/ribbon.rs, apps/tescellate-ui/src/app.rs
+- **Commit:** `2f56f82`
