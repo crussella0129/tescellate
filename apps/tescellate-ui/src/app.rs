@@ -28,8 +28,8 @@ use crate::sort;
 use crate::stats;
 use crate::widget::{self, Widgets};
 
-const COLS: u32 = 16;
-const ROWS: u32 = 32;
+const COLS: u32 = 52;
+const ROWS: u32 = 200;
 /// How many rows a Page Up / Page Down moves the cursor.
 const PAGE_ROWS: u32 = 16;
 
