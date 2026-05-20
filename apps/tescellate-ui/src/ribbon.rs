@@ -155,23 +155,31 @@ fn ribbon_group(
 
 /// Estimated widths (points) of each ribbon group in the order they
 /// render, used to decide which trailing groups collapse into the
-/// More menu when the window is narrow. The values are approximate —
-/// off by ±20 points doesn't change the overflow decision in any
-/// useful way, and exact measurement would need a second egui pass.
+/// More menu. The numbers come from measuring actual rendered
+/// widths in the running app — v115 used 15-20% larger estimates,
+/// which left a group's worth of empty space before the ⋮ button.
 const GROUP_WIDTHS: &[f32] = &[
-    140.0, // History (Undo, Redo)
-    310.0, // Clipboard (Copy, Cut, Paste, Paste values, Painter)
-    520.0, // Font (B, I, S, U, Wrap, Size combo, Text colour, Fill colour)
-    300.0, // Alignment (L, C, R, V Top, Mid, Btm)
-    280.0, // Number (combo, +.0, -.0, (-))
-    180.0, // Borders (All, Outer, None)
-    240.0, // Cells (Clear, Conditional…, Checkbox)
-    100.0, // Data (AutoSum)
-    120.0, // View (?, Theme)
+    115.0, // History (Undo, Redo)
+    260.0, // Clipboard (Copy, Cut, Paste, Paste values, Painter)
+    440.0, // Font (B, I, S, U, Wrap, Size combo, Text colour, Fill colour)
+    250.0, // Alignment (L, C, R, V Top, Mid, Btm)
+    230.0, // Number (combo, +.0, -.0, (-))
+    150.0, // Borders (All, Outer, None)
+    200.0, // Cells (Clear, Conditional…, Checkbox)
+    85.0,  // Data (AutoSum)
+    100.0, // View (?, Theme)
 ];
 
 /// Width reserved at the right edge for the "More ⋮" overflow menu.
-const MORE_WIDTH: f32 = 50.0;
+/// `⋮` is a small symbol — a `menu_button` around it is about 28 px
+/// wide, plus a few pixels of margin so the button doesn't crowd the
+/// last inline group.
+const MORE_WIDTH: f32 = 32.0;
+
+/// Right-edge buffer kept between the last group and the window's
+/// right edge / the More button. Tight — the v115 buffer was 16 px
+/// and left visible slack.
+const RIGHT_MARGIN: f32 = 4.0;
 
 /// Inner buttons of the History group — undo/redo.
 fn group_history(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<RibbonAction> {
@@ -470,12 +478,12 @@ fn group_view(ui: &mut egui::Ui) -> Option<RibbonAction> {
 /// is too wide, draw it anyway rather than show an empty ribbon.
 pub fn fit_count(group_widths: &[f32], available: f32) -> usize {
     let total: f32 = group_widths.iter().sum();
-    if total + 16.0 <= available {
+    if total + RIGHT_MARGIN <= available {
         // Everything fits — no overflow menu needed.
         return group_widths.len();
     }
-    // Reserve space for the More menu and a small right-edge margin.
-    let budget = available - MORE_WIDTH - 16.0;
+    // Reserve space for the More menu and a tight right-edge margin.
+    let budget = available - MORE_WIDTH - RIGHT_MARGIN;
     let mut acc = 0.0;
     for (i, w) in group_widths.iter().enumerate() {
         if acc + w > budget {
@@ -888,8 +896,9 @@ mod tests {
 
     #[test]
     fn fit_count_overflows_trailing_groups_when_window_is_narrow() {
-        // 200 + 200 + 200 = 600 > 300 budget. With MORE_WIDTH=50,
-        // budget = 300 - 50 - 16 = 234. So only the first group fits.
+        // 200+200+200=600 > 300 budget. With MORE_WIDTH=32 and
+        // RIGHT_MARGIN=4: budget = 300 - 32 - 4 = 264. Only the
+        // first group (200) fits — the second would push acc to 400.
         assert_eq!(fit_count(&[200.0, 200.0, 200.0], 300.0), 1);
     }
 
@@ -902,9 +911,23 @@ mod tests {
 
     #[test]
     fn fit_count_keeps_all_groups_at_the_exact_breakpoint() {
-        // total = 200, available = 216 (200 + 16 margin) -> fits all.
-        assert_eq!(fit_count(&[100.0, 100.0], 216.0), 2);
-        // Just below the breakpoint -> one overflows.
-        assert_eq!(fit_count(&[100.0, 100.0], 215.0), 1);
+        // total=200, RIGHT_MARGIN=4 -> everything fits at avail=204.
+        assert_eq!(fit_count(&[100.0, 100.0], 204.0), 2);
+        // Just below the breakpoint -> overflow path engages and at
+        // avail=203 budget = 203-32-4 = 167; first group (100) fits,
+        // second (acc=200) overflows.
+        assert_eq!(fit_count(&[100.0, 100.0], 203.0), 1);
+    }
+
+    #[test]
+    fn fit_count_tightens_overflow_compared_to_v115_estimates() {
+        // Regression guard for v116's tighter budget. At a real
+        // laptop width (1366 px) v115's estimates returned 4 groups
+        // inline — leaving a Font-group-sized gap to the right of
+        // the last visible group. v116 should pack at least 5 in.
+        assert!(
+            fit_count(GROUP_WIDTHS, 1366.0) >= 5,
+            "v116 should fit ≥5 groups at 1366px"
+        );
     }
 }
