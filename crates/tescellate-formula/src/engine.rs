@@ -826,6 +826,13 @@ mod tests {
         (eng, sid)
     }
 
+    fn new_triangle_sheet() -> (WorkbookEngine, SheetId) {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("Tri1", LatticeKind::Triangle);
+        (eng, sid)
+    }
+
     #[test]
     fn literal_cell() {
         let (mut eng, sid) = new_sheet();
@@ -1387,6 +1394,55 @@ mod tests {
         assert_eq!(
             eng.get_cell(sid, "H(0,1)").unwrap().value,
             CellValue::Number(120.0)
+        );
+    }
+
+    #[test]
+    fn triangle_literal_round_trip() {
+        let (mut eng, sid) = new_triangle_sheet();
+        eng.set_cell(sid, "T(0,0)", Some("=42")).unwrap();
+        // Canonical form survives whitespace / case-flexible parsing on
+        // the read side.
+        assert_eq!(
+            eng.get_cell(sid, "T( 0 , 0 )").unwrap().value,
+            CellValue::Number(42.0),
+        );
+        assert_eq!(
+            eng.get_cell(sid, "T(0,0)").unwrap().address,
+            "T(0,0)".to_string(),
+        );
+    }
+
+    #[test]
+    fn triangle_cross_cell_reference() {
+        let (mut eng, sid) = new_triangle_sheet();
+        eng.set_cell(sid, "T(0,0)", Some("=10")).unwrap();
+        eng.set_cell(sid, "T(1,0)", Some("=T(0,0) * 5")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "T(1,0)").unwrap().value,
+            CellValue::Number(50.0),
+        );
+        // Edit propagates the dependency through the DAG.
+        eng.set_cell(sid, "T(0,0)", Some("=20")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "T(1,0)").unwrap().value,
+            CellValue::Number(100.0),
+        );
+    }
+
+    #[test]
+    fn triangle_range_sum() {
+        let (mut eng, sid) = new_triangle_sheet();
+        // The block T(0,0):T(1,1) covers 4 triangles.
+        eng.set_cell(sid, "T(0,0)", Some("=1")).unwrap();
+        eng.set_cell(sid, "T(1,0)", Some("=2")).unwrap();
+        eng.set_cell(sid, "T(0,1)", Some("=3")).unwrap();
+        eng.set_cell(sid, "T(1,1)", Some("=4")).unwrap();
+        eng.set_cell(sid, "T(3,3)", Some("=SUM(T(0,0):T(1,1))"))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "T(3,3)").unwrap().value,
+            CellValue::Number(10.0)
         );
     }
 

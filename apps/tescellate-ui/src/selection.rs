@@ -13,6 +13,7 @@
 
 use tescellate_core::SheetId;
 use tescellate_tess::hex::HexCoord;
+use tescellate_tess::triangle::TriCoord;
 
 use crate::format::FormatMap;
 use crate::formula_mode;
@@ -175,6 +176,68 @@ impl Coord for HexCoord {
     }
 }
 
+impl Coord for TriCoord {
+    fn min_max(self, other: Self) -> (Self, Self) {
+        (
+            TriCoord::new(self.col.min(other.col), self.row.min(other.row)),
+            TriCoord::new(self.col.max(other.col), self.row.max(other.row)),
+        )
+    }
+
+    fn rect_cells(min: Self, max: Self) -> Vec<Self> {
+        let mut out =
+            Vec::with_capacity(((max.col - min.col + 1) * (max.row - min.row + 1)) as usize);
+        for row in min.row..=max.row {
+            for col in min.col..=max.col {
+                out.push(TriCoord::new(col, row));
+            }
+        }
+        out
+    }
+
+    fn rect_contains(min: Self, max: Self, coord: Self) -> bool {
+        coord.col >= min.col && coord.col <= max.col && coord.row >= min.row && coord.row <= max.row
+    }
+
+    fn rect_dims(min: Self, max: Self) -> (u32, u32) {
+        (
+            (max.col - min.col + 1) as u32,
+            (max.row - min.row + 1) as u32,
+        )
+    }
+
+    fn rect_fill_targets(min: Self, max: Self, dir: FillDir) -> Vec<(Self, Self)> {
+        let mut pairs = Vec::new();
+        match dir {
+            FillDir::Down => {
+                for col in min.col..=max.col {
+                    for row in (min.row + 1)..=max.row {
+                        pairs.push((TriCoord::new(col, row), TriCoord::new(col, min.row)));
+                    }
+                }
+            }
+            FillDir::Right => {
+                for row in min.row..=max.row {
+                    for col in (min.col + 1)..=max.col {
+                        pairs.push((TriCoord::new(col, row), TriCoord::new(min.col, row)));
+                    }
+                }
+            }
+        }
+        pairs
+    }
+
+    fn step_back(self, dir: FillDir) -> Option<Self> {
+        // Triangle coords are unbounded i32 — same as hex. A neighbour
+        // always exists; the lattice's geometry, not the coord type,
+        // decides whether the neighbour points the same way.
+        match dir {
+            FillDir::Down => Some(TriCoord::new(self.col, self.row - 1)),
+            FillDir::Right => Some(TriCoord::new(self.col - 1, self.row)),
+        }
+    }
+}
+
 /// A rectangular cell selection — an `anchor` and a `cursor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection<C: Coord> {
@@ -308,6 +371,12 @@ pub type SquareSelection = Selection<Cell>;
 /// `r` lie within the corners), the same shape the engine's
 /// `H(a,b):H(c,d)` range describes.
 pub type HexSelection = Selection<HexCoord>;
+
+/// A rectangular triangle selection. The selected range is the
+/// rectangular block in `(col, row)` triangle coordinates between
+/// anchor and cursor, matching the engine's `T(c0,r0):T(c1,r1)`
+/// range shape.
+pub type TriangleSelection = Selection<TriCoord>;
 
 /// The per-lattice state bundle every sheet kind shares — engine
 /// handle, selection, in-progress formula reference, and per-cell
@@ -621,6 +690,94 @@ mod tests {
         let s = HexSelection {
             anchor: HexCoord::new(0, 4),
             cursor: HexCoord::new(3, 4),
+        };
+        assert!(s.fill_targets(FillDir::Down).is_empty());
+    }
+
+    #[test]
+    fn triangle_selection_single_then_extends() {
+        let mut s = TriangleSelection::single(TriCoord::new(1, 1));
+        assert!(!s.is_range());
+        assert_eq!(s.cells(), vec![TriCoord::new(1, 1)]);
+        s.extend_to(TriCoord::new(3, 2));
+        assert!(s.is_range());
+        assert_eq!(s.dimensions(), (3, 2));
+        s.collapse_to(TriCoord::new(0, 0));
+        assert!(!s.is_range());
+    }
+
+    #[test]
+    fn triangle_selection_bounds_normalise_and_contain() {
+        // Anchor bottom-right, cursor top-left — bounds still min/max.
+        let s = TriangleSelection {
+            anchor: TriCoord::new(3, 4),
+            cursor: TriCoord::new(1, 0),
+        };
+        let (min, max) = s.bounds();
+        assert_eq!((min.col, min.row), (1, 0));
+        assert_eq!((max.col, max.row), (3, 4));
+        assert!(s.contains(TriCoord::new(2, 2)));
+        assert!(!s.contains(TriCoord::new(4, 2)));
+    }
+
+    #[test]
+    fn triangle_selection_cells_enumerate_the_rectangle() {
+        let s = TriangleSelection {
+            anchor: TriCoord::new(0, 0),
+            cursor: TriCoord::new(2, 1),
+        };
+        let cells = s.cells();
+        // 3 columns × 2 rows = 6 triangle cells.
+        assert_eq!(cells.len(), 6);
+        assert!(cells.contains(&TriCoord::new(0, 0)));
+        assert!(cells.contains(&TriCoord::new(2, 1)));
+        assert!(cells.iter().all(|&c| s.contains(c)));
+    }
+
+    #[test]
+    fn triangle_fill_down_propagates_the_top_row_per_column() {
+        // 2 columns × 3 rows: the two lower rows fill from the top.
+        let s = TriangleSelection {
+            anchor: TriCoord::new(0, 0),
+            cursor: TriCoord::new(1, 2),
+        };
+        let pairs = s.fill_targets(FillDir::Down);
+        assert_eq!(pairs.len(), 4);
+        assert!(pairs.contains(&(TriCoord::new(0, 1), TriCoord::new(0, 0))));
+        assert!(pairs.contains(&(TriCoord::new(1, 2), TriCoord::new(1, 0))));
+    }
+
+    #[test]
+    fn triangle_fill_right_propagates_the_left_column_per_row() {
+        let s = TriangleSelection {
+            anchor: TriCoord::new(0, 0),
+            cursor: TriCoord::new(2, 1),
+        };
+        let pairs = s.fill_targets(FillDir::Right);
+        assert_eq!(pairs.len(), 4);
+        assert!(pairs.contains(&(TriCoord::new(1, 0), TriCoord::new(0, 0))));
+        assert!(pairs.contains(&(TriCoord::new(2, 1), TriCoord::new(0, 1))));
+    }
+
+    #[test]
+    fn triangle_fill_on_a_single_cell_pulls_from_the_neighbour() {
+        let s = TriangleSelection::single(TriCoord::new(3, -2));
+        // Triangle coords are unbounded — step_back never returns None.
+        assert_eq!(
+            s.fill_targets(FillDir::Down),
+            vec![(TriCoord::new(3, -2), TriCoord::new(3, -3))],
+        );
+        assert_eq!(
+            s.fill_targets(FillDir::Right),
+            vec![(TriCoord::new(3, -2), TriCoord::new(2, -2))],
+        );
+    }
+
+    #[test]
+    fn triangle_fill_down_on_a_single_row_range_is_a_noop() {
+        let s = TriangleSelection {
+            anchor: TriCoord::new(0, 4),
+            cursor: TriCoord::new(3, 4),
         };
         assert!(s.fill_targets(FillDir::Down).is_empty());
     }
