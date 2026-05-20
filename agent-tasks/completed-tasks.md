@@ -35,3 +35,9 @@
 - **Completed:** 2026-05-20T18:50:00Z
 - **Files modified:** apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/lib.rs, apps/tescellate-ui/src/app.rs, apps/tescellate-ui/src/format.rs, apps/tescellate-ui/src/widget.rs, apps/tescellate-ui/src/note.rs, apps/tescellate-ui/src/grid.rs, apps/tescellate-ui/Cargo.toml
 - **Commit:** `b0d4cfe`
+
+## T-015 (sprint 0)
+- **Description:** Local CI gate run — `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo test --workspace`, plus the same on `apps/tescellate-ui`, plus `cargo build --target wasm32-unknown-unknown` on the UI crate. All green. Two fmt drifts fixed (engine.rs, widget.rs, state_io.rs); one clippy `bool_assert_comparison` fixed.
+- **Completed:** 2026-05-20T18:55:00Z
+- **Files modified:** crates/tescellate-formula/src/engine.rs, apps/tescellate-ui/src/widget.rs, apps/tescellate-ui/src/state_io.rs
+- **Commit:** `5e8b46c`

@@ -107,10 +107,7 @@ impl WorkbookEngine {
     /// zip and return the bytes. The DAG isn't stored — it can be
     /// reconstructed from cell sources on load. Target-agnostic; the UI
     /// uses this directly on wasm32 where the path-based API can't link.
-    pub fn save_bytes(
-        &self,
-        ui: &tescellate_store::UiState,
-    ) -> Result<Vec<u8>, SetCellError> {
+    pub fn save_bytes(&self, ui: &tescellate_store::UiState) -> Result<Vec<u8>, SetCellError> {
         tescellate_store::save_full_to_bytes(&self.workbook, ui)
             .map_err(|e| SetCellError::Io(e.to_string()))
     }
@@ -118,10 +115,7 @@ impl WorkbookEngine {
     /// Deserialize a workbook + UI state from in-memory `.tscl` bytes.
     /// Rebuilds the DAG via [`Self::rebuild_dag`]. Returns the opaque UI
     /// state so the UI can restore its own per-sheet view.
-    pub fn open_bytes(
-        &mut self,
-        bytes: &[u8],
-    ) -> Result<tescellate_store::UiState, SetCellError> {
+    pub fn open_bytes(&mut self, bytes: &[u8]) -> Result<tescellate_store::UiState, SetCellError> {
         let (workbook, ui) = tescellate_store::load_full_from_bytes(bytes)
             .map_err(|e| SetCellError::Io(e.to_string()))?;
         self.workbook = workbook;
@@ -965,7 +959,9 @@ mod tests {
     #[test]
     fn engine_path_api_uses_byte_api() {
         let (eng, _sid) = new_sheet();
-        let path_bytes_via_save = eng.save_bytes(&tescellate_store::UiState::default()).unwrap();
+        let path_bytes_via_save = eng
+            .save_bytes(&tescellate_store::UiState::default())
+            .unwrap();
 
         let tmp = std::env::temp_dir().join(format!(
             "tescellate-byte-api-{}-{}.tscl",
@@ -980,8 +976,7 @@ mod tests {
         std::fs::remove_file(&tmp).ok();
         // The two zips need not be byte-identical (zip metadata can drift)
         // but they must each load to the same workbook + empty UiState.
-        let (wb_a, ui_a) =
-            tescellate_store::load_full_from_bytes(&path_bytes_via_save).unwrap();
+        let (wb_a, ui_a) = tescellate_store::load_full_from_bytes(&path_bytes_via_save).unwrap();
         let (wb_b, ui_b) = tescellate_store::load_full_from_bytes(&on_disk).unwrap();
         assert_eq!(wb_a.sheet_order, wb_b.sheet_order);
         assert_eq!(ui_a, ui_b);

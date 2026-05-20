@@ -372,7 +372,10 @@ mod tests {
             }),
         );
         assert!(back.is_button((2, 2)));
-        assert_eq!(back.kind((3, 3)), Some(WidgetKind::ProgressBar { max: 500.0 }));
+        assert_eq!(
+            back.kind((3, 3)),
+            Some(WidgetKind::ProgressBar { max: 500.0 })
+        );
     }
 
     #[test]

@@ -137,7 +137,9 @@ mod tests {
             hex_formats: FormatMap::default(),
             triangle_formats: FormatMap::default(),
             widgets,
-            square_notes: [((3, 3), "remember this".to_string())].into_iter().collect(),
+            square_notes: [((3, 3), "remember this".to_string())]
+                .into_iter()
+                .collect(),
             hex_notes: HashMap::new(),
             triangle_notes: HashMap::new(),
             conditional_rules: vec![Rule {
@@ -159,8 +161,11 @@ mod tests {
         assert!(back.stage_mode);
         assert!(back.widgets.is_slider((1, 5)));
         assert!(back.widgets.is_toggle((2, 5)));
-        assert_eq!(back.square_formats.get((0, 0)).bold, true);
-        assert_eq!(back.square_notes.get(&(3, 3)).map(String::as_str), Some("remember this"));
+        assert!(back.square_formats.get((0, 0)).bold);
+        assert_eq!(
+            back.square_notes.get(&(3, 3)).map(String::as_str),
+            Some("remember this")
+        );
         assert_eq!(back.conditional_rules.len(), 1);
         assert_eq!(back.column_widths.get(&0), Some(&90.0));
     }
