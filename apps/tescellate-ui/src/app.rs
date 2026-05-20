@@ -1338,7 +1338,27 @@ impl TescellateApp {
                 self.apply_edits(self.hex.sheet_id, targets);
             }
             ActiveSheet::Triangle => {
-                // Triangle sort lands in a follow-up.
+                let (min, max) = self.triangle.selection.bounds();
+                let (min_col, min_row, max_col, max_row) = (min.col, min.row, max.col, max.row);
+                let key_col = self.triangle.selection.cursor.col;
+                let keys: Vec<CellValue> = (min_row..=max_row)
+                    .map(|r| self.triangle_cell_value(TriCoord::new(key_col, r)))
+                    .collect();
+                let order = sort::row_order(&keys, ascending);
+                let mut targets: Vec<(String, Option<String>)> = Vec::new();
+                for col in min_col..=max_col {
+                    let sources: Vec<String> = (min_row..=max_row)
+                        .map(|r| self.triangle_cell_source(TriCoord::new(col, r)))
+                        .collect();
+                    for (i, &src_row) in order.iter().enumerate() {
+                        let row = min_row + i as i32;
+                        let source = sources[src_row].clone();
+                        let cell = (!source.is_empty()).then_some(source);
+                        targets.push((triangle_address(TriCoord::new(col, row)), cell));
+                    }
+                }
+                self.commit_edit();
+                self.apply_edits(self.triangle.sheet_id, targets);
             }
         }
     }
