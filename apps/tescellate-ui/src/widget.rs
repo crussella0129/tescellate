@@ -31,6 +31,11 @@ pub enum WidgetKind {
     /// to a fresh value on each press. Cells with literal sources
     /// re-eval to the same value — effectively a no-op.
     Button,
+    /// A read-only horizontal progress bar clamped to `[0, max]`.
+    /// Reads the cell's numeric value; never writes back. Pairs
+    /// with a Slider on a related cell when "edit input here,
+    /// display progress there" is the gesture the user wants.
+    ProgressBar { max: f64 },
 }
 
 impl WidgetKind {
@@ -72,6 +77,11 @@ impl Widgets {
     /// Whether `cell` is a clickable button.
     pub fn is_button(&self, cell: (u32, u32)) -> bool {
         matches!(self.kind(cell), Some(WidgetKind::Button))
+    }
+
+    /// Whether `cell` is a progress bar.
+    pub fn is_progress_bar(&self, cell: (u32, u32)) -> bool {
+        matches!(self.kind(cell), Some(WidgetKind::ProgressBar { .. }))
     }
 
     /// Set (or clear, with `kind = None`) the widget on `cell`.
@@ -122,6 +132,17 @@ impl Widgets {
         }
     }
 
+    /// Turn `cell` into a progress bar with the given `max`. Replaces
+    /// any prior widget kind.
+    pub fn set_progress_bar(&mut self, cell: (u32, u32), max: f64) {
+        self.set(cell, Some(WidgetKind::ProgressBar { max }));
+    }
+
+    /// Default progress-bar max for the ribbon's "Progress" action
+    /// — 100 mirrors the default slider range so a Slider–ProgressBar
+    /// pair reads naturally without per-cell tuning.
+    pub const DEFAULT_PROGRESS_MAX: f64 = 100.0;
+
     /// Whether no cell carries a widget — lets the renderer skip its
     /// widget pass entirely.
     pub fn is_empty(&self) -> bool {
@@ -161,6 +182,21 @@ pub fn slider_value(value: &CellValue, min: f64, max: f64) -> f64 {
         _ => min,
     };
     raw.clamp(min, max)
+}
+
+/// Map a cell's numeric value to a progress-bar fraction in `[0, 1]`.
+/// Non-numeric values read as 0; a `max` of zero (or non-positive)
+/// collapses to a full bar (so misconfigured ranges fail visibly).
+pub fn progress_fraction(value: &CellValue, max: f64) -> f32 {
+    let raw = match value {
+        CellValue::Number(n) => *n,
+        CellValue::Integer(i) => *i as f64,
+        _ => 0.0,
+    };
+    if max <= 0.0 {
+        return 1.0;
+    }
+    (raw / max).clamp(0.0, 1.0) as f32
 }
 
 /// The source to write for a slider position. Integer-valued positions
@@ -250,6 +286,32 @@ mod tests {
         assert!(w.is_widget((1, 1)));
         w.set_button((1, 1), false);
         assert!(!w.is_widget((1, 1)));
+    }
+
+    #[test]
+    fn set_and_query_progress_bar() {
+        let mut w = Widgets::default();
+        w.set_progress_bar((2, 2), 500.0);
+        assert!(w.is_progress_bar((2, 2)));
+        assert!(!w.is_slider((2, 2)));
+        assert_eq!(w.kind((2, 2)), Some(WidgetKind::ProgressBar { max: 500.0 }),);
+    }
+
+    #[test]
+    fn progress_fraction_clamps_and_handles_edge_cases() {
+        // Mid-range maps to the expected fraction.
+        assert_eq!(progress_fraction(&CellValue::Number(50.0), 100.0), 0.5);
+        // Values above `max` clamp to 1.0; below 0 clamp to 0.
+        assert_eq!(progress_fraction(&CellValue::Number(150.0), 100.0), 1.0);
+        assert_eq!(progress_fraction(&CellValue::Number(-10.0), 100.0), 0.0);
+        // Integers behave the same as their numeric value.
+        assert_eq!(progress_fraction(&CellValue::Integer(25), 100.0), 0.25);
+        // Non-numeric reads as 0 — the bar starts empty for a brand-
+        // new cell.
+        assert_eq!(progress_fraction(&CellValue::Empty, 100.0), 0.0);
+        // A non-positive max collapses to a full bar (misconfigured
+        // range fails visibly rather than dividing by zero).
+        assert_eq!(progress_fraction(&CellValue::Number(50.0), 0.0), 1.0);
     }
 
     #[test]

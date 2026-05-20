@@ -52,6 +52,9 @@ pub enum RibbonAction {
     /// Turn the selection into (or out of) clickable button cells —
     /// clicking re-fires the cell's source.
     ToggleButton,
+    /// Turn the selection into (or out of) progress-bar cells with
+    /// the default max.
+    ToggleProgressBar,
     /// Aggregate the selection (`SUM`, `AVERAGE`, …) into the cell below it.
     Aggregate(&'static str),
     /// Apply a border mode across the selection.
@@ -454,6 +457,13 @@ fn group_cells(ui: &mut egui::Ui) -> Option<RibbonAction> {
         .clicked()
     {
         action = Some(RibbonAction::ToggleButton);
+    }
+    if ui
+        .button("Progress")
+        .on_hover_text("Turn the selected cells into read-only 0–100 progress bars")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleProgressBar);
     }
     action
 }
