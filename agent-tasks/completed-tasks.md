@@ -71,3 +71,9 @@
 - **Completed:** 2026-05-20T19:50:00Z
 - **Files modified:** apps/tescellate-ui/src/app.rs
 - **Commit:** `371fe3f`
+
+## T-102a/b/c/d (sprint 1)
+- **Description:** localStorage autosave end-to-end. `state_io::{autosave_to_local_storage, load_from_local_storage}` (wasm-gated via base64 + web-sys; native no-op). Boot rehydrate in `TescellateApp::new` — if a saved autosave is present, swap the seed-demo workbook for the saved one and replay UI snapshot. Three new app fields: `dirty: bool`, `last_autosave: f64`, `suppress_autosave_until: f64`. `mark_dirty()` called centrally at command + ribbon-action dispatch (broad coverage with a tiny over-fire cost balanced by debounce). `maybe_autosave(now)` runs at end of each frame; persists when `dirty && now - last_autosave > 2.0`. Save and Open both clear `dirty` + advance `last_autosave` so they don't race the debounce; Open also bumps `suppress_autosave_until` by 2 s. Engine workbook swap re-binds UI sheet IDs by lattice via new `rebind_sheet_ids` helper, and clears `History` to keep undo from reaching into the prior workbook (added `History::clear`).
+- **Completed:** 2026-05-20T20:15:00Z
+- **Files modified:** apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/app.rs, apps/tescellate-ui/src/history.rs
+- **Commit:** `2803222`

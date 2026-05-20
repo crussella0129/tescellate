@@ -530,6 +530,17 @@ pub struct TescellateApp {
     /// `await`, so the file-picker future writes here and the next frame's
     /// `update` drains the slot.
     pending_open_bytes: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    /// `true` when an autosave would persist new content. Flipped by
+    /// `mark_dirty()` at every user-driven mutation; cleared on autosave
+    /// fire and on Open. Seed demos do not flip it (they run before `new`
+    /// returns).
+    dirty: bool,
+    /// `ctx.input(|i| i.time)` of the most recent autosave fire — used by
+    /// `maybe_autosave` to enforce the 2 s debounce.
+    last_autosave: f64,
+    /// Window during which autosave is held off — bumped after an Open to
+    /// avoid clobbering the just-loaded state with stale dirty.
+    suppress_autosave_until: f64,
 }
 
 impl TescellateApp {
@@ -655,7 +666,7 @@ impl TescellateApp {
             formats: triangle_formats,
         };
 
-        Self {
+        let mut this = Self {
             engine,
             square,
             hex,
@@ -720,6 +731,57 @@ impl TescellateApp {
             dark_mode: true,
             stage_mode: false,
             pending_open_bytes: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            dirty: false,
+            last_autosave: 0.0,
+            suppress_autosave_until: 0.0,
+        };
+
+        // Boot rehydrate: if an autosave is present, swap the seed-demo
+        // workbook for the saved one. Failure here is silent — the seed
+        // demos remain. Skips entirely on native (localStorage is wasm-only).
+        if let Some(bytes) = crate::state_io::load_from_local_storage() {
+            match this.engine.open_bytes(&bytes) {
+                Ok(ui) => {
+                    this.rebind_sheet_ids();
+                    let snap = crate::state_io::ui_state_to_snapshot(&ui);
+                    this.restore_state(snap);
+                    this.history.clear();
+                }
+                Err(e) => eprintln!("boot: autosave rehydrate failed: {e:?}"),
+            }
+        }
+
+        this
+    }
+
+    /// Flip the dirty flag. Called from every entry point that mutates
+    /// engine or UI state — keeps the autosave wiring out of each call
+    /// site and lets future mutation paths opt in with one line.
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    /// If the dirty-debounce has elapsed, persist the workbook + snapshot
+    /// to localStorage and clear the flag. Called once per frame.
+    fn maybe_autosave(&mut self, now: f64) {
+        if !self.dirty {
+            return;
+        }
+        if now < self.suppress_autosave_until {
+            return;
+        }
+        if now - self.last_autosave < 2.0 {
+            return;
+        }
+        let snap = self.capture_state();
+        let ui = crate::state_io::snapshot_to_ui_state(&snap);
+        match self.engine.save_bytes(&ui) {
+            Ok(bytes) => {
+                crate::state_io::autosave_to_local_storage(&bytes);
+                self.dirty = false;
+                self.last_autosave = now;
+            }
+            Err(e) => eprintln!("autosave: save_bytes failed: {e:?}"),
         }
     }
 
@@ -1165,6 +1227,10 @@ impl TescellateApp {
 
     /// Apply a formatting action from the ribbon across the selection.
     fn apply_ribbon(&mut self, action: RibbonAction, ctx: &egui::Context) {
+        // Same approach as in `update()` — every dispatched ribbon action
+        // is a potential mutation; the central mark_dirty keeps the call
+        // sites small. Save/Open re-clear the bit on success.
+        self.mark_dirty();
         match action {
             RibbonAction::ToggleBold => self.toggle_range(|f| f.bold, |f, v| f.bold = v),
             RibbonAction::ToggleItalic => self.toggle_range(|f| f.italic, |f, v| f.italic = v),
@@ -4366,6 +4432,10 @@ impl TescellateApp {
                 return;
             }
         };
+        // We've serialized the current state — the autosave path can
+        // skip a redundant write until the next mutation.
+        self.dirty = false;
+        self.last_autosave = self.frame_time;
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -4450,10 +4520,51 @@ impl TescellateApp {
         };
         match self.engine.open_bytes(&bytes) {
             Ok(ui) => {
+                // The engine just swapped in a fresh workbook with its own
+                // SheetIds — re-bind our per-sheet UI bundles to whichever
+                // saved sheet matches each lattice. Using sheet_order
+                // gives stable per-lattice picking even when a workbook
+                // carries multiple sheets of the same lattice.
+                self.rebind_sheet_ids();
                 let snap = crate::state_io::ui_state_to_snapshot(&ui);
                 self.restore_state(snap);
+                // Also reset transient state that pointed into the old
+                // workbook — selection cursors stay at A1, edit/clipboard
+                // start fresh.
+                self.edit = None;
+                self.history.clear();
+                // Don't immediately autosave the just-loaded state.
+                self.dirty = false;
+                self.last_autosave = self.frame_time;
+                self.suppress_autosave_until = self.frame_time + 2.0;
             }
             Err(e) => eprintln!("open: engine.open_bytes failed: {e:?}"),
+        }
+    }
+
+    /// After an engine swap, re-bind the UI sheet bundles to whichever
+    /// sheet in the new workbook matches each lattice. Picks the first
+    /// matching sheet in `workbook.sheet_order` per lattice. Sheets the
+    /// new workbook lacks keep their old IDs (stale; harmless since the
+    /// user can't reach them through the tab bar).
+    fn rebind_sheet_ids(&mut self) {
+        for sid in &self.engine.workbook.sheet_order {
+            if let Some(sheet) = self.engine.workbook.sheets.get(sid) {
+                match sheet.lattice {
+                    LatticeKind::Square if self.square.sheet_id != *sid => {
+                        // Only rebind the first Square encountered; respect
+                        // existing binding if we've already updated.
+                        self.square.sheet_id = *sid;
+                    }
+                    LatticeKind::HexPointy | LatticeKind::HexFlat => {
+                        self.hex.sheet_id = *sid;
+                    }
+                    LatticeKind::Triangle => {
+                        self.triangle.sheet_id = *sid;
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -4552,6 +4663,13 @@ impl eframe::App for TescellateApp {
         });
         self.frame_time = ctx.input(|i| i.time);
         for command in self.collect_commands(ctx) {
+            // Every dispatched command is a potential mutation; the
+            // central mark_dirty here means we don't have to thread
+            // mark_dirty through each command's body. Save/Open/Find/
+            // help/etc. flip the bit too but the maybe_autosave debounce
+            // makes that a wash — at worst a redundant write 2s later.
+            // Save and Open clear the bit themselves on success.
+            self.mark_dirty();
             self.apply(command, ctx);
         }
 
@@ -4838,6 +4956,11 @@ impl eframe::App for TescellateApp {
         self.help_window(ctx);
         self.about_window(ctx);
         self.note_window(ctx);
+
+        // End of frame — try a debounced autosave. The debounce in
+        // `maybe_autosave` means a flurry of edits still results in at
+        // most one write every 2 s.
+        self.maybe_autosave(self.frame_time);
     }
 }
 

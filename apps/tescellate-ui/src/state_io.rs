@@ -110,6 +110,59 @@ pub fn ui_state_to_snapshot(ui: &tescellate_store::UiState) -> UiSnapshot {
     serde_json::from_value(ui.0.clone()).unwrap_or_default()
 }
 
+/// localStorage key for the wasm autosave. Versioned so a future format
+/// bump can ignore stale autosaves rather than crash on them.
+pub const AUTOSAVE_KEY: &str = "tescellate.autosave.v1";
+
+/// Maximum size of a base64-encoded autosave payload we'll try to write.
+/// Browsers quota localStorage to ~5 MiB per origin; we cap at ~4 MiB
+/// base64-encoded so a pathological workbook fails quietly rather than
+/// throwing a quota exception that breaks the autosave path.
+pub const AUTOSAVE_MAX_BYTES: usize = 4 * 1024 * 1024;
+
+/// Persist `.tscl` bytes into browser localStorage (wasm32 only). On
+/// native, a no-op — the dialog flow already covers explicit save. All
+/// failures (no window, no storage, quota exceeded, oversize payload)
+/// are swallowed; autosave is best-effort.
+#[cfg(target_arch = "wasm32")]
+pub fn autosave_to_local_storage(bytes: &[u8]) {
+    use base64::Engine as _;
+    if bytes.len() > AUTOSAVE_MAX_BYTES {
+        return;
+    }
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    if let Some(window) = web_sys::window() {
+        if let Ok(Some(storage)) = window.local_storage() {
+            let _ = storage.set_item(AUTOSAVE_KEY, &encoded);
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn autosave_to_local_storage(_bytes: &[u8]) {
+    // No-op on native; explicit Save/Open is the persistence path.
+}
+
+/// Read back a previously-autosaved payload from localStorage (wasm32
+/// only). Returns `None` on native, when no autosave exists, when the
+/// stored value isn't valid base64, or on any underlying JS error —
+/// all of which leave the caller free to fall back to the seed demos.
+#[cfg(target_arch = "wasm32")]
+pub fn load_from_local_storage() -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let window = web_sys::window()?;
+    let storage = window.local_storage().ok().flatten()?;
+    let encoded = storage.get_item(AUTOSAVE_KEY).ok().flatten()?;
+    base64::engine::general_purpose::STANDARD
+        .decode(encoded.as_bytes())
+        .ok()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_from_local_storage() -> Option<Vec<u8>> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +230,19 @@ mod tests {
         assert_eq!(snap.active_sheet, ActiveSheetTag::Square);
         assert!(!snap.stage_mode);
         assert_eq!(snap.conditional_rules.len(), 0);
+    }
+
+    #[test]
+    fn autosave_to_local_storage_is_noop_on_native() {
+        // No panics, no observable failure.
+        autosave_to_local_storage(b"some bytes");
+        autosave_to_local_storage(&[]);
+        // Oversize payload still doesn't panic.
+        autosave_to_local_storage(&vec![0u8; AUTOSAVE_MAX_BYTES + 1]);
+    }
+
+    #[test]
+    fn load_from_local_storage_returns_none_on_native() {
+        assert!(load_from_local_storage().is_none());
     }
 }
