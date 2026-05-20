@@ -25,7 +25,7 @@ use crate::keymap::{self, Command, Dir, Mode};
 use crate::note::NoteMap;
 use crate::ribbon::{self, RibbonAction};
 use crate::selection::{
-    FillDir, HexSelection, Selection, Sheet, SquareSelection, TriangleSelection,
+    Coord, FillDir, HexSelection, Selection, Sheet, SquareSelection, TriangleSelection,
 };
 use crate::sort;
 use crate::stats;
@@ -3875,19 +3875,70 @@ impl TescellateApp {
         };
 
         if let Some(coord) = clicked_coord {
-            self.commit_edit();
-            if ui.input(|i| i.modifiers.shift) {
-                self.triangle.selection.extend_to(coord);
+            // Formula-mode click: insert the triangle address into
+            // the formula buffer; selection doesn't move.
+            let in_formula = self
+                .edit
+                .as_ref()
+                .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
+            if in_formula {
+                if let Some(edit) = self.edit.as_mut() {
+                    let hl = formula_mode::click_insert(
+                        &mut edit.buffer,
+                        &mut edit.fresh,
+                        coord,
+                        triangle_address,
+                    );
+                    self.triangle.formula_highlight = Some(hl);
+                }
             } else {
-                self.triangle.selection.collapse_to(coord);
+                self.commit_edit();
+                if ui.input(|i| i.modifiers.shift) {
+                    self.triangle.selection.extend_to(coord);
+                } else {
+                    self.triangle.selection.collapse_to(coord);
+                }
             }
         }
         if let Some(coord) = drag_started_coord {
-            self.commit_edit();
-            self.triangle.selection.collapse_to(coord);
+            let in_formula = self
+                .edit
+                .as_ref()
+                .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
+            if in_formula {
+                if let Some(edit) = self.edit.as_mut() {
+                    let (drag, hl) = formula_mode::drag_start(
+                        &mut edit.buffer,
+                        &mut edit.fresh,
+                        coord,
+                        triangle_address,
+                    );
+                    self.triangle.formula_drag = Some(drag);
+                    self.triangle.formula_highlight = Some(hl);
+                }
+            } else {
+                self.commit_edit();
+                self.triangle.selection.collapse_to(coord);
+            }
         }
         if let Some(coord) = dragged_coord {
-            self.triangle.selection.extend_to(coord);
+            if let Some(drag) = self.triangle.formula_drag {
+                if let Some(edit) = self.edit.as_mut() {
+                    let hl = formula_mode::drag_extend(
+                        &mut edit.buffer,
+                        &mut edit.fresh,
+                        &drag,
+                        coord,
+                        triangle_address,
+                    );
+                    self.triangle.formula_highlight = Some(hl);
+                }
+            } else {
+                self.triangle.selection.extend_to(coord);
+            }
+        }
+        if response.drag_stopped() {
+            self.triangle.formula_drag = None;
         }
         if response.double_clicked() {
             if let Some(p) = response.interact_pointer_pos() {
@@ -3984,6 +4035,36 @@ impl TescellateApp {
             let mut loop_pts = verts.clone();
             loop_pts.push(verts[0]);
             painter.add(egui::Shape::line(loop_pts, selection_stroke));
+        }
+
+        // Formula-reference marquee — outline every triangle inside the
+        // rectangular range of the current formula reference with a
+        // dashed blue stroke. Only drawn while an edit is active so it
+        // disappears as soon as the formula is committed or cancelled.
+        if self.edit.is_some() {
+            if let Some(hl) = self.triangle.formula_highlight {
+                let formula_color = egui::Color32::from_rgb(70, 120, 220);
+                let dash = egui::Stroke::new(1.8, formula_color);
+                let (min, max) = hl.start.min_max(hl.end);
+                for row in min.row..=max.row {
+                    for col in min.col..=max.col {
+                        let coord = TriCoord::new(col, row);
+                        if !triangle_in_view(coord) {
+                            continue;
+                        }
+                        let mut loop_pts: Vec<egui::Pos2> = self
+                            .triangle_lattice
+                            .vertices(coord)
+                            .iter()
+                            .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
+                            .collect();
+                        if let Some(&first) = loop_pts.first() {
+                            loop_pts.push(first);
+                        }
+                        painter.extend(egui::Shape::dashed_line(&loop_pts, dash, 5.0, 3.0));
+                    }
+                }
+            }
         }
 
         // In-cell edit overlay at the cursor centroid.
