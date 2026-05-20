@@ -221,6 +221,37 @@ impl LatticeHandle {
             }
         }
     }
+
+    /// Lattice-native distance between two addresses. Each lattice
+    /// answers in its own metric:
+    ///
+    /// - Square: Chebyshev (king-move) distance —
+    ///   `max(|Δcol|, |Δrow|)`.
+    /// - Hex: hex edge-step distance (cube metric).
+    /// - Triangle: same-axis Chebyshev metric as square — two
+    ///   triangles a Δ-(col, row) apart sit `max(|Δcol|, |Δrow|)`
+    ///   half-bases / row-heights apart. Triangle's true edge-step
+    ///   distance is more nuanced (depends on orientations along the
+    ///   path) and lands in a follow-up.
+    pub fn lattice_distance(&self, a: &str, b: &str) -> Result<i64, AddressError> {
+        match self {
+            LatticeHandle::Square(l) => {
+                let a = l.parse_address(a)?;
+                let b = l.parse_address(b)?;
+                Ok((a.col - b.col).abs().max((a.row - b.row).abs()) as i64)
+            }
+            LatticeHandle::Hex(l) => {
+                let a = l.parse_address(a)?;
+                let b = l.parse_address(b)?;
+                Ok(a.distance(b) as i64)
+            }
+            LatticeHandle::Triangle(l) => {
+                let a = l.parse_address(a)?;
+                let b = l.parse_address(b)?;
+                Ok((a.col - b.col).abs().max((a.row - b.row).abs()) as i64)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -269,6 +300,32 @@ mod handle_tests {
         let h = LatticeHandle::for_kind(LatticeKind::Triangle).unwrap();
         assert_eq!(h.canonicalize("T(0,0)").unwrap(), "T(0,0)");
         assert_eq!(h.canonicalize("T(-3,5)").unwrap(), "T(-3,5)");
+    }
+
+    #[test]
+    fn square_distance_is_chebyshev() {
+        let h = LatticeHandle::for_kind(LatticeKind::Square).unwrap();
+        assert_eq!(h.lattice_distance("A1", "A1").unwrap(), 0);
+        assert_eq!(h.lattice_distance("A1", "B2").unwrap(), 1);
+        // A1 → C5: 2 columns + 4 rows → Chebyshev = max(2, 4) = 4.
+        assert_eq!(h.lattice_distance("A1", "C5").unwrap(), 4);
+    }
+
+    #[test]
+    fn hex_distance_uses_cube_metric() {
+        let h = LatticeHandle::for_kind(LatticeKind::HexPointy).unwrap();
+        assert_eq!(h.lattice_distance("H(0,0)", "H(0,0)").unwrap(), 0);
+        assert_eq!(h.lattice_distance("H(0,0)", "H(1,0)").unwrap(), 1);
+        // A "knight-jump" hex pair — H(2, -1) is two edge steps away.
+        assert_eq!(h.lattice_distance("H(0,0)", "H(2,-1)").unwrap(), 2);
+    }
+
+    #[test]
+    fn triangle_distance_is_chebyshev_on_axes() {
+        let h = LatticeHandle::for_kind(LatticeKind::Triangle).unwrap();
+        assert_eq!(h.lattice_distance("T(0,0)", "T(0,0)").unwrap(), 0);
+        assert_eq!(h.lattice_distance("T(0,0)", "T(1,0)").unwrap(), 1);
+        assert_eq!(h.lattice_distance("T(0,0)", "T(3,5)").unwrap(), 5);
     }
 
     #[test]

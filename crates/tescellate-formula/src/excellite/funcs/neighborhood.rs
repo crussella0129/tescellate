@@ -1,4 +1,5 @@
-//! Lattice-aware neighborhood functions: NEIGHBORS, RADIUS.
+//! Lattice-aware neighborhood functions: NEIGHBORS, RADIUS, DISK,
+//! DISTANCE.
 //!
 //! These functions are special-form in the sense that their first argument
 //! is treated as a *cell address*, not an evaluated value. The Carbide
@@ -64,7 +65,23 @@ pub fn radius(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> 
     Ok(CellValue::Array(Box::new(Array::col(vals))))
 }
 
+/// DISTANCE(cell_a, cell_b) — lattice-native distance between two
+/// addresses. Square: Chebyshev (king-move). Hex: hex edge-step.
+/// Triangle: half-base / row-step Chebyshev (a first cut; the true
+/// triangle edge-step metric depends on orientations along the path
+/// and lands in a follow-up). Returns an `Integer`.
+pub fn distance(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("DISTANCE", args, 2)?;
+    let a = resolve_address(&args[0], ctx)?;
+    let b = resolve_address(&args[1], ctx)?;
+    Ok(CellValue::Integer(ctx.lattice_distance(&a, &b)?))
+}
+
 pub fn register(r: &mut FunctionRegistry) {
     r.add("NEIGHBORS", neighbors);
     r.add("RADIUS", radius);
+    // DISK is the launch-brief's preferred name for RADIUS — same
+    // function, both names registered so docs / muscle memory agree.
+    r.add("DISK", radius);
+    r.add("DISTANCE", distance);
 }

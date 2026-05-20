@@ -734,6 +734,12 @@ impl EvalCtx for SheetEvalView<'_> {
             .map_err(|e| EvalError::Ref(format!("{e}")))?;
         Ok(addrs.into_iter().map(|a| self.lookup(&a)).collect())
     }
+
+    fn lattice_distance(&self, a: &str, b: &str) -> Result<i64, EvalError> {
+        self.lattice
+            .lattice_distance(a, b)
+            .map_err(|e| EvalError::Ref(format!("{e}")))
+    }
 }
 
 /// Parse a literal cell input (anything not starting with `=`) into a
