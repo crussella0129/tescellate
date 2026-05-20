@@ -126,26 +126,375 @@ pub fn number_format_label(format: NumberFormat) -> &'static str {
 
 /// Draw a single bordered ribbon group titled `title`, with `content`
 /// laid out horizontally inside the frame and the title shown as a
-/// small caption underneath. The frame keeps its contents together
-/// even when the parent `horizontal_wrapped` flows to a new line — so
-/// each group is one persistent visual block rather than dissolving
-/// into a flat strip of buttons.
-fn ribbon_group(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
+/// small caption underneath. Returns whichever [`RibbonAction`] the
+/// inner controls produced this frame.
+///
+/// `content` runs in a NON-wrapping horizontal layout — when the
+/// window is narrow, whole groups overflow into the ribbon's "More
+/// ⋮" menu (see [`ribbon`]) instead of being squished into single
+/// columns.
+fn ribbon_group(
+    ui: &mut egui::Ui,
+    title: &str,
+    content: impl FnOnce(&mut egui::Ui) -> Option<RibbonAction>,
+) -> Option<RibbonAction> {
+    let mut action = None;
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::symmetric(6.0, 3.0))
         .show(ui, |ui| {
             ui.vertical(|ui| {
-                ui.horizontal(|ui| content(ui));
+                ui.horizontal(|ui| {
+                    action = content(ui);
+                });
                 ui.add_space(1.0);
                 ui.small(egui::RichText::new(title).weak());
             });
         });
+    action
+}
+
+/// Estimated widths (points) of each ribbon group in the order they
+/// render, used to decide which trailing groups collapse into the
+/// More menu when the window is narrow. The values are approximate —
+/// off by ±20 points doesn't change the overflow decision in any
+/// useful way, and exact measurement would need a second egui pass.
+const GROUP_WIDTHS: &[f32] = &[
+    140.0, // History (Undo, Redo)
+    310.0, // Clipboard (Copy, Cut, Paste, Paste values, Painter)
+    520.0, // Font (B, I, S, U, Wrap, Size combo, Text colour, Fill colour)
+    300.0, // Alignment (L, C, R, V Top, Mid, Btm)
+    280.0, // Number (combo, +.0, -.0, (-))
+    180.0, // Borders (All, Outer, None)
+    240.0, // Cells (Clear, Conditional…, Checkbox)
+    100.0, // Data (AutoSum)
+    120.0, // View (?, Theme)
+];
+
+/// Width reserved at the right edge for the "More ⋮" overflow menu.
+const MORE_WIDTH: f32 = 50.0;
+
+/// Inner buttons of the History group — undo/redo.
+fn group_history(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<RibbonAction> {
+    let mut action = None;
+    if ui
+        .add_enabled(can_undo, egui::Button::new("Undo"))
+        .on_hover_text("Undo (Ctrl+Z)")
+        .clicked()
+    {
+        action = Some(RibbonAction::Undo);
+    }
+    if ui
+        .add_enabled(can_redo, egui::Button::new("Redo"))
+        .on_hover_text("Redo (Ctrl+Y)")
+        .clicked()
+    {
+        action = Some(RibbonAction::Redo);
+    }
+    action
+}
+
+/// Inner buttons of the Clipboard group — copy / cut / paste / paste
+/// values / format painter.
+fn group_clipboard(ui: &mut egui::Ui, painter_armed: bool) -> Option<RibbonAction> {
+    let mut action = None;
+    if ui.button("Copy").on_hover_text("Copy (Ctrl+C)").clicked() {
+        action = Some(RibbonAction::Copy);
+    }
+    if ui.button("Cut").on_hover_text("Cut (Ctrl+X)").clicked() {
+        action = Some(RibbonAction::Cut);
+    }
+    if ui.button("Paste").on_hover_text("Paste (Ctrl+V)").clicked() {
+        action = Some(RibbonAction::Paste);
+    }
+    if ui
+        .button("Paste values")
+        .on_hover_text("Paste values only — drops formulas (Ctrl+Shift+V)")
+        .clicked()
+    {
+        action = Some(RibbonAction::PasteValues);
+    }
+    if ui
+        .selectable_label(painter_armed, "Painter")
+        .on_hover_text("Format painter — capture this cell's format, then click another")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleFormatPainter);
+    }
+    action
+}
+
+/// Inner controls of the Font group — bold/italic/strike/underline,
+/// wrap, size, text/fill colours.
+fn group_font(ui: &mut egui::Ui, current: &CellFormat) -> Option<RibbonAction> {
+    let mut action = None;
+    if ui
+        .selectable_label(current.bold, egui::RichText::new("B").strong())
+        .on_hover_text("Bold (Ctrl+B)")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleBold);
+    }
+    if ui
+        .selectable_label(current.italic, egui::RichText::new("I").italics())
+        .on_hover_text("Italic (Ctrl+I)")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleItalic);
+    }
+    if ui
+        .selectable_label(
+            current.strikethrough,
+            egui::RichText::new("S").strikethrough(),
+        )
+        .on_hover_text("Strikethrough")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleStrikethrough);
+    }
+    if ui
+        .selectable_label(current.underline, egui::RichText::new("U").underline())
+        .on_hover_text("Underline (Ctrl+U)")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleUnderline);
+    }
+    if ui
+        .selectable_label(current.wrap_text, "Wrap")
+        .on_hover_text("Wrap long text onto multiple lines within the cell")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleWrapText);
+    }
+    egui::ComboBox::from_id_salt("ribbon_font_size")
+        .selected_text(match current.font_size {
+            FontSize::Small => "Small",
+            FontSize::Normal => "Normal",
+            FontSize::Large => "Large",
+        })
+        .show_ui(ui, |ui| {
+            for (size, label) in [
+                (FontSize::Small, "Small"),
+                (FontSize::Normal, "Normal"),
+                (FontSize::Large, "Large"),
+            ] {
+                if ui
+                    .selectable_label(current.font_size == size, label)
+                    .clicked()
+                {
+                    action = Some(RibbonAction::SetFontSize(size));
+                }
+            }
+        });
+    let mut text_color = current.text_color.unwrap_or(Color32::BLACK);
+    if ui
+        .color_edit_button_srgba(&mut text_color)
+        .on_hover_text("Text colour")
+        .changed()
+    {
+        action = Some(RibbonAction::SetTextColor(Some(text_color)));
+    }
+    let mut fill = current.fill.unwrap_or(Color32::WHITE);
+    if ui
+        .color_edit_button_srgba(&mut fill)
+        .on_hover_text("Fill colour")
+        .changed()
+    {
+        action = Some(RibbonAction::SetFill(Some(fill)));
+    }
+    action
+}
+
+/// Inner controls of the Alignment group — H Left/Center/Right and V
+/// Top/Mid/Btm.
+fn group_alignment(ui: &mut egui::Ui, current: &CellFormat) -> Option<RibbonAction> {
+    let mut action = None;
+    for (align, label) in [
+        (HAlign::Left, "Left"),
+        (HAlign::Center, "Center"),
+        (HAlign::Right, "Right"),
+    ] {
+        if ui.selectable_label(current.align == align, label).clicked() {
+            action = Some(RibbonAction::SetAlign(align));
+        }
+    }
+    ui.separator();
+    for (valign, label) in [
+        (VAlign::Top, "Top"),
+        (VAlign::Middle, "Mid"),
+        (VAlign::Bottom, "Btm"),
+    ] {
+        if ui
+            .selectable_label(current.valign == valign, label)
+            .clicked()
+        {
+            action = Some(RibbonAction::SetVAlign(valign));
+        }
+    }
+    action
+}
+
+/// Inner controls of the Number group — format combo, decimal
+/// steppers, negative-red toggle.
+fn group_number(ui: &mut egui::Ui, current: &CellFormat) -> Option<RibbonAction> {
+    let mut action = None;
+    egui::ComboBox::from_id_salt("ribbon_number_format")
+        .selected_text(number_format_label(current.number))
+        .show_ui(ui, |ui| {
+            let current_label = number_format_label(current.number);
+            for &(format, label) in NUMBER_FORMATS {
+                if ui.selectable_label(current_label == label, label).clicked() {
+                    action = Some(RibbonAction::SetNumber(format));
+                }
+            }
+        });
+    if ui
+        .button("+.0")
+        .on_hover_text("Increase decimal places")
+        .clicked()
+    {
+        action = Some(RibbonAction::AdjustDecimals(1));
+    }
+    if ui
+        .button("-.0")
+        .on_hover_text("Decrease decimal places")
+        .clicked()
+    {
+        action = Some(RibbonAction::AdjustDecimals(-1));
+    }
+    if ui
+        .selectable_label(
+            current.negative_red,
+            egui::RichText::new("(-)").color(Color32::from_rgb(220, 50, 50)),
+        )
+        .on_hover_text("Show negative numbers in red")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleNegativeRed);
+    }
+    action
+}
+
+/// Inner controls of the Borders group — all / outer / none.
+fn group_borders(ui: &mut egui::Ui) -> Option<RibbonAction> {
+    let mut action = None;
+    if ui
+        .button("All")
+        .on_hover_text("Border every selected cell")
+        .clicked()
+    {
+        action = Some(RibbonAction::SetBorders(BorderMode::All));
+    }
+    if ui
+        .button("Outer")
+        .on_hover_text("Border the selection's outer edge")
+        .clicked()
+    {
+        action = Some(RibbonAction::SetBorders(BorderMode::Outer));
+    }
+    if ui
+        .button("None")
+        .on_hover_text("Remove borders from the selection")
+        .clicked()
+    {
+        action = Some(RibbonAction::SetBorders(BorderMode::None));
+    }
+    action
+}
+
+/// Inner controls of the Cells group — clear format, conditional
+/// formatting editor, checkbox-widget toggle.
+fn group_cells(ui: &mut egui::Ui) -> Option<RibbonAction> {
+    let mut action = None;
+    if ui
+        .button("Clear")
+        .on_hover_text("Reset this cell to the default format")
+        .clicked()
+    {
+        action = Some(RibbonAction::ClearFormat);
+    }
+    if ui
+        .button("Conditional…")
+        .on_hover_text("Conditional-formatting rules")
+        .clicked()
+    {
+        action = Some(RibbonAction::OpenConditional);
+    }
+    if ui
+        .button("Checkbox")
+        .on_hover_text("Turn the selected cells into boolean checkboxes")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleWidget);
+    }
+    action
+}
+
+/// Inner controls of the Data group — AutoSum submenu.
+fn group_data(ui: &mut egui::Ui) -> Option<RibbonAction> {
+    let mut action = None;
+    ui.menu_button("AutoSum", |ui| {
+        for func in ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"] {
+            if ui.button(func).clicked() {
+                action = Some(RibbonAction::Aggregate(func));
+                ui.close_menu();
+            }
+        }
+    });
+    action
+}
+
+/// Inner controls of the View group — keyboard-shortcuts overlay and
+/// theme toggle.
+fn group_view(ui: &mut egui::Ui) -> Option<RibbonAction> {
+    let mut action = None;
+    if ui
+        .button("?")
+        .on_hover_text("Keyboard shortcuts (F1)")
+        .clicked()
+    {
+        action = Some(RibbonAction::OpenHelp);
+    }
+    if ui
+        .button("Theme")
+        .on_hover_text("Toggle the light / dark theme")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleTheme);
+    }
+    action
+}
+
+/// How many of the leading groups fit on a single ribbon row of width
+/// `available`. Trailing groups beyond the count overflow into the
+/// "More ⋮" menu. Always returns at least 1 — if even the first group
+/// is too wide, draw it anyway rather than show an empty ribbon.
+pub fn fit_count(group_widths: &[f32], available: f32) -> usize {
+    let total: f32 = group_widths.iter().sum();
+    if total + 16.0 <= available {
+        // Everything fits — no overflow menu needed.
+        return group_widths.len();
+    }
+    // Reserve space for the More menu and a small right-edge margin.
+    let budget = available - MORE_WIDTH - 16.0;
+    let mut acc = 0.0;
+    for (i, w) in group_widths.iter().enumerate() {
+        if acc + w > budget {
+            return i.max(1);
+        }
+        acc += w;
+    }
+    group_widths.len()
 }
 
 /// Draw the toolbar for the selected cell's `current` format. Returns
 /// the action the user triggered this frame, if any. `can_undo` /
 /// `can_redo` gate the undo/redo buttons. `painter_armed` lights the
 /// format-painter toggle when it is currently armed.
+///
+/// Groups render as bordered, non-wrapping blocks. When the window is
+/// too narrow to fit them all, the rightmost groups collapse into a
+/// "More ⋮" menu_button at the right edge — Excel/Sheets style. The
+/// ribbon's vertical height stays one row.
 pub fn ribbon(
     ui: &mut egui::Ui,
     current: &CellFormat,
@@ -153,270 +502,76 @@ pub fn ribbon(
     can_redo: bool,
     painter_armed: bool,
 ) -> Option<RibbonAction> {
-    let mut action = None;
-    // The ribbon is a flow of named, bordered groups — each group's
-    // controls stay together inside its frame, and groups wrap to a new
-    // line on narrow windows. This mirrors how Excel/Sheets partition
-    // their ribbons so a wide window does not just become one long
-    // line of icons.
-    ui.horizontal_wrapped(|ui| {
-        ribbon_group(ui, "History", |ui| {
-            if ui
-                .add_enabled(can_undo, egui::Button::new("Undo"))
-                .on_hover_text("Undo (Ctrl+Z)")
-                .clicked()
-            {
-                action = Some(RibbonAction::Undo);
-            }
-            if ui
-                .add_enabled(can_redo, egui::Button::new("Redo"))
-                .on_hover_text("Redo (Ctrl+Y)")
-                .clicked()
-            {
-                action = Some(RibbonAction::Redo);
-            }
-        });
+    let mut action: Option<RibbonAction> = None;
+    let avail = ui.available_width();
+    let visible = fit_count(GROUP_WIDTHS, avail);
 
-        ribbon_group(ui, "Clipboard", |ui| {
-            if ui.button("Copy").on_hover_text("Copy (Ctrl+C)").clicked() {
-                action = Some(RibbonAction::Copy);
+    ui.horizontal(|ui| {
+        let mut emit = |a: Option<RibbonAction>| {
+            if let Some(a) = a {
+                action = Some(a);
             }
-            if ui.button("Cut").on_hover_text("Cut (Ctrl+X)").clicked() {
-                action = Some(RibbonAction::Cut);
+        };
+        for i in 0..visible {
+            match i {
+                0 => emit(ribbon_group(ui, "History", |ui| {
+                    group_history(ui, can_undo, can_redo)
+                })),
+                1 => emit(ribbon_group(ui, "Clipboard", |ui| {
+                    group_clipboard(ui, painter_armed)
+                })),
+                2 => emit(ribbon_group(ui, "Font", |ui| group_font(ui, current))),
+                3 => emit(ribbon_group(ui, "Alignment", |ui| {
+                    group_alignment(ui, current)
+                })),
+                4 => emit(ribbon_group(ui, "Number", |ui| group_number(ui, current))),
+                5 => emit(ribbon_group(ui, "Borders", group_borders)),
+                6 => emit(ribbon_group(ui, "Cells", group_cells)),
+                7 => emit(ribbon_group(ui, "Data", group_data)),
+                8 => emit(ribbon_group(ui, "View", group_view)),
+                _ => {}
             }
-            if ui.button("Paste").on_hover_text("Paste (Ctrl+V)").clicked() {
-                action = Some(RibbonAction::Paste);
-            }
-            if ui
-                .button("Paste values")
-                .on_hover_text("Paste values only — drops formulas (Ctrl+Shift+V)")
-                .clicked()
-            {
-                action = Some(RibbonAction::PasteValues);
-            }
-            if ui
-                .selectable_label(painter_armed, "Painter")
-                .on_hover_text("Format painter — capture this cell's format, then click another")
-                .clicked()
-            {
-                action = Some(RibbonAction::ToggleFormatPainter);
-            }
-        });
-
-        ribbon_group(ui, "Font", |ui| {
-            if ui
-                .selectable_label(current.bold, egui::RichText::new("B").strong())
-                .on_hover_text("Bold (Ctrl+B)")
-                .clicked()
-            {
-                action = Some(RibbonAction::ToggleBold);
-            }
-            if ui
-                .selectable_label(current.italic, egui::RichText::new("I").italics())
-                .on_hover_text("Italic (Ctrl+I)")
-                .clicked()
-            {
-                action = Some(RibbonAction::ToggleItalic);
-            }
-            if ui
-                .selectable_label(
-                    current.strikethrough,
-                    egui::RichText::new("S").strikethrough(),
-                )
-                .on_hover_text("Strikethrough")
-                .clicked()
-            {
-                action = Some(RibbonAction::ToggleStrikethrough);
-            }
-            if ui
-                .selectable_label(current.underline, egui::RichText::new("U").underline())
-                .on_hover_text("Underline (Ctrl+U)")
-                .clicked()
-            {
-                action = Some(RibbonAction::ToggleUnderline);
-            }
-            if ui
-                .selectable_label(current.wrap_text, "Wrap")
-                .on_hover_text("Wrap long text onto multiple lines within the cell")
-                .clicked()
-            {
-                action = Some(RibbonAction::ToggleWrapText);
-            }
-            egui::ComboBox::from_id_salt("ribbon_font_size")
-                .selected_text(match current.font_size {
-                    FontSize::Small => "Small",
-                    FontSize::Normal => "Normal",
-                    FontSize::Large => "Large",
-                })
-                .show_ui(ui, |ui| {
-                    for (size, label) in [
-                        (FontSize::Small, "Small"),
-                        (FontSize::Normal, "Normal"),
-                        (FontSize::Large, "Large"),
-                    ] {
-                        if ui
-                            .selectable_label(current.font_size == size, label)
-                            .clicked()
-                        {
-                            action = Some(RibbonAction::SetFontSize(size));
+        }
+        if visible < GROUP_WIDTHS.len() {
+            ui.menu_button("⋮", |ui| {
+                ui.set_min_width(220.0);
+                for i in visible..GROUP_WIDTHS.len() {
+                    let title = match i {
+                        0 => "History",
+                        1 => "Clipboard",
+                        2 => "Font",
+                        3 => "Alignment",
+                        4 => "Number",
+                        5 => "Borders",
+                        6 => "Cells",
+                        7 => "Data",
+                        8 => "View",
+                        _ => "",
+                    };
+                    ui.label(egui::RichText::new(title).strong());
+                    ui.horizontal_wrapped(|ui| {
+                        let a = match i {
+                            0 => group_history(ui, can_undo, can_redo),
+                            1 => group_clipboard(ui, painter_armed),
+                            2 => group_font(ui, current),
+                            3 => group_alignment(ui, current),
+                            4 => group_number(ui, current),
+                            5 => group_borders(ui),
+                            6 => group_cells(ui),
+                            7 => group_data(ui),
+                            8 => group_view(ui),
+                            _ => None,
+                        };
+                        if let Some(a) = a {
+                            action = Some(a);
                         }
-                    }
-                });
-            let mut text_color = current.text_color.unwrap_or(Color32::BLACK);
-            if ui
-                .color_edit_button_srgba(&mut text_color)
-                .on_hover_text("Text colour")
-                .changed()
-            {
-                action = Some(RibbonAction::SetTextColor(Some(text_color)));
-            }
-            let mut fill = current.fill.unwrap_or(Color32::WHITE);
-            if ui
-                .color_edit_button_srgba(&mut fill)
-                .on_hover_text("Fill colour")
-                .changed()
-            {
-                action = Some(RibbonAction::SetFill(Some(fill)));
-            }
-        });
-
-        ribbon_group(ui, "Alignment", |ui| {
-            for (align, label) in [
-                (HAlign::Left, "Left"),
-                (HAlign::Center, "Center"),
-                (HAlign::Right, "Right"),
-            ] {
-                if ui.selectable_label(current.align == align, label).clicked() {
-                    action = Some(RibbonAction::SetAlign(align));
-                }
-            }
-            ui.separator();
-            for (valign, label) in [
-                (VAlign::Top, "Top"),
-                (VAlign::Middle, "Mid"),
-                (VAlign::Bottom, "Btm"),
-            ] {
-                if ui
-                    .selectable_label(current.valign == valign, label)
-                    .clicked()
-                {
-                    action = Some(RibbonAction::SetVAlign(valign));
-                }
-            }
-        });
-
-        ribbon_group(ui, "Number", |ui| {
-            egui::ComboBox::from_id_salt("ribbon_number_format")
-                .selected_text(number_format_label(current.number))
-                .show_ui(ui, |ui| {
-                    let current_label = number_format_label(current.number);
-                    for &(format, label) in NUMBER_FORMATS {
-                        if ui.selectable_label(current_label == label, label).clicked() {
-                            action = Some(RibbonAction::SetNumber(format));
-                        }
-                    }
-                });
-            if ui
-                .button("+.0")
-                .on_hover_text("Increase decimal places")
-                .clicked()
-            {
-                action = Some(RibbonAction::AdjustDecimals(1));
-            }
-            if ui
-                .button("-.0")
-                .on_hover_text("Decrease decimal places")
-                .clicked()
-            {
-                action = Some(RibbonAction::AdjustDecimals(-1));
-            }
-            if ui
-                .selectable_label(
-                    current.negative_red,
-                    egui::RichText::new("(-)").color(Color32::from_rgb(220, 50, 50)),
-                )
-                .on_hover_text("Show negative numbers in red")
-                .clicked()
-            {
-                action = Some(RibbonAction::ToggleNegativeRed);
-            }
-        });
-
-        ribbon_group(ui, "Borders", |ui| {
-            if ui
-                .button("All")
-                .on_hover_text("Border every selected cell")
-                .clicked()
-            {
-                action = Some(RibbonAction::SetBorders(BorderMode::All));
-            }
-            if ui
-                .button("Outer")
-                .on_hover_text("Border the selection's outer edge")
-                .clicked()
-            {
-                action = Some(RibbonAction::SetBorders(BorderMode::Outer));
-            }
-            if ui
-                .button("None")
-                .on_hover_text("Remove borders from the selection")
-                .clicked()
-            {
-                action = Some(RibbonAction::SetBorders(BorderMode::None));
-            }
-        });
-
-        ribbon_group(ui, "Cells", |ui| {
-            if ui
-                .button("Clear")
-                .on_hover_text("Reset this cell to the default format")
-                .clicked()
-            {
-                action = Some(RibbonAction::ClearFormat);
-            }
-            if ui
-                .button("Conditional…")
-                .on_hover_text("Conditional-formatting rules")
-                .clicked()
-            {
-                action = Some(RibbonAction::OpenConditional);
-            }
-            if ui
-                .button("Checkbox")
-                .on_hover_text("Turn the selected cells into boolean checkboxes")
-                .clicked()
-            {
-                action = Some(RibbonAction::ToggleWidget);
-            }
-        });
-
-        ribbon_group(ui, "Data", |ui| {
-            ui.menu_button("AutoSum", |ui| {
-                for func in ["SUM", "AVERAGE", "COUNT", "MIN", "MAX"] {
-                    if ui.button(func).clicked() {
-                        action = Some(RibbonAction::Aggregate(func));
-                        ui.close_menu();
+                    });
+                    if i + 1 < GROUP_WIDTHS.len() {
+                        ui.separator();
                     }
                 }
             });
-        });
-
-        ribbon_group(ui, "View", |ui| {
-            if ui
-                .button("?")
-                .on_hover_text("Keyboard shortcuts (F1)")
-                .clicked()
-            {
-                action = Some(RibbonAction::OpenHelp);
-            }
-            if ui
-                .button("Theme")
-                .on_hover_text("Toggle the light / dark theme")
-                .clicked()
-            {
-                action = Some(RibbonAction::ToggleTheme);
-            }
-        });
+        }
     });
     action
 }
@@ -723,5 +878,33 @@ mod tests {
         for &(format, label) in NUMBER_FORMATS {
             assert_eq!(number_format_label(format), label);
         }
+    }
+
+    #[test]
+    fn fit_count_returns_all_when_everything_fits() {
+        // 200 + 200 + 200 = 600. Available 1000 — all three fit.
+        assert_eq!(fit_count(&[200.0, 200.0, 200.0], 1000.0), 3);
+    }
+
+    #[test]
+    fn fit_count_overflows_trailing_groups_when_window_is_narrow() {
+        // 200 + 200 + 200 = 600 > 300 budget. With MORE_WIDTH=50,
+        // budget = 300 - 50 - 16 = 234. So only the first group fits.
+        assert_eq!(fit_count(&[200.0, 200.0, 200.0], 300.0), 1);
+    }
+
+    #[test]
+    fn fit_count_shows_at_least_one_group_even_when_too_narrow() {
+        // Even a 50-px window keeps the first group inline so the
+        // ribbon never collapses entirely into a single hamburger.
+        assert_eq!(fit_count(&[200.0, 200.0], 50.0), 1);
+    }
+
+    #[test]
+    fn fit_count_keeps_all_groups_at_the_exact_breakpoint() {
+        // total = 200, available = 216 (200 + 16 margin) -> fits all.
+        assert_eq!(fit_count(&[100.0, 100.0], 216.0), 2);
+        // Just below the breakpoint -> one overflows.
+        assert_eq!(fit_count(&[100.0, 100.0], 215.0), 1);
     }
 }
