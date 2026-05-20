@@ -17,6 +17,7 @@ use crate::clipboard::{Clipboard, CopiedCell, PasteMode};
 use crate::conditional::{self, Condition, Rule};
 use crate::find::{self, FindState};
 use crate::format::{self, BorderMode, Borders, CellFormat, FormatMap, HAlign, HexBorders, VAlign};
+use crate::formula_mode;
 use crate::grid::{self, GridMetrics};
 use crate::history::History;
 use crate::keymap::{self, Command, Dir, Mode};
@@ -431,16 +432,19 @@ pub struct TescellateApp {
     /// `Some` while the format-painter is armed: the captured format
     /// that the next square-cell click will apply.
     format_painter: Option<CellFormat>,
-    /// `Some` while a drag inside formula-mode is building a range
-    /// reference: the start cell and the byte offset in `edit.buffer`
-    /// where the range text begins, so each dragged frame can truncate
-    /// to that anchor and re-emit the latest "A1:Cx".
-    formula_drag: Option<((u32, u32), usize)>,
-    /// The (start, end) cells of the formula's last-inserted reference,
-    /// drawn as a visible marquee on the grid so the user can see what
-    /// the formula is pointing at. Set by a formula-mode click or drag;
-    /// the renderer ignores it when no edit is active.
-    formula_highlight: Option<((u32, u32), (u32, u32))>,
+    /// `Some` while a drag inside formula-mode on the square sheet is
+    /// building a range reference. See [`formula_mode::DragState`].
+    formula_drag: Option<formula_mode::DragState<(u32, u32)>>,
+    /// The square-sheet formula reference the user pointed at — drawn
+    /// as a dashed marquee on the grid until the edit is committed or
+    /// cancelled. See [`formula_mode::Highlight`].
+    formula_highlight: Option<formula_mode::Highlight<(u32, u32)>>,
+    /// Hex-sheet analogue of [`Self::formula_drag`]: a formula-mode
+    /// drag on the hex grid, anchored at a hex coord.
+    hex_formula_drag: Option<formula_mode::DragState<HexCoord>>,
+    /// Hex-sheet analogue of [`Self::formula_highlight`]: the
+    /// (start, end) hex coords the formula reference points at.
+    hex_formula_highlight: Option<formula_mode::Highlight<HexCoord>>,
     /// Per-cell visual formatting of the square sheet.
     formats: FormatMap<(u32, u32)>,
     /// Per-cell visual formatting of the hex sheet.
@@ -556,6 +560,8 @@ impl TescellateApp {
             format_painter: None,
             formula_drag: None,
             formula_highlight: None,
+            hex_formula_drag: None,
+            hex_formula_highlight: None,
             formats: FormatMap::new(),
             hex_formats: {
                 let mut m = FormatMap::new();
@@ -848,6 +854,9 @@ impl TescellateApp {
             Command::Cancel => {
                 self.edit = None;
                 self.formula_highlight = None;
+                self.formula_drag = None;
+                self.hex_formula_highlight = None;
+                self.hex_formula_drag = None;
             }
             Command::ClearMarquee => {
                 if self.clipboard.cut_origin().is_some() {
@@ -1944,6 +1953,9 @@ impl TescellateApp {
             return;
         };
         self.formula_highlight = None;
+        self.formula_drag = None;
+        self.hex_formula_highlight = None;
+        self.hex_formula_drag = None;
         let source = commit_source(&edit.buffer);
         let (sheet, addr) = self.active_target();
         self.apply_edits(sheet, vec![(addr, source)]);
@@ -2436,24 +2448,26 @@ impl TescellateApp {
             let in_formula = self
                 .edit
                 .as_ref()
-                .is_some_and(|e| e.buffer.trim_start().starts_with('='));
+                .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
             if response.drag_started() {
                 if let Some(p) = self.press_pos.or_else(|| response.interact_pointer_pos()) {
                     if in_formula {
-                        // Formula-mode drag: anchor at the buffer's current
-                        // end, append the start cell's address, and let
-                        // subsequent dragged frames overwrite from `anchor`
-                        // with "A1:Cx" — see the `formula_drag` field.
+                        // Formula-mode drag — `formula_mode::drag_start`
+                        // writes the start cell's address, records the
+                        // anchor, and gives us the initial highlight.
                         if let Some(cell) = self
                             .metrics
                             .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
                         {
                             if let Some(edit) = self.edit.as_mut() {
-                                let anchor = edit.buffer.len();
-                                edit.buffer.push_str(&grid::cell_address(cell.0, cell.1));
-                                edit.fresh = true;
-                                self.formula_drag = Some((cell, anchor));
-                                self.formula_highlight = Some((cell, cell));
+                                let (drag, hl) = formula_mode::drag_start(
+                                    &mut edit.buffer,
+                                    &mut edit.fresh,
+                                    cell,
+                                    |c| grid::cell_address(c.0, c.1),
+                                );
+                                self.formula_drag = Some(drag);
+                                self.formula_highlight = Some(hl);
                             }
                         }
                     } else if let Some(col) = self.metrics.col_header_at(col_hdr_origin, p, COLS) {
@@ -2474,26 +2488,21 @@ impl TescellateApp {
                 }
             } else if response.dragged() {
                 if let Some(p) = response.interact_pointer_pos() {
-                    if let Some((start, anchor)) = self.formula_drag {
+                    if let Some(drag) = self.formula_drag {
                         if let Some(cell) = self
                             .metrics
                             .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
                         {
-                            let range = if cell == start {
-                                grid::cell_address(start.0, start.1)
-                            } else {
-                                format!(
-                                    "{}:{}",
-                                    grid::cell_address(start.0, start.1),
-                                    grid::cell_address(cell.0, cell.1),
-                                )
-                            };
                             if let Some(edit) = self.edit.as_mut() {
-                                edit.buffer.truncate(anchor);
-                                edit.buffer.push_str(&range);
-                                edit.fresh = true;
+                                let hl = formula_mode::drag_extend(
+                                    &mut edit.buffer,
+                                    &mut edit.fresh,
+                                    &drag,
+                                    cell,
+                                    |c| grid::cell_address(c.0, c.1),
+                                );
+                                self.formula_highlight = Some(hl);
                             }
-                            self.formula_highlight = Some((start, cell));
                         }
                     } else {
                         match self.header_drag {
@@ -2532,14 +2541,17 @@ impl TescellateApp {
                 let in_formula = self
                     .edit
                     .as_ref()
-                    .is_some_and(|e| e.buffer.trim_start().starts_with('='));
+                    .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
                 if in_formula {
-                    let addr = grid::cell_address(cell.0, cell.1);
                     if let Some(edit) = self.edit.as_mut() {
-                        edit.buffer.push_str(&addr);
-                        edit.fresh = true;
+                        let hl = formula_mode::click_insert(
+                            &mut edit.buffer,
+                            &mut edit.fresh,
+                            cell,
+                            |c| grid::cell_address(c.0, c.1),
+                        );
+                        self.formula_highlight = Some(hl);
                     }
-                    self.formula_highlight = Some((cell, cell));
                 } else if let Some(fmt) = self.format_painter.take() {
                     // Format painter — paint the captured format onto the
                     // target cell and disarm; selection doesn't move.
@@ -2787,7 +2799,9 @@ impl TescellateApp {
         // edit is active so it disappears as soon as the formula is
         // committed or cancelled.
         if self.edit.is_some() {
-            if let Some(((sc, sr), (ec, er))) = self.formula_highlight {
+            if let Some(hl) = self.formula_highlight {
+                let (sc, sr) = hl.start;
+                let (ec, er) = hl.end;
                 let (min_c, max_c) = if sc <= ec { (sc, ec) } else { (ec, sc) };
                 let (min_r, max_r) = if sr <= er { (sr, er) } else { (er, sr) };
                 let tl = self.metrics.cell_rect(origin, min_c, min_r);
@@ -2974,25 +2988,110 @@ impl TescellateApp {
 
     fn draw_hex_grid(&mut self, ui: &mut egui::Ui) {
         let size = ui.available_size();
-        let (response, painter) = ui.allocate_painter(size, egui::Sense::click());
+        let (response, painter) = ui.allocate_painter(size, egui::Sense::click_and_drag());
         // Lattice-space (0,0) is drawn at the panel's centre.
         let origin = response.rect.center();
 
-        if response.clicked() {
-            if let Some(p) = response.interact_pointer_pos() {
+        // Resolve the cell under each interaction's pointer up front,
+        // then release the immutable borrow on `self.hex_lattice` so
+        // the handler bodies can call `&mut self` methods (commit_edit,
+        // selection mutations).
+        let clicked_coord = if response.clicked() {
+            response.interact_pointer_pos().and_then(|p| {
                 let local = Point2::new(p.x - origin.x, p.y - origin.y);
-                if let Some(coord) = self.hex_lattice.cell_at(local) {
-                    if hex_in_view(coord) {
-                        self.commit_edit();
-                        // Shift-click extends the range; a plain click resets.
-                        if ui.input(|i| i.modifiers.shift) {
-                            self.hex_selection.extend_to(coord);
-                        } else {
-                            self.hex_selection.collapse_to(coord);
-                        }
-                    }
+                self.hex_lattice.cell_at(local).filter(|c| hex_in_view(*c))
+            })
+        } else {
+            None
+        };
+        let drag_started_coord = if response.drag_started() {
+            response
+                .interact_pointer_pos()
+                .or(self.press_pos)
+                .and_then(|p| {
+                    let local = Point2::new(p.x - origin.x, p.y - origin.y);
+                    self.hex_lattice.cell_at(local).filter(|c| hex_in_view(*c))
+                })
+        } else {
+            None
+        };
+        let dragged_coord = if response.dragged() {
+            response.interact_pointer_pos().and_then(|p| {
+                let local = Point2::new(p.x - origin.x, p.y - origin.y);
+                self.hex_lattice.cell_at(local).filter(|c| hex_in_view(*c))
+            })
+        } else {
+            None
+        };
+
+        if let Some(coord) = clicked_coord {
+            // Formula-mode click: insert the hex address into the
+            // formula buffer; selection doesn't move.
+            let in_formula = self
+                .edit
+                .as_ref()
+                .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
+            if in_formula {
+                if let Some(edit) = self.edit.as_mut() {
+                    let hl = formula_mode::click_insert(
+                        &mut edit.buffer,
+                        &mut edit.fresh,
+                        coord,
+                        hex_address,
+                    );
+                    self.hex_formula_highlight = Some(hl);
+                }
+            } else {
+                self.commit_edit();
+                if ui.input(|i| i.modifiers.shift) {
+                    self.hex_selection.extend_to(coord);
+                } else {
+                    self.hex_selection.collapse_to(coord);
                 }
             }
+        }
+
+        // Drag — either a formula-mode range insert or a sheet
+        // selection sweep, matching the square grid's behaviour.
+        if let Some(coord) = drag_started_coord {
+            let in_formula = self
+                .edit
+                .as_ref()
+                .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
+            if in_formula {
+                if let Some(edit) = self.edit.as_mut() {
+                    let (drag, hl) = formula_mode::drag_start(
+                        &mut edit.buffer,
+                        &mut edit.fresh,
+                        coord,
+                        hex_address,
+                    );
+                    self.hex_formula_drag = Some(drag);
+                    self.hex_formula_highlight = Some(hl);
+                }
+            } else {
+                self.commit_edit();
+                self.hex_selection.collapse_to(coord);
+            }
+        }
+        if let Some(coord) = dragged_coord {
+            if let Some(drag) = self.hex_formula_drag {
+                if let Some(edit) = self.edit.as_mut() {
+                    let hl = formula_mode::drag_extend(
+                        &mut edit.buffer,
+                        &mut edit.fresh,
+                        &drag,
+                        coord,
+                        hex_address,
+                    );
+                    self.hex_formula_highlight = Some(hl);
+                }
+            } else {
+                self.hex_selection.extend_to(coord);
+            }
+        }
+        if response.drag_stopped() {
+            self.hex_formula_drag = None;
         }
 
         // A double-click on a hex begins editing it in place.
@@ -3145,6 +3244,32 @@ impl TescellateApp {
                         }
                         painter.extend(egui::Shape::dashed_line(&loop_pts, dash, 4.0, 3.0));
                     }
+                }
+            }
+        }
+
+        // Formula-reference marquee — outline every hex inside the
+        // axial parallelogram of the current formula reference with a
+        // dashed blue stroke. Only drawn while an edit is active so it
+        // disappears as soon as the formula is committed or cancelled.
+        if self.edit.is_some() {
+            if let Some(hl) = self.hex_formula_highlight {
+                let formula_color = egui::Color32::from_rgb(70, 120, 220);
+                let dash = egui::Stroke::new(1.8, formula_color);
+                for coord in hex::axial_parallelogram(hl.start, hl.end) {
+                    if !hex_in_view(coord) {
+                        continue;
+                    }
+                    let mut loop_pts: Vec<egui::Pos2> = self
+                        .hex_lattice
+                        .vertices(coord)
+                        .iter()
+                        .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
+                        .collect();
+                    if let Some(&first) = loop_pts.first() {
+                        loop_pts.push(first);
+                    }
+                    painter.extend(egui::Shape::dashed_line(&loop_pts, dash, 5.0, 3.0));
                 }
             }
         }

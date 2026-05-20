@@ -11,6 +11,7 @@ pub mod clipboard;
 pub mod conditional;
 pub mod find;
 pub mod format;
+pub mod formula_mode;
 pub mod grid;
 pub mod history;
 pub mod keymap;
