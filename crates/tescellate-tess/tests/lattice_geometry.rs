@@ -100,7 +100,7 @@ fn square_addresses_round_trip() {
                 c.col,
                 c.row,
             ),
-            Ok(ParsedCoord::Hex(_)) => panic!("square handle parsed {addr:?} as a hex address"),
+            Ok(other) => panic!("square handle parsed {addr:?} as {other:?}"),
             Err(e) => panic!("square handle could not re-parse {addr:?}: {e:?}"),
         }
     }
@@ -122,7 +122,7 @@ fn hex_addresses_round_trip() {
                 c.q,
                 c.r,
             ),
-            Ok(ParsedCoord::Square(_)) => panic!("hex handle parsed {addr:?} as a square address"),
+            Ok(other) => panic!("hex handle parsed {addr:?} as {other:?}"),
             Err(e) => panic!("hex handle could not re-parse {addr:?}: {e:?}"),
         }
     }
@@ -194,7 +194,7 @@ fn neighbours_are_one_step_away() {
                         "square neighbour {n} of {sa} is not one step away"
                     );
                 }
-                ParsedCoord::Hex(_) => panic!("square neighbour parsed as hex"),
+                other => panic!("square neighbour parsed as {other:?}"),
             }
         }
         // Hex: an edge-neighbour is at axial distance exactly 1.
@@ -207,7 +207,7 @@ fn neighbours_are_one_step_away() {
                     1,
                     "hex neighbour {n} of {ha} is not one step away",
                 ),
-                ParsedCoord::Square(_) => panic!("hex neighbour parsed as square"),
+                other => panic!("hex neighbour parsed as {other:?}"),
             }
         }
     }
@@ -246,7 +246,7 @@ fn square_range_enumerates_the_rectangle() {
                     c.col >= min_c && c.col <= max_c && c.row >= min_r && c.row <= max_r,
                     "range {aa}:{bb} produced out-of-rectangle cell {addr}",
                 ),
-                ParsedCoord::Hex(_) => panic!("square range produced a hex address"),
+                other => panic!("square range produced {other:?}"),
             }
         }
         assert!(
@@ -292,7 +292,7 @@ fn hex_range_enumerates_the_parallelogram() {
                     c.q >= min_q && c.q <= max_q && c.r >= min_r && c.r <= max_r,
                     "range {aa}:{bb} produced out-of-parallelogram cell {addr}",
                 ),
-                ParsedCoord::Square(_) => panic!("hex range produced a square address"),
+                other => panic!("hex range produced {other:?}"),
             }
         }
         assert!(
