@@ -1202,9 +1202,17 @@ impl TescellateApp {
                 self.hex.selection.collapse_to(target);
             }
             ActiveSheet::Triangle => {
-                // Triangle autosum lands in a follow-up; the math is
-                // straightforward but the target hex / sheet bounds
-                // need their own predicate.
+                let Some((target, formula)) =
+                    triangle_autosum(self.triangle.selection.bounds(), func)
+                else {
+                    return;
+                };
+                self.commit_edit();
+                self.apply_edits(
+                    self.triangle.sheet_id,
+                    vec![(triangle_address(target), Some(formula))],
+                );
+                self.triangle.selection.collapse_to(target);
             }
         }
     }
@@ -4376,6 +4384,26 @@ fn hex_autosum(bounds: (HexCoord, HexCoord), func: &str) -> Option<(HexCoord, St
     Some((target, format!("={func}({range})")))
 }
 
+/// The triangle AutoSum action for a selection between `min` and `max`:
+/// the triangle directly below the selection's bottom row (one row
+/// further along `row`, sharing the cursor's column) that should hold
+/// the result, and the `=FUNC(...)` formula (`func` is an aggregate
+/// name). `None` when that triangle would fall outside the rendered
+/// window.
+fn triangle_autosum(bounds: (TriCoord, TriCoord), func: &str) -> Option<(TriCoord, String)> {
+    let (min, max) = bounds;
+    let target = TriCoord::new(min.col, max.row + 1);
+    if !triangle_in_view(target) {
+        return None;
+    }
+    let range = if min == max {
+        triangle_address(min)
+    } else {
+        format!("{}:{}", triangle_address(min), triangle_address(max))
+    };
+    Some((target, format!("={func}({range})")))
+}
+
 /// The current hex data region around `cursor` — the axial analogue of
 /// [`grid::current_region`]. The `(q, r)` box grows outward to a
 /// fixpoint while the row or column just past an edge holds an
@@ -4904,6 +4932,45 @@ mod tests {
         // The total hex would land past the radius-3 view disc.
         assert_eq!(
             hex_autosum((HexCoord::new(0, 2), HexCoord::new(0, 3)), "SUM"),
+            None,
+        );
+    }
+
+    #[test]
+    fn triangle_autosum_sums_into_the_triangle_below() {
+        // A 3-column × 2-row selection from T(0,0) to T(2,1) totals
+        // into T(0,2) — same col as `min`, one row below `max`.
+        assert_eq!(
+            triangle_autosum((TriCoord::new(0, 0), TriCoord::new(2, 1)), "SUM"),
+            Some((TriCoord::new(0, 2), "=SUM(T(0,0):T(2,1))".to_string(),)),
+        );
+    }
+
+    #[test]
+    fn triangle_autosum_single_cell_and_chosen_function() {
+        // Single-cell selection → range is just the one address.
+        assert_eq!(
+            triangle_autosum((TriCoord::new(1, 0), TriCoord::new(1, 0)), "SUM"),
+            Some((TriCoord::new(1, 1), "=SUM(T(1,0))".to_string())),
+        );
+        // The chosen aggregate name is used verbatim.
+        assert_eq!(
+            triangle_autosum((TriCoord::new(0, 0), TriCoord::new(2, 1)), "AVERAGE"),
+            Some((TriCoord::new(0, 2), "=AVERAGE(T(0,0):T(2,1))".to_string(),)),
+        );
+    }
+
+    #[test]
+    fn triangle_autosum_is_none_outside_the_view() {
+        // The target triangle would land past the rendered window.
+        assert_eq!(
+            triangle_autosum(
+                (
+                    TriCoord::new(0, TRIANGLE_RADIUS),
+                    TriCoord::new(0, TRIANGLE_RADIUS),
+                ),
+                "SUM",
+            ),
             None,
         );
     }
