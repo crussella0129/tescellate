@@ -14,6 +14,7 @@ use tescellate_core::CellValue;
 
 pub mod aggregate;
 pub mod coerce;
+pub mod date;
 pub mod dynarray;
 pub mod lambda_funcs;
 pub mod logical;
@@ -67,6 +68,7 @@ pub fn standard() -> &'static FunctionRegistry {
     REGISTRY.get_or_init(|| {
         let mut r = FunctionRegistry::new();
         aggregate::register(&mut r);
+        date::register(&mut r);
         dynarray::register(&mut r);
         lambda_funcs::register(&mut r);
         logical::register(&mut r);

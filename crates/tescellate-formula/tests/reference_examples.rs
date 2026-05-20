@@ -188,6 +188,26 @@ fn randbetween_rejects_a_reversed_range() {
 }
 
 #[test]
+fn date_components_round_trip() {
+    // Build a date, then read each component back. Epoch convention:
+    // 1899-12-30 = day 0, so DATE(2024, 3, 15) is a positive serial.
+    let serial = num("DATE(2024, 3, 15)");
+    assert_eq!(num(&format!("YEAR({serial})")), 2024.0);
+    assert_eq!(num(&format!("MONTH({serial})")), 3.0);
+    assert_eq!(num(&format!("DAY({serial})")), 15.0);
+}
+
+#[test]
+fn date_handles_leap_year_2024() {
+    let leap = num("DATE(2024, 2, 29)");
+    assert_eq!(num(&format!("MONTH({leap})")), 2.0);
+    assert_eq!(num(&format!("DAY({leap})")), 29.0);
+    // One day later is March 1.
+    assert_eq!(num(&format!("DAY({} + 1)", leap)), 1.0);
+    assert_eq!(num(&format!("MONTH({} + 1)", leap)), 3.0);
+}
+
+#[test]
 fn rand_returns_a_unit_interval_float() {
     // Two draws are very unlikely to repeat — confirms the PRNG
     // actually advances on each call.
