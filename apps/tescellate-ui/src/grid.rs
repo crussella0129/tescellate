@@ -386,6 +386,74 @@ pub fn series_fill(seed: &[f64], total: usize) -> Vec<f64> {
     (0..total).map(|i| start + step * i as f64).collect()
 }
 
+/// Extend a fill-handle lane by `count` cells past the seed.
+///
+/// `seed` is the original column/row's cell sources (each `None` for an
+/// empty cell, `Some(text)` for a value-or-formula). The result has
+/// exactly `count` items, the values to write into the cells past the
+/// seed:
+///
+/// * If `seed.len() >= 2` AND every `Some` parses as `f64` (empties are
+///   ignored), continue an arithmetic progression — the step between
+///   the first two numeric seeds — just like [`series_fill`] does.
+///   Empty seeds become empty extensions too (a `None` slot).
+/// * Otherwise the seed pattern repeats: cell `i` of the extension
+///   copies from `seed[i % seed.len()]`.
+///
+/// `format_number` lets callers control how the synthetic numeric
+/// values come back as strings (Tescellate uses Excel-style trimming
+/// of trailing zeros).
+pub fn fill_lane(
+    seed: &[Option<String>],
+    count: usize,
+    format_number: impl Fn(f64) -> String,
+) -> Vec<Option<String>> {
+    if seed.is_empty() || count == 0 {
+        return vec![None; count];
+    }
+    // Try to read every non-empty seed as a number; if any non-empty
+    // seed fails, we fall back to pattern repeat.
+    let parsed: Vec<Option<f64>> = seed
+        .iter()
+        .map(|s| s.as_deref().map(str::trim).map(str::parse::<f64>))
+        .map(|opt| match opt {
+            Some(Ok(n)) => Some(n),
+            Some(Err(_)) => Some(f64::NAN),
+            None => None,
+        })
+        .collect();
+    let any_nan = parsed.iter().any(|p| p.is_some_and(f64::is_nan));
+    let numerics_seen = parsed.iter().filter(|p| p.is_some()).count();
+    if !any_nan && numerics_seen >= 2 {
+        // Compute the step from the first two numeric seeds; preserve
+        // the empty-cell slots in the extension at the same lane
+        // positions they occupy in the seed pattern.
+        let numerics: Vec<f64> = parsed.iter().filter_map(|p| *p).collect();
+        let step = numerics[1] - numerics[0];
+        let last = *numerics.last().unwrap();
+        // Count how many numeric slots elapse between the last seed
+        // cell and the "extended position" each output cell sits at.
+        let mut out = Vec::with_capacity(count);
+        let mut produced_numeric = 0usize; // how many numeric cells we've emitted so far
+        for i in 0..count {
+            // The position in the cyclic seed pattern.
+            let pos = (seed.len() + i) % seed.len();
+            if parsed[pos].is_none() {
+                out.push(None);
+            } else {
+                produced_numeric += 1;
+                // Numbers continue from `last` with `step` between
+                // each numeric slot.
+                let value = last + step * produced_numeric as f64;
+                out.push(Some(format_number(value)));
+            }
+        }
+        return out;
+    }
+    // Pattern repeat — `seed[i % seed.len()]` for each extension cell.
+    (0..count).map(|i| seed[i % seed.len()].clone()).collect()
+}
+
 /// The row a Page Up / Page Down lands on: `start` shifted by `page`
 /// rows toward `0` (`up`) or toward `max` (down), clamped to `0..=max`.
 pub fn page_step(start: u32, up: bool, page: u32, max: u32) -> u32 {
@@ -766,6 +834,79 @@ mod tests {
     #[test]
     fn series_fill_with_no_seed_counts_from_zero() {
         assert_eq!(series_fill(&[], 3), vec![0.0, 1.0, 2.0]);
+    }
+
+    fn nf(n: f64) -> String {
+        // Test format: integers without decimal, others with.
+        if n.fract() == 0.0 {
+            (n as i64).to_string()
+        } else {
+            n.to_string()
+        }
+    }
+
+    fn s(text: &str) -> Option<String> {
+        Some(text.to_string())
+    }
+
+    #[test]
+    fn fill_lane_extends_a_numeric_progression() {
+        // Seed 1, 2 → extend by 3 → 3, 4, 5
+        let out = fill_lane(&[s("1"), s("2")], 3, nf);
+        assert_eq!(out, vec![s("3"), s("4"), s("5")]);
+    }
+
+    #[test]
+    fn fill_lane_uses_the_first_step() {
+        // Seed 10, 20 → step 10 → 30, 40, 50, 60
+        let out = fill_lane(&[s("10"), s("20")], 4, nf);
+        assert_eq!(out, vec![s("30"), s("40"), s("50"), s("60")]);
+    }
+
+    #[test]
+    fn fill_lane_extends_descending_progressions() {
+        let out = fill_lane(&[s("9"), s("6")], 3, nf);
+        assert_eq!(out, vec![s("3"), s("0"), s("-3")]);
+    }
+
+    #[test]
+    fn fill_lane_repeats_a_text_pattern() {
+        // Non-numeric → repeat cyclically.
+        let out = fill_lane(&[s("foo"), s("bar")], 5, nf);
+        assert_eq!(out, vec![s("foo"), s("bar"), s("foo"), s("bar"), s("foo")]);
+    }
+
+    #[test]
+    fn fill_lane_repeats_a_mixed_pattern() {
+        // Any non-numeric in the seed falls back to repeat.
+        let out = fill_lane(&[s("1"), s("apple")], 4, nf);
+        assert_eq!(out, vec![s("1"), s("apple"), s("1"), s("apple")]);
+    }
+
+    #[test]
+    fn fill_lane_with_a_single_seed_copies_that_value() {
+        // One value → cannot infer a step → repeat (which copies).
+        let out = fill_lane(&[s("Apple")], 3, nf);
+        assert_eq!(out, vec![s("Apple"), s("Apple"), s("Apple")]);
+    }
+
+    #[test]
+    fn fill_lane_with_a_single_numeric_seed_repeats_it() {
+        // One numeric — needs two to detect a step; repeat the value.
+        let out = fill_lane(&[s("7")], 3, nf);
+        assert_eq!(out, vec![s("7"), s("7"), s("7")]);
+    }
+
+    #[test]
+    fn fill_lane_with_empty_count_returns_an_empty_extension() {
+        assert!(fill_lane(&[s("1"), s("2")], 0, nf).is_empty());
+    }
+
+    #[test]
+    fn fill_lane_with_empty_seed_returns_empties() {
+        // Defensive: no seed → no pattern to repeat; the caller's empty
+        // slots stay empty.
+        assert_eq!(fill_lane(&[], 3, nf), vec![None, None, None]);
     }
 
     #[test]
