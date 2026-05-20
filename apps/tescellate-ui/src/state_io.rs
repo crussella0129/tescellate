@@ -52,6 +52,9 @@ pub struct UiSnapshot {
     #[serde(alias = "widgets")]
     pub square_widgets: Widgets<(u32, u32)>,
     pub hex_widgets: Widgets<HexCoord>,
+    /// Triangle-sheet widgets (sprint 4). New field — older v144/v145/v146
+    /// snapshots default to empty here. Mirrors the square/hex shape.
+    pub triangle_widgets: Widgets<TriCoord>,
     #[serde(with = "vec_pair::square_notes")]
     pub square_notes: HashMap<(u32, u32), String>,
     #[serde(with = "vec_pair::hex_notes")]
@@ -179,6 +182,8 @@ mod tests {
         sq_widgets.set_toggle((2, 5), true);
         let mut hex_widgets: Widgets<HexCoord> = Widgets::default();
         hex_widgets.set_button(HexCoord::new(2, 2), true);
+        let mut triangle_widgets: Widgets<TriCoord> = Widgets::default();
+        triangle_widgets.set_toggle(TriCoord::new(2, -1), true);
 
         let mut square_formats: FormatMap<(u32, u32)> = FormatMap::new();
         square_formats.update((0, 0), |f| {
@@ -195,6 +200,7 @@ mod tests {
             triangle_formats: FormatMap::default(),
             square_widgets: sq_widgets,
             hex_widgets,
+            triangle_widgets,
             square_notes: [((3, 3), "remember this".to_string())]
                 .into_iter()
                 .collect(),
@@ -220,6 +226,7 @@ mod tests {
         assert!(back.square_widgets.is_slider((1, 5)));
         assert!(back.square_widgets.is_toggle((2, 5)));
         assert!(back.hex_widgets.is_button(HexCoord::new(2, 2)));
+        assert!(back.triangle_widgets.is_toggle(TriCoord::new(2, -1)));
         assert!(back.square_formats.get((0, 0)).bold);
         assert_eq!(
             back.square_notes.get(&(3, 3)).map(String::as_str),

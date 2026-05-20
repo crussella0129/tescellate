@@ -106,4 +106,10 @@
 - **Description:** Lexer accepts `.<letters>` continuations after the alphanumeric ident run so `STDEV.P` lexes as one Ident. XLOOKUP added in `lookup.rs` (full Excel signature: `lookup_value, lookup_array, return_array, [if_not_found], [match_mode], [search_mode]`; match_modes 0/-1/+1 implemented; wildcard mode=2 errors with clear message; search_modes ±1 implemented; ±2 accepted as linear-scan fallback; parallel-array semantics: lookup and result must be equal-length). Eight dotted-name aliases registered in `stats.rs`: STDEV.P/STDEV.S/VAR.P/VAR.S/COVARIANCE.P/COVARIANCE.S/MODE.SNGL/RANK.EQ. 14 new tests in `reference_examples.rs` (7 XLOOKUP, 5 aliases, plus 2 lexer tests in lex.rs).
 - **Completed:** 2026-05-20T22:20:00Z
 - **Files modified:** crates/tescellate-formula/src/excellite/lex.rs, crates/tescellate-formula/src/excellite/funcs/lookup.rs, crates/tescellate-formula/src/excellite/funcs/stats.rs, crates/tescellate-formula/tests/reference_examples.rs
-- **Commit:** `025d2d8`
+- **Commit:** `025d2d8` (PR #178 squash-merged as `38fd3e5`)
+
+## T-401..T-405 (sprint 4) — Triangle widgets (close ADR-005 follow-up)
+- **Description:** Extended `Widgets<K>` to the triangle sheet. `TescellateApp` gains `triangle_widgets: Widgets<TriCoord>`; capture/restore round-trip the field; UiSnapshot gains `triangle_widgets` with `#[serde(default)]` so older snapshots tolerate the addition. `draw_triangle_grid` got a widget dispatch pass (Button + Toggle) before the in-cell edit overlay, mirroring the hex pattern from sprint 2. Slider/ProgressBar still fall through to text per ADR-006. Demo seed at T(2,-1) — a Toggle on a cell that starts FALSE. Tests: `widgets_generic_with_tri_coord_round_trip` + extended `snapshot_round_trips_through_ui_state` fixture. 249/249 UI tests pass.
+- **Completed:** 2026-05-20T23:00:00Z
+- **Files modified:** apps/tescellate-ui/src/app.rs, apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/widget.rs
+- **Commit:** PENDING
