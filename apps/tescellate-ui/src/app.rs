@@ -521,6 +521,10 @@ pub struct TescellateApp {
     name_box: String,
     /// Whether the dark colour theme is active (the default).
     dark_mode: bool,
+    /// Stage Mode hides the editing chrome (ribbon, formula bar, row
+    /// and column headers, sheet tabs) and locks cells against direct
+    /// editing — widgets stay interactive. Toggled with Ctrl+Shift+P.
+    stage_mode: bool,
 }
 
 impl TescellateApp {
@@ -663,6 +667,7 @@ impl TescellateApp {
             note_draft: String::new(),
             name_box: String::new(),
             dark_mode: true,
+            stage_mode: false,
         }
     }
 
@@ -998,6 +1003,13 @@ impl TescellateApp {
                 self.triangle.formula_drag = None;
             }
             Command::ClearMarquee => {
+                // Escape exits Stage Mode first — that's the most
+                // load-bearing thing Escape can do when the editing
+                // chrome is hidden.
+                if self.stage_mode {
+                    self.stage_mode = false;
+                    return;
+                }
                 if self.clipboard.cut_origin().is_some() {
                     self.clipboard.consume_cut();
                 }
@@ -1023,6 +1035,17 @@ impl TescellateApp {
             Command::FindNext => self.find_step(true),
             Command::FindPrev => self.find_step(false),
             Command::OpenHelp => self.help_open = true,
+            Command::ToggleStageMode => {
+                // Toggling Stage Mode commits any in-progress edit so
+                // the locked-cells invariant holds the moment we enter
+                // stage.
+                self.commit_edit();
+                self.stage_mode = !self.stage_mode;
+            }
+            Command::ExitStageMode => {
+                self.commit_edit();
+                self.stage_mode = false;
+            }
         }
     }
 
@@ -2171,6 +2194,12 @@ impl TescellateApp {
     }
 
     fn begin_edit(&mut self, replace_with: Option<char>) {
+        // Stage Mode locks cells against direct editing — widgets and
+        // interactive cells stay live, but a click or F2 on a regular
+        // cell should not open the editor.
+        if self.stage_mode {
+            return;
+        }
         // An edit acts on a single cell — collapse any range to its cursor.
         match self.active {
             ActiveSheet::Square => {
@@ -4138,239 +4167,270 @@ impl eframe::App for TescellateApp {
         // Menu bar above the ribbon — File / Edit / Format / Data /
         // View / Help. Items dispatch through the same `RibbonAction`
         // pipeline so the ribbon and menu share handlers.
-        egui::TopBottomPanel::top("tescellate_menu_bar").show(ctx, |ui| {
-            let can_undo = self.history.can_undo();
-            let can_redo = self.history.can_redo();
-            if let Some(action) = ribbon::menu_bar(ui, can_undo, can_redo) {
-                self.apply_ribbon(action, ctx);
-            }
-        });
+        //
+        // Stage Mode hides every editing-chrome panel — menu bar,
+        // ribbon, formula bar, sheet tabs — so a sheet reads as an
+        // app rather than a spreadsheet.
+        if !self.stage_mode {
+            egui::TopBottomPanel::top("tescellate_menu_bar").show(ctx, |ui| {
+                let can_undo = self.history.can_undo();
+                let can_redo = self.history.can_redo();
+                if let Some(action) = ribbon::menu_bar(ui, can_undo, can_redo) {
+                    self.apply_ribbon(action, ctx);
+                }
+            });
+        }
 
-        egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| match self.active {
-            ActiveSheet::Square => {
-                let current = self.square.formats.get(self.square.selection.cursor);
-                let can_undo = self.history.can_undo();
-                let can_redo = self.history.can_redo();
-                if let Some(action) = ribbon::ribbon(
-                    ui,
-                    &current,
-                    can_undo,
-                    can_redo,
-                    self.format_painter.is_some(),
-                ) {
-                    self.apply_ribbon(action, ctx);
-                }
-            }
-            ActiveSheet::Hex => {
-                // The hex-only orientation toggle, then the shared format
-                // ribbon — formatting now applies to hex cells too.
-                ui.horizontal(|ui| {
-                    // Switching orientation changes geometry only — axial
-                    // (q,r) coords are orientation-independent, so cell
-                    // data, formatting and selection carry over.
-                    let pointy = matches!(self.hex_lattice.orientation, HexOrientation::Pointy);
-                    if ui.selectable_label(pointy, "Pointy-top").clicked() {
-                        self.hex_lattice = HexLattice::pointy(HEX_SIZE);
+        if !self.stage_mode {
+            egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| match self.active {
+                ActiveSheet::Square => {
+                    let current = self.square.formats.get(self.square.selection.cursor);
+                    let can_undo = self.history.can_undo();
+                    let can_redo = self.history.can_redo();
+                    if let Some(action) = ribbon::ribbon(
+                        ui,
+                        &current,
+                        can_undo,
+                        can_redo,
+                        self.format_painter.is_some(),
+                    ) {
+                        self.apply_ribbon(action, ctx);
                     }
-                    if ui.selectable_label(!pointy, "Flat-top").clicked() {
-                        self.hex_lattice = HexLattice::flat(HEX_SIZE);
+                }
+                ActiveSheet::Hex => {
+                    // The hex-only orientation toggle, then the shared format
+                    // ribbon — formatting now applies to hex cells too.
+                    ui.horizontal(|ui| {
+                        // Switching orientation changes geometry only — axial
+                        // (q,r) coords are orientation-independent, so cell
+                        // data, formatting and selection carry over.
+                        let pointy = matches!(self.hex_lattice.orientation, HexOrientation::Pointy);
+                        if ui.selectable_label(pointy, "Pointy-top").clicked() {
+                            self.hex_lattice = HexLattice::pointy(HEX_SIZE);
+                        }
+                        if ui.selectable_label(!pointy, "Flat-top").clicked() {
+                            self.hex_lattice = HexLattice::flat(HEX_SIZE);
+                        }
+                    });
+                    let current = self.hex.formats.get(self.hex.selection.cursor);
+                    let can_undo = self.history.can_undo();
+                    let can_redo = self.history.can_redo();
+                    if let Some(action) = ribbon::ribbon(
+                        ui,
+                        &current,
+                        can_undo,
+                        can_redo,
+                        self.format_painter.is_some(),
+                    ) {
+                        self.apply_ribbon(action, ctx);
                     }
-                });
-                let current = self.hex.formats.get(self.hex.selection.cursor);
-                let can_undo = self.history.can_undo();
-                let can_redo = self.history.can_redo();
-                if let Some(action) = ribbon::ribbon(
-                    ui,
-                    &current,
-                    can_undo,
-                    can_redo,
-                    self.format_painter.is_some(),
-                ) {
-                    self.apply_ribbon(action, ctx);
                 }
-            }
-            ActiveSheet::Triangle => {
-                let current = self.triangle.formats.get(self.triangle.selection.cursor);
-                let can_undo = self.history.can_undo();
-                let can_redo = self.history.can_redo();
-                if let Some(action) = ribbon::ribbon(
-                    ui,
-                    &current,
-                    can_undo,
-                    can_redo,
-                    self.format_painter.is_some(),
-                ) {
-                    self.apply_ribbon(action, ctx);
+                ActiveSheet::Triangle => {
+                    let current = self.triangle.formats.get(self.triangle.selection.cursor);
+                    let can_undo = self.history.can_undo();
+                    let can_redo = self.history.can_redo();
+                    if let Some(action) = ribbon::ribbon(
+                        ui,
+                        &current,
+                        can_undo,
+                        can_redo,
+                        self.format_painter.is_some(),
+                    ) {
+                        self.apply_ribbon(action, ctx);
+                    }
                 }
-            }
-        });
+            });
+        }
 
-        egui::TopBottomPanel::top("tescellate_formula_bar")
-            .resizable(true)
-            .min_height(28.0)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let (addr, source) = self.active_address_and_source();
-                    match self.active {
-                        ActiveSheet::Square => {
-                            let response = ui.add(
-                                egui::TextEdit::singleline(&mut self.name_box)
-                                    .desired_width(64.0)
-                                    .font(egui::TextStyle::Monospace),
-                            );
-                            if response.lost_focus()
-                                && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                            {
-                                // Enter jumps the selection to the typed address.
-                                if let Some((c, r)) = grid::parse_address(&self.name_box) {
-                                    if c < COLS && r < ROWS {
-                                        self.square.selection.collapse_to((c, r));
+        if !self.stage_mode {
+            egui::TopBottomPanel::top("tescellate_formula_bar")
+                .resizable(true)
+                .min_height(28.0)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        let (addr, source) = self.active_address_and_source();
+                        match self.active {
+                            ActiveSheet::Square => {
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut self.name_box)
+                                        .desired_width(64.0)
+                                        .font(egui::TextStyle::Monospace),
+                                );
+                                if response.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                {
+                                    // Enter jumps the selection to the typed address.
+                                    if let Some((c, r)) = grid::parse_address(&self.name_box) {
+                                        if c < COLS && r < ROWS {
+                                            self.square.selection.collapse_to((c, r));
+                                        }
                                     }
+                                } else if !response.has_focus() {
+                                    self.name_box = addr.clone();
                                 }
-                            } else if !response.has_focus() {
-                                self.name_box = addr.clone();
+                            }
+                            ActiveSheet::Hex => {
+                                ui.monospace(addr.clone());
+                            }
+                            ActiveSheet::Triangle => {
+                                ui.monospace(addr.clone());
                             }
                         }
-                        ActiveSheet::Hex => {
-                            ui.monospace(addr.clone());
+                        match self.active {
+                            ActiveSheet::Square if self.square.selection.is_range() => {
+                                let (cols, rows) = self.square.selection.dimensions();
+                                ui.label(egui::RichText::new(format!("{cols}C × {rows}R")).weak());
+                            }
+                            ActiveSheet::Hex if self.hex.selection.is_range() => {
+                                let (q, r) = self.hex.selection.dimensions();
+                                ui.label(egui::RichText::new(format!("{q}q × {r}r")).weak());
+                            }
+                            _ => {}
                         }
-                        ActiveSheet::Triangle => {
-                            ui.monospace(addr.clone());
-                        }
-                    }
-                    match self.active {
-                        ActiveSheet::Square if self.square.selection.is_range() => {
-                            let (cols, rows) = self.square.selection.dimensions();
-                            ui.label(egui::RichText::new(format!("{cols}C × {rows}R")).weak());
-                        }
-                        ActiveSheet::Hex if self.hex.selection.is_range() => {
-                            let (q, r) = self.hex.selection.dimensions();
-                            ui.label(egui::RichText::new(format!("{q}q × {r}r")).weak());
-                        }
-                        _ => {}
-                    }
-                    // Per-cell language picker. Shows the active cell's
-                    // engine: an explicit override, or `None` meaning
-                    // "inherit the workbook default". Picking "Default"
-                    // clears any override; picking a specific engine
-                    // sets one.
-                    let (sheet, picker_addr) = self.active_target();
-                    let snapshot = self.engine.get_cell(sheet, &picker_addr);
-                    let cell_override: Option<EngineKind> =
-                        snapshot.as_ref().and_then(|s| s.engine);
-                    let default_engine = self.engine.default_engine();
-                    let mut new_choice: Option<EngineKind> = cell_override;
-                    let display = picker_label(cell_override, default_engine);
-                    egui::ComboBox::from_id_salt("language_picker")
-                        .selected_text(display)
-                        .width(140.0)
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut new_choice,
-                                None,
-                                format!("Default ({})", engine_label(default_engine, true)),
-                            );
-                            ui.separator();
-                            for kind in [
-                                EngineKind::ExcelLite,
-                                EngineKind::Python,
-                                EngineKind::Rhai,
-                                EngineKind::RustNative,
-                            ] {
+                        // Per-cell language picker. Shows the active cell's
+                        // engine: an explicit override, or `None` meaning
+                        // "inherit the workbook default". Picking "Default"
+                        // clears any override; picking a specific engine
+                        // sets one.
+                        let (sheet, picker_addr) = self.active_target();
+                        let snapshot = self.engine.get_cell(sheet, &picker_addr);
+                        let cell_override: Option<EngineKind> =
+                            snapshot.as_ref().and_then(|s| s.engine);
+                        let default_engine = self.engine.default_engine();
+                        let mut new_choice: Option<EngineKind> = cell_override;
+                        let display = picker_label(cell_override, default_engine);
+                        egui::ComboBox::from_id_salt("language_picker")
+                            .selected_text(display)
+                            .width(140.0)
+                            .show_ui(ui, |ui| {
                                 ui.selectable_value(
                                     &mut new_choice,
-                                    Some(kind),
-                                    engine_label(kind, false),
+                                    None,
+                                    format!("Default ({})", engine_label(default_engine, true)),
                                 );
-                            }
-                        });
-                    if new_choice != cell_override {
-                        let _ = self.engine.set_cell_engine(sheet, &picker_addr, new_choice);
+                                ui.separator();
+                                for kind in [
+                                    EngineKind::ExcelLite,
+                                    EngineKind::Python,
+                                    EngineKind::Rhai,
+                                    EngineKind::RustNative,
+                                ] {
+                                    ui.selectable_value(
+                                        &mut new_choice,
+                                        Some(kind),
+                                        engine_label(kind, false),
+                                    );
+                                }
+                            });
+                        if new_choice != cell_override {
+                            let _ = self.engine.set_cell_engine(sheet, &picker_addr, new_choice);
+                        }
+                        ui.separator();
+                        let width = ui.available_width();
+                        let height = ui.available_height();
+                        // Multiline so long formulas wrap and the panel-drag
+                        // resize actually adds usable space. Tab or click-outside
+                        // commits (the singleline path used Enter, but multiline
+                        // reserves Enter for newline so we don't override it).
+                        let response = ui.add_sized(
+                            [width, height.max(20.0)],
+                            egui::TextEdit::multiline(&mut self.formula_bar)
+                                .desired_width(width)
+                                .desired_rows(1)
+                                .font(egui::TextStyle::Monospace)
+                                .hint_text(
+                                    "value or =formula — drag the bottom of the bar to expand",
+                                ),
+                        );
+                        if response.lost_focus() {
+                            // Click-outside or Tab commits the bar to the cell.
+                            self.edit = None;
+                            let (sheet, addr) = self.active_target();
+                            let new_source = commit_source(&self.formula_bar);
+                            self.apply_edits(sheet, vec![(addr, new_source)]);
+                        } else if !response.has_focus() {
+                            // Not being edited — mirror the active cell's source.
+                            self.formula_bar = source;
+                        }
+                    });
+                });
+        }
+
+        if !self.stage_mode {
+            egui::TopBottomPanel::bottom("tescellate_sheet_tabs").show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if ui
+                        .selectable_label(self.active == ActiveSheet::Square, "Budget")
+                        .clicked()
+                    {
+                        self.commit_edit();
+                        self.active = ActiveSheet::Square;
+                        if self.find_open {
+                            self.refresh_find();
+                        }
                     }
-                    ui.separator();
-                    let width = ui.available_width();
-                    let height = ui.available_height();
-                    // Multiline so long formulas wrap and the panel-drag
-                    // resize actually adds usable space. Tab or click-outside
-                    // commits (the singleline path used Enter, but multiline
-                    // reserves Enter for newline so we don't override it).
-                    let response = ui.add_sized(
-                        [width, height.max(20.0)],
-                        egui::TextEdit::multiline(&mut self.formula_bar)
-                            .desired_width(width)
-                            .desired_rows(1)
-                            .font(egui::TextStyle::Monospace)
-                            .hint_text("value or =formula — drag the bottom of the bar to expand"),
-                    );
-                    if response.lost_focus() {
-                        // Click-outside or Tab commits the bar to the cell.
-                        self.edit = None;
-                        let (sheet, addr) = self.active_target();
-                        let new_source = commit_source(&self.formula_bar);
-                        self.apply_edits(sheet, vec![(addr, new_source)]);
-                    } else if !response.has_focus() {
-                        // Not being edited — mirror the active cell's source.
-                        self.formula_bar = source;
+                    if ui
+                        .selectable_label(self.active == ActiveSheet::Hex, "Hex demo")
+                        .clicked()
+                    {
+                        self.commit_edit();
+                        self.active = ActiveSheet::Hex;
+                        if self.find_open {
+                            self.refresh_find();
+                        }
+                    }
+                    if ui
+                        .selectable_label(self.active == ActiveSheet::Triangle, "Tri demo")
+                        .clicked()
+                    {
+                        self.commit_edit();
+                        self.active = ActiveSheet::Triangle;
+                        if self.find_open {
+                            self.refresh_find();
+                        }
+                    }
+                    // Selection statistics, pushed to the right edge.
+                    let stats = stats::selection_stats(&self.selection_values());
+                    if stats.nonempty > 0 {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let text = if stats.count > 0 {
+                                let avg = stats.average.map(format_number).unwrap_or_default();
+                                let min = stats.min.map(format_number).unwrap_or_default();
+                                let max = stats.max.map(format_number).unwrap_or_default();
+                                format!(
+                                    "Sum {}     Avg {}     Min {}     Max {}     Count {}",
+                                    format_number(stats.sum),
+                                    avg,
+                                    min,
+                                    max,
+                                    stats.nonempty,
+                                )
+                            } else {
+                                format!("Count {}", stats.nonempty)
+                            };
+                            ui.label(egui::RichText::new(text).weak());
+                        });
                     }
                 });
             });
+        }
 
-        egui::TopBottomPanel::bottom("tescellate_sheet_tabs").show(ctx, |ui| {
-            ui.horizontal(|ui| {
+        // In Stage Mode, paint a small floating "Exit" button so the
+        // user always has a visible way out (Esc also exits — see
+        // the `ClearMarquee` handler).
+        if self.stage_mode {
+            let exit_area = egui::Area::new("tescellate_stage_exit".into())
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 12.0))
+                .interactable(true);
+            exit_area.show(ctx, |ui| {
                 if ui
-                    .selectable_label(self.active == ActiveSheet::Square, "Budget")
+                    .add(egui::Button::new("Exit Stage Mode").min_size(egui::vec2(130.0, 28.0)))
                     .clicked()
                 {
-                    self.commit_edit();
-                    self.active = ActiveSheet::Square;
-                    if self.find_open {
-                        self.refresh_find();
-                    }
-                }
-                if ui
-                    .selectable_label(self.active == ActiveSheet::Hex, "Hex demo")
-                    .clicked()
-                {
-                    self.commit_edit();
-                    self.active = ActiveSheet::Hex;
-                    if self.find_open {
-                        self.refresh_find();
-                    }
-                }
-                if ui
-                    .selectable_label(self.active == ActiveSheet::Triangle, "Tri demo")
-                    .clicked()
-                {
-                    self.commit_edit();
-                    self.active = ActiveSheet::Triangle;
-                    if self.find_open {
-                        self.refresh_find();
-                    }
-                }
-                // Selection statistics, pushed to the right edge.
-                let stats = stats::selection_stats(&self.selection_values());
-                if stats.nonempty > 0 {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let text = if stats.count > 0 {
-                            let avg = stats.average.map(format_number).unwrap_or_default();
-                            let min = stats.min.map(format_number).unwrap_or_default();
-                            let max = stats.max.map(format_number).unwrap_or_default();
-                            format!(
-                                "Sum {}     Avg {}     Min {}     Max {}     Count {}",
-                                format_number(stats.sum),
-                                avg,
-                                min,
-                                max,
-                                stats.nonempty,
-                            )
-                        } else {
-                            format!("Count {}", stats.nonempty)
-                        };
-                        ui.label(egui::RichText::new(text).weak());
-                    });
+                    self.stage_mode = false;
                 }
             });
-        });
+        }
 
         egui::CentralPanel::default().show(ctx, |ui| match self.active {
             ActiveSheet::Square => {

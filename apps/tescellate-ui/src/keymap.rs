@@ -100,6 +100,12 @@ pub enum Command {
     FindPrev,
     /// Open the keyboard-shortcuts help overlay (F1).
     OpenHelp,
+    /// Toggle Stage Mode (Ctrl+Shift+P) — hide the editing chrome and
+    /// lock cells against editing, leaving widgets interactive so the
+    /// sheet reads as an app rather than a spreadsheet.
+    ToggleStageMode,
+    /// Exit Stage Mode (Escape while in Stage Mode).
+    ExitStageMode,
 }
 
 /// The keyboard shortcuts, as `(keys, description)` — the data behind
@@ -131,6 +137,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+F", "Find & replace"),
     ("F3 / Shift+F3", "Find next / previous match"),
     ("F1", "This shortcuts list"),
+    ("Ctrl+Shift+P", "Toggle Stage Mode (present)"),
 ];
 
 /// The mouse gestures, as `(gesture, description)` — the data behind the
@@ -198,6 +205,9 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         Key::F3 if shift => Command::FindPrev,
         Key::F3 => Command::FindNext,
         Key::F1 => Command::OpenHelp,
+        // Ctrl+Shift+P — Stage Mode toggle. P for Present/Play; mirrors
+        // PowerPoint muscle memory.
+        Key::P if ctrl && shift => Command::ToggleStageMode,
         Key::Escape => Command::ClearMarquee,
         _ => return None,
     })
@@ -524,5 +534,14 @@ mod tests {
     fn gestures_list_is_well_formed() {
         assert!(!GESTURES.is_empty());
         assert!(GESTURES.iter().all(|(g, d)| !g.is_empty() && !d.is_empty()));
+    }
+
+    #[test]
+    fn ctrl_shift_p_toggles_stage_mode() {
+        assert_eq!(nav(Key::P, true, true), Some(Command::ToggleStageMode));
+        // Plain Ctrl+P is unmapped — Stage Mode wants both modifiers.
+        assert_eq!(nav(Key::P, false, true), None);
+        // Plain P is a typed character.
+        assert_eq!(nav(Key::P, false, false), None);
     }
 }
