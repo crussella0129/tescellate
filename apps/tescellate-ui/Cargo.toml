@@ -18,9 +18,35 @@ tescellate-formula = { path = "../../crates/tescellate-formula" }
 tescellate-store = { path = "../../crates/tescellate-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
+
+# rfd: native uses default backends (gtk3 on Linux, ComDlg32 on Windows,
+# native dialogs on macOS); the wasm backend is feature-gated to keep the
+# Linux-only `gtk3` system dep out of the wasm32 build. The rfd build
+# script unconditionally requires picking *some* native backend feature
+# even for wasm targets, so we pick the smaller `xdg-portal` over `gtk3`
+# on wasm — it's never linked, just satisfies the build script.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rfd = "0.14"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# rfd 0.14's build.rs requires one of `gtk3`/`xdg-portal` even on wasm
+# (where the wasm-specific codepath is used at runtime). `gtk3` is the
+# lighter pick — no async-runtime requirement, and the gtk system libs
+# never link on wasm32.
+rfd = { version = "0.14", default-features = false, features = ["gtk3"] }
 wasm-bindgen-futures = "0.4"
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Storage",
+    "Document",
+    "HtmlAnchorElement",
+    "Blob",
+    "BlobPropertyBag",
+    "Url",
+] }
 
 [profile.release]
 opt-level = 2

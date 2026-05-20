@@ -47,3 +47,9 @@
 - **Completed:** 2026-05-20T19:00:00Z
 - **Files modified:** (git only)
 - **Commit:** `d9bca5c`
+
+## T-101a (sprint 1)
+- **Description:** Add `rfd 0.14` (default features on native; `gtk3` feature gated to wasm32 to satisfy rfd's build script with no system-lib link), `base64 0.22`, `wasm-bindgen 0.2`, `js-sys 0.3`, `web-sys 0.3` (Window, Storage, Document, HtmlAnchorElement, Blob, BlobPropertyBag, Url features) to `apps/tescellate-ui/Cargo.toml`. Both native and wasm32 builds succeed.
+- **Completed:** 2026-05-20T19:15:00Z
+- **Files modified:** apps/tescellate-ui/Cargo.toml
+- **Commit:** `291a5bb`
