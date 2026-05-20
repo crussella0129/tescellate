@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-004 (sprint 0): `WorkbookEngine::save_bytes` / `open_bytes` byte API — touches: crates/tescellate-formula/src/engine.rs
 - [ ] T-005 (sprint 0): Serde derives + Color32 adapter on UI types — touches: apps/tescellate-ui/src/{widget.rs,format.rs,conditional.rs,note.rs}
 - [ ] T-006 (sprint 0): `state_io.rs` capture/restore — touches: apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/lib.rs
 - [ ] T-007 (sprint 0): Deps in apps/tescellate-ui/Cargo.toml (tescellate-store, rfd, base64, serde, serde_json) — touches: apps/tescellate-ui/Cargo.toml

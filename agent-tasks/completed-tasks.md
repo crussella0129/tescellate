@@ -17,3 +17,9 @@
 - **Completed:** 2026-05-20T17:50:00Z
 - **Files modified:** crates/tescellate-store/src/lib.rs
 - **Commit:** `04c2d90`
+
+## T-004 (sprint 0)
+- **Description:** `WorkbookEngine::save_bytes` / `open_bytes` byte API; path-API now delegates; serde_json moved to dev-deps for engine tests.
+- **Completed:** 2026-05-20T18:00:00Z
+- **Files modified:** crates/tescellate-formula/src/engine.rs, crates/tescellate-formula/Cargo.toml
+- **Commit:** `e17f6de`

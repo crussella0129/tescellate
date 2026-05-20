@@ -103,26 +103,50 @@ impl WorkbookEngine {
             .map_err(|e| SetCellError::Parse(e.to_string()))
     }
 
-    /// Persist the workbook to a `.tscl` zip at `path`. The DAG itself
-    /// isn't stored — it can be reconstructed from cell sources on load.
-    pub fn save(&self, path: &std::path::Path) -> Result<(), SetCellError> {
-        let file = std::fs::File::create(path).map_err(|e| SetCellError::Io(e.to_string()))?;
-        tescellate_store::save(&self.workbook, file).map_err(|e| SetCellError::Io(e.to_string()))
+    /// Serialize the workbook (plus an opaque UI-state blob) to a `.tscl`
+    /// zip and return the bytes. The DAG isn't stored — it can be
+    /// reconstructed from cell sources on load. Target-agnostic; the UI
+    /// uses this directly on wasm32 where the path-based API can't link.
+    pub fn save_bytes(
+        &self,
+        ui: &tescellate_store::UiState,
+    ) -> Result<Vec<u8>, SetCellError> {
+        tescellate_store::save_full_to_bytes(&self.workbook, ui)
+            .map_err(|e| SetCellError::Io(e.to_string()))
     }
 
-    /// Load a workbook from a `.tscl` file. Rebuilds the in-memory DAG by
-    /// re-parsing every cell's source; trusts the persisted values so we
-    /// don't have to re-evaluate just to display them.
-    pub fn open(&mut self, path: &std::path::Path) -> Result<(), SetCellError> {
-        let file = std::fs::File::open(path).map_err(|e| SetCellError::Io(e.to_string()))?;
-        let workbook = tescellate_store::load(file).map_err(|e| SetCellError::Io(e.to_string()))?;
+    /// Deserialize a workbook + UI state from in-memory `.tscl` bytes.
+    /// Rebuilds the DAG via [`Self::rebuild_dag`]. Returns the opaque UI
+    /// state so the UI can restore its own per-sheet view.
+    pub fn open_bytes(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<tescellate_store::UiState, SetCellError> {
+        let (workbook, ui) = tescellate_store::load_full_from_bytes(bytes)
+            .map_err(|e| SetCellError::Io(e.to_string()))?;
         self.workbook = workbook;
         self.dag = Dag::new();
         self.compiled.clear();
         #[cfg(feature = "native")]
         self.native.clear();
         self.rebuild_dag()?;
-        Ok(())
+        Ok(ui)
+    }
+
+    /// Persist the workbook to a `.tscl` zip at `path`. Path-based wrapper
+    /// over [`Self::save_bytes`] for native callers. Writes with
+    /// `UiState::default()`; callers that own UI state should hand it to
+    /// `save_bytes` directly.
+    pub fn save(&self, path: &std::path::Path) -> Result<(), SetCellError> {
+        let bytes = self.save_bytes(&tescellate_store::UiState::default())?;
+        std::fs::write(path, bytes).map_err(|e| SetCellError::Io(e.to_string()))
+    }
+
+    /// Load a workbook from a `.tscl` file. Path-based wrapper over
+    /// [`Self::open_bytes`]; the returned UI state (if any) is discarded.
+    pub fn open(&mut self, path: &std::path::Path) -> Result<(), SetCellError> {
+        let bytes = std::fs::read(path).map_err(|e| SetCellError::Io(e.to_string()))?;
+        self.open_bytes(&bytes).map(|_ui| ())
     }
 
     fn rebuild_dag(&mut self) -> Result<(), SetCellError> {
@@ -912,6 +936,56 @@ mod tests {
         eng.set_cell(sid, "B2", Some("=2")).unwrap();
         let snap = eng.snapshot_range(sid, "A1", "C3").unwrap();
         assert_eq!(snap.len(), 2);
+    }
+
+    #[test]
+    fn engine_save_bytes_then_open_bytes_roundtrips() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "A1", Some("=10")).unwrap();
+        eng.set_cell(sid, "B1", Some("=A1*3")).unwrap();
+
+        let ui: tescellate_store::UiState = serde_json::json!({"answer": 42}).into();
+        let bytes = eng.save_bytes(&ui).unwrap();
+
+        let mut other = WorkbookEngine::new();
+        let ui_back = other.open_bytes(&bytes).unwrap();
+        assert_eq!(ui_back, ui);
+        assert_eq!(
+            other.get_cell(sid, "B1").unwrap().value,
+            CellValue::Number(30.0)
+        );
+        // DAG was rebuilt — upstream edit propagates downstream.
+        other.set_cell(sid, "A1", Some("=4")).unwrap();
+        assert_eq!(
+            other.get_cell(sid, "B1").unwrap().value,
+            CellValue::Number(12.0)
+        );
+    }
+
+    #[test]
+    fn engine_path_api_uses_byte_api() {
+        let (eng, _sid) = new_sheet();
+        let path_bytes_via_save = eng.save_bytes(&tescellate_store::UiState::default()).unwrap();
+
+        let tmp = std::env::temp_dir().join(format!(
+            "tescellate-byte-api-{}-{}.tscl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        eng.save(&tmp).unwrap();
+        let on_disk = std::fs::read(&tmp).unwrap();
+        std::fs::remove_file(&tmp).ok();
+        // The two zips need not be byte-identical (zip metadata can drift)
+        // but they must each load to the same workbook + empty UiState.
+        let (wb_a, ui_a) =
+            tescellate_store::load_full_from_bytes(&path_bytes_via_save).unwrap();
+        let (wb_b, ui_b) = tescellate_store::load_full_from_bytes(&on_disk).unwrap();
+        assert_eq!(wb_a.sheet_order, wb_b.sheet_order);
+        assert_eq!(ui_a, ui_b);
+        assert_eq!(ui_a, tescellate_store::UiState::default());
     }
 
     #[test]
