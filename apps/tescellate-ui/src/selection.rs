@@ -238,6 +238,41 @@ impl Coord for TriCoord {
     }
 }
 
+/// `Coord` impl for [`tescellate_tess::voronoi::VoronoiCoord`] —
+/// Voronoi cells aren't arranged in a grid, so most rectangle-shaped
+/// operations are degenerate. Sprint 6 ships single-cell selection
+/// only; range selection on Voronoi waits for a real use case.
+impl Coord for tescellate_tess::voronoi::VoronoiCoord {
+    fn min_max(self, _other: Self) -> (Self, Self) {
+        // No spatial ordering on seed indices — every "range" is just
+        // the single anchor cell.
+        (self, self)
+    }
+
+    fn rect_cells(min: Self, _max: Self) -> Vec<Self> {
+        vec![min]
+    }
+
+    fn rect_contains(min: Self, _max: Self, coord: Self) -> bool {
+        coord == min
+    }
+
+    fn rect_dims(_min: Self, _max: Self) -> (u32, u32) {
+        (1, 1)
+    }
+
+    fn rect_fill_targets(_min: Self, _max: Self, _dir: FillDir) -> Vec<(Self, Self)> {
+        // Fill drag is undefined on Voronoi — single-cell only.
+        Vec::new()
+    }
+
+    fn step_back(self, _dir: FillDir) -> Option<Self> {
+        // No directional neighbour concept on Voronoi seeds yet — the
+        // fill-handle pre-step machinery just doesn't apply.
+        None
+    }
+}
+
 /// A rectangular cell selection — an `anchor` and a `cursor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Selection<C: Coord> {

@@ -31,6 +31,7 @@ pub enum ActiveSheetTag {
     Square,
     Hex,
     Triangle,
+    Voronoi,
 }
 
 /// The persistent slice of a `TescellateApp`. New fields land here with a
