@@ -11,6 +11,7 @@ use eframe::egui;
 use tescellate_core::{CellError, CellValue, EngineKind, SheetId};
 use tescellate_formula::WorkbookEngine;
 use tescellate_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
+use tescellate_tess::triangle::{TriCoord, TriangleLattice};
 use tescellate_tess::{Lattice, LatticeKind, Point2};
 
 use crate::clipboard::{Clipboard, CopiedCell, PasteMode};
@@ -23,7 +24,9 @@ use crate::history::History;
 use crate::keymap::{self, Command, Dir, Mode};
 use crate::note::NoteMap;
 use crate::ribbon::{self, RibbonAction};
-use crate::selection::{FillDir, HexSelection, Selection, Sheet, SquareSelection};
+use crate::selection::{
+    FillDir, HexSelection, Selection, Sheet, SquareSelection, TriangleSelection,
+};
 use crate::sort;
 use crate::stats;
 use crate::widget::{self, Widgets};
@@ -35,6 +38,9 @@ const PAGE_ROWS: u32 = 16;
 
 /// Circumradius of a rendered hex cell, in points.
 const HEX_SIZE: f32 = 36.0;
+const TRIANGLE_SIDE: f32 = 56.0;
+/// How many triangle rows/columns to draw above/below/around the origin.
+const TRIANGLE_RADIUS: i32 = 6;
 /// How many rings of hexes the hex view shows around the origin.
 const HEX_VIEW_RADIUS: i32 = 3;
 
@@ -123,13 +129,15 @@ const EDIT_KEYS: &[(egui::Modifiers, egui::Key)] = &[
 enum ActiveSheet {
     Square,
     Hex,
+    Triangle,
 }
 
-/// A cell on either sheet — Find tracks matches across both lattices.
+/// A cell on any sheet — Find tracks matches across every lattice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CellId {
     Square((u32, u32)),
     Hex(HexCoord),
+    Triangle(TriCoord),
 }
 
 /// An in-progress cell edit.
@@ -425,8 +433,12 @@ pub struct TescellateApp {
     square: Sheet<(u32, u32)>,
     /// The hex-lattice sheet — analogue of [`Self::square`].
     hex: Sheet<HexCoord>,
+    /// The triangle-lattice sheet — analogue of [`Self::square`].
+    triangle: Sheet<TriCoord>,
     /// Geometry for the hex sheet — owned by `tescellate-tess`.
     hex_lattice: HexLattice,
+    /// Geometry for the triangle sheet — owned by `tescellate-tess`.
+    triangle_lattice: TriangleLattice,
     /// Which sheet is on screen.
     active: ActiveSheet,
     /// The square cursor as of the last frame — drives scroll-to-cursor.
@@ -496,6 +508,8 @@ pub struct TescellateApp {
     notes: NoteMap<(u32, u32)>,
     /// Free-text notes on hex-sheet cells.
     hex_notes: NoteMap<HexCoord>,
+    /// Free-text notes on triangle-sheet cells.
+    triangle_notes: NoteMap<TriCoord>,
     /// Whether the cell-note editor window is open.
     note_open: bool,
     /// The cell the note editor is editing — on either sheet.
@@ -553,6 +567,29 @@ impl TescellateApp {
             f.fill = Some(egui::Color32::from_rgb(201, 237, 203));
         });
 
+        // A small triangle demo sheet — a row of alternating △ / ▽
+        // triangles plus one cell that sums two of them, so the
+        // engine's triangle range arithmetic is visible.
+        let triangle_sheet = engine.add_sheet("Tri demo", LatticeKind::Triangle);
+        for (addr, src) in [
+            ("T(0,0)", "△"),
+            ("T(1,0)", "▽"),
+            ("T(2,0)", "=4"),
+            ("T(3,0)", "=6"),
+            ("T(2,1)", "=T(2,0) + T(3,0)"),
+        ] {
+            let _ = engine.set_cell(triangle_sheet, addr, Some(src));
+        }
+        let mut triangle_formats = FormatMap::new();
+        // Tint a couple of cells so the sheet visibly carries cell
+        // formatting at first launch.
+        triangle_formats.update(TriCoord::new(0, 0), |f| {
+            f.fill = Some(egui::Color32::from_rgb(231, 217, 245));
+        });
+        triangle_formats.update(TriCoord::new(2, 1), |f| {
+            f.fill = Some(egui::Color32::from_rgb(212, 233, 251));
+        });
+
         let square = Sheet {
             sheet_id: square_sheet,
             selection: Selection::single((0, 0)),
@@ -567,12 +604,21 @@ impl TescellateApp {
             formula_highlight: None,
             formats: hex_formats,
         };
+        let triangle = Sheet {
+            sheet_id: triangle_sheet,
+            selection: Selection::single(TriCoord::new(0, 0)),
+            formula_drag: None,
+            formula_highlight: None,
+            formats: triangle_formats,
+        };
 
         Self {
             engine,
             square,
             hex,
+            triangle,
             hex_lattice: HexLattice::pointy(HEX_SIZE),
+            triangle_lattice: TriangleLattice::new(TRIANGLE_SIDE),
             active: ActiveSheet::Square,
             prev_cursor: (0, 0),
             edit: None,
@@ -611,6 +657,7 @@ impl TescellateApp {
             about_open: false,
             notes: NoteMap::new(),
             hex_notes: NoteMap::new(),
+            triangle_notes: NoteMap::new(),
             note_open: false,
             note_cell: CellId::Square((0, 0)),
             note_draft: String::new(),
@@ -702,6 +749,38 @@ impl TescellateApp {
             .unwrap_or_default()
     }
 
+    /// The raw source of a triangle-sheet cell.
+    fn triangle_cell_source(&self, coord: TriCoord) -> String {
+        self.engine
+            .get_cell(self.triangle.sheet_id, &triangle_address(coord))
+            .and_then(|snapshot| snapshot.source)
+            .unwrap_or_default()
+    }
+
+    /// The display text for a triangle-sheet cell.
+    fn triangle_cell_text(&self, coord: TriCoord) -> String {
+        self.engine
+            .get_cell(self.triangle.sheet_id, &triangle_address(coord))
+            .map(|snapshot| natural_text(snapshot.value))
+            .unwrap_or_default()
+    }
+
+    /// The triangle-sheet cell value used by conditional formatting.
+    #[allow(dead_code)]
+    fn triangle_cell_value(&self, coord: TriCoord) -> CellValue {
+        self.engine
+            .get_cell(self.triangle.sheet_id, &triangle_address(coord))
+            .map(|snapshot| snapshot.value)
+            .unwrap_or_default()
+    }
+
+    /// The effective cell format for a triangle-sheet cell — base format
+    /// plus any conditional-rule overrides. (Conditional formatting
+    /// isn't yet wired on the triangle sheet; this is the hook for it.)
+    fn triangle_effective_format(&self, coord: TriCoord) -> CellFormat {
+        self.triangle.formats.get(coord)
+    }
+
     /// The raw source of the active square cell (the selection cursor).
     fn selected_source(&self) -> String {
         let (col, row) = self.square.selection.cursor;
@@ -720,6 +799,14 @@ impl TescellateApp {
                 .get_cell(self.hex.sheet_id, &hex_address(self.hex.selection.cursor))
                 .and_then(|s| s.source)
                 .unwrap_or_default(),
+            ActiveSheet::Triangle => self
+                .engine
+                .get_cell(
+                    self.triangle.sheet_id,
+                    &triangle_address(self.triangle.selection.cursor),
+                )
+                .and_then(|s| s.source)
+                .unwrap_or_default(),
         }
     }
 
@@ -731,6 +818,10 @@ impl TescellateApp {
                 (self.square.sheet_id, grid::cell_address(col, row))
             }
             ActiveSheet::Hex => (self.hex.sheet_id, hex_address(self.hex.selection.cursor)),
+            ActiveSheet::Triangle => (
+                self.triangle.sheet_id,
+                triangle_address(self.triangle.selection.cursor),
+            ),
         }
     }
 
@@ -743,6 +834,7 @@ impl TescellateApp {
                 grid::cell_address(col, row)
             }
             ActiveSheet::Hex => hex_address(self.hex.selection.cursor),
+            ActiveSheet::Triangle => triangle_address(self.triangle.selection.cursor),
         };
         let source = match &self.edit {
             Some(edit) => edit.buffer.clone(),
@@ -775,6 +867,18 @@ impl TescellateApp {
                 .map(|c| {
                     self.engine
                         .get_cell(self.hex.sheet_id, &hex_address(c))
+                        .map(|s| s.value)
+                        .unwrap_or(CellValue::Empty)
+                })
+                .collect(),
+            ActiveSheet::Triangle => self
+                .triangle
+                .selection
+                .cells()
+                .into_iter()
+                .map(|c| {
+                    self.engine
+                        .get_cell(self.triangle.sheet_id, &triangle_address(c))
                         .map(|s| s.value)
                         .unwrap_or(CellValue::Empty)
                 })
@@ -842,10 +946,15 @@ impl TescellateApp {
                     self.square.selection.collapse_to((0, row));
                 }
                 ActiveSheet::Hex => self.hex.selection.collapse_to(HexCoord::new(0, 0)),
+                ActiveSheet::Triangle => {
+                    let row = self.triangle.selection.cursor.row;
+                    self.triangle.selection.collapse_to(TriCoord::new(0, row));
+                }
             },
             Command::MoveToOrigin => match self.active {
                 ActiveSheet::Square => self.square.selection.collapse_to((0, 0)),
                 ActiveSheet::Hex => self.hex.selection.collapse_to(HexCoord::new(0, 0)),
+                ActiveSheet::Triangle => self.triangle.selection.collapse_to(TriCoord::new(0, 0)),
             },
             Command::MoveToRowEnd => match self.active {
                 ActiveSheet::Square => {
@@ -853,10 +962,20 @@ impl TescellateApp {
                     self.square.selection.collapse_to((COLS - 1, row));
                 }
                 ActiveSheet::Hex => self.hex.selection.collapse_to(HexCoord::new(0, 0)),
+                ActiveSheet::Triangle => {
+                    let row = self.triangle.selection.cursor.row;
+                    self.triangle
+                        .selection
+                        .collapse_to(TriCoord::new(TRIANGLE_RADIUS, row));
+                }
             },
             Command::MoveToSheetEnd => match self.active {
                 ActiveSheet::Square => self.square.selection.collapse_to((COLS - 1, ROWS - 1)),
                 ActiveSheet::Hex => self.hex.selection.collapse_to(HexCoord::new(0, 0)),
+                ActiveSheet::Triangle => self
+                    .triangle
+                    .selection
+                    .collapse_to(TriCoord::new(TRIANGLE_RADIUS, TRIANGLE_RADIUS)),
             },
             Command::PageUp => self.page(true),
             Command::PageDown => self.page(false),
@@ -871,6 +990,8 @@ impl TescellateApp {
                 self.square.formula_drag = None;
                 self.hex.formula_highlight = None;
                 self.hex.formula_drag = None;
+                self.triangle.formula_highlight = None;
+                self.triangle.formula_drag = None;
             }
             Command::ClearMarquee => {
                 if self.clipboard.cut_origin().is_some() {
@@ -914,6 +1035,13 @@ impl TescellateApp {
                     cursor: HexCoord::new(r, r),
                 };
             }
+            ActiveSheet::Triangle => {
+                let r = TRIANGLE_RADIUS;
+                self.triangle.selection = TriangleSelection {
+                    anchor: TriCoord::new(-r, -r),
+                    cursor: TriCoord::new(r, r),
+                };
+            }
         }
     }
 
@@ -943,6 +1071,11 @@ impl TescellateApp {
                     anchor: HexCoord::new(max_q, max_r),
                     cursor: HexCoord::new(min_q, min_r),
                 };
+            }
+            ActiveSheet::Triangle => {
+                // Triangle data-region detection lands in a later
+                // pass; for now expanding from the cursor just keeps
+                // the cursor put.
             }
         }
     }
@@ -1068,6 +1201,11 @@ impl TescellateApp {
                 );
                 self.hex.selection.collapse_to(target);
             }
+            ActiveSheet::Triangle => {
+                // Triangle autosum lands in a follow-up; the math is
+                // straightforward but the target hex / sheet bounds
+                // need their own predicate.
+            }
         }
     }
 
@@ -1130,6 +1268,9 @@ impl TescellateApp {
                     self.apply_edits(self.hex.sheet_id, targets);
                 }
             }
+            ActiveSheet::Triangle => {
+                // Triangle series-fill lands in a follow-up.
+            }
         }
     }
 
@@ -1184,6 +1325,9 @@ impl TescellateApp {
                 self.commit_edit();
                 self.apply_edits(self.hex.sheet_id, targets);
             }
+            ActiveSheet::Triangle => {
+                // Triangle sort lands in a follow-up.
+            }
         }
     }
 
@@ -1194,6 +1338,11 @@ impl TescellateApp {
         match self.active {
             ActiveSheet::Square => self.apply_square_border(mode),
             ActiveSheet::Hex => self.apply_hex_border(mode),
+            ActiveSheet::Triangle => {
+                // Triangle borders land in a follow-up — triangles
+                // have three edges, not four, and need their own
+                // border-mode resolution.
+            }
         }
     }
 
@@ -1474,6 +1623,11 @@ impl TescellateApp {
                 self.cell_source(c, r),
             ),
             CellId::Hex(h) => (self.hex.sheet_id, hex_address(h), self.hex_cell_source(h)),
+            CellId::Triangle(t) => (
+                self.triangle.sheet_id,
+                triangle_address(t),
+                self.triangle_cell_source(t),
+            ),
         }
     }
 
@@ -1482,6 +1636,7 @@ impl TescellateApp {
         match id {
             CellId::Square(cell) => self.square.selection.collapse_to(cell),
             CellId::Hex(coord) => self.hex.selection.collapse_to(coord),
+            CellId::Triangle(coord) => self.triangle.selection.collapse_to(coord),
         }
     }
 
@@ -1500,6 +1655,14 @@ impl TescellateApp {
                 .filter(|&coord| !in_selection || self.hex.selection.contains(coord))
                 .map(|coord| (CellId::Hex(coord), self.hex_cell_source(coord)))
                 .collect(),
+            ActiveSheet::Triangle => {
+                let r = TRIANGLE_RADIUS;
+                (-r..=r)
+                    .flat_map(|row| (-r..=r).map(move |col| TriCoord::new(col, row)))
+                    .filter(|&coord| !in_selection || self.triangle.selection.contains(coord))
+                    .map(|coord| (CellId::Triangle(coord), self.triangle_cell_source(coord)))
+                    .collect()
+            }
         };
         self.find.refresh(cells.into_iter());
         if let Some(id) = self.find.current_match() {
@@ -1590,6 +1753,7 @@ impl TescellateApp {
         let address = match cell {
             CellId::Square((c, r)) => grid::cell_address(c, r),
             CellId::Hex(h) => hex_address(h),
+            CellId::Triangle(t) => triangle_address(t),
         };
         egui::Window::new("Cell note")
             .open(&mut open)
@@ -1623,6 +1787,7 @@ impl TescellateApp {
         match cell {
             CellId::Square(c) => self.notes.set(c, text),
             CellId::Hex(h) => self.hex_notes.set(h, text),
+            CellId::Triangle(t) => self.triangle_notes.set(t, text),
         }
     }
 
@@ -1678,6 +1843,15 @@ impl TescellateApp {
         match self.active {
             ActiveSheet::Square => self.format_square_range(edit),
             ActiveSheet::Hex => self.format_hex_range(edit),
+            ActiveSheet::Triangle => {
+                // Triangle format coalescing lands in a follow-up;
+                // apply the edit directly without the same-cell drag
+                // merge logic so the basic flow still works.
+                let cells = self.triangle.selection.cells();
+                for cell in cells {
+                    self.triangle.formats.update(cell, |f| edit(f));
+                }
+            }
         }
     }
 
@@ -1791,6 +1965,10 @@ impl TescellateApp {
                 let cells = self.hex.selection.cells();
                 toggle_target(cells.iter().map(|&c| get(&self.hex.formats.get(c))))
             }
+            ActiveSheet::Triangle => {
+                let cells = self.triangle.selection.cells();
+                toggle_target(cells.iter().map(|&c| get(&self.triangle.formats.get(c))))
+            }
         };
         self.format_range(|f| set(f, target));
     }
@@ -1804,6 +1982,7 @@ impl TescellateApp {
                 self.square.selection.collapse_to(next);
             }
             ActiveSheet::Hex => self.move_hex_selection(dir),
+            ActiveSheet::Triangle => self.move_triangle_selection(dir),
         }
     }
 
@@ -1821,6 +2000,17 @@ impl TescellateApp {
                 let dir = if up { Dir::Up } else { Dir::Down };
                 let next = hex_jump(self.hex.selection.cursor, dir, hex_in_view, |_| false);
                 self.hex.selection.collapse_to(next);
+            }
+            ActiveSheet::Triangle => {
+                let cursor = self.triangle.selection.cursor;
+                let row = if up {
+                    (cursor.row - PAGE_ROWS as i32).max(-TRIANGLE_RADIUS)
+                } else {
+                    (cursor.row + PAGE_ROWS as i32).min(TRIANGLE_RADIUS)
+                };
+                self.triangle
+                    .selection
+                    .collapse_to(TriCoord::new(cursor.col, row));
             }
         }
     }
@@ -1862,6 +2052,12 @@ impl TescellateApp {
                 });
                 self.hex.selection.collapse_to(next);
             }
+            ActiveSheet::Triangle => {
+                // Ctrl+arrow jumps to the data edge — for triangles
+                // this lands in a follow-up; for now treat it as a
+                // single step like a plain arrow.
+                self.move_triangle_selection(dir);
+            }
         }
     }
 
@@ -1879,6 +2075,7 @@ impl TescellateApp {
                 });
                 self.hex.selection.extend_to(next);
             }
+            ActiveSheet::Triangle => self.extend_triangle_selection(dir),
         }
     }
 
@@ -1902,6 +2099,7 @@ impl TescellateApp {
                 self.square.selection.extend_to(next);
             }
             ActiveSheet::Hex => self.extend_hex_selection(dir),
+            ActiveSheet::Triangle => self.extend_triangle_selection(dir),
         }
     }
 
@@ -1922,6 +2120,24 @@ impl TescellateApp {
         }
     }
 
+    /// Step the triangle selection one cell — Up/Down move along the
+    /// `row` axis, Left/Right along `col`. The triangle window is the
+    /// `±TRIANGLE_RADIUS` block; moves past the edge are clamped.
+    fn move_triangle_selection(&mut self, dir: Dir) {
+        let next = triangle_step(self.triangle.selection.cursor, dir);
+        if triangle_in_view(next) {
+            self.triangle.selection.collapse_to(next);
+        }
+    }
+
+    /// Extend the triangle selection one cell — Shift+arrow analogue.
+    fn extend_triangle_selection(&mut self, dir: Dir) {
+        let next = triangle_step(self.triangle.selection.cursor, dir);
+        if triangle_in_view(next) {
+            self.triangle.selection.extend_to(next);
+        }
+    }
+
     fn begin_edit(&mut self, replace_with: Option<char>) {
         // An edit acts on a single cell — collapse any range to its cursor.
         match self.active {
@@ -1932,6 +2148,10 @@ impl TescellateApp {
             ActiveSheet::Hex => {
                 let cursor = self.hex.selection.cursor;
                 self.hex.selection.collapse_to(cursor);
+            }
+            ActiveSheet::Triangle => {
+                let cursor = self.triangle.selection.cursor;
+                self.triangle.selection.collapse_to(cursor);
             }
         }
         let buffer = match replace_with {
@@ -2006,6 +2226,16 @@ impl TescellateApp {
                     .collect();
                 (self.hex.sheet_id, targets)
             }
+            ActiveSheet::Triangle => {
+                let targets = self
+                    .triangle
+                    .selection
+                    .cells()
+                    .into_iter()
+                    .map(|c| (triangle_address(c), None))
+                    .collect();
+                (self.triangle.sheet_id, targets)
+            }
         };
         self.apply_edits(sheet, targets);
     }
@@ -2071,6 +2301,9 @@ impl TescellateApp {
                 self.clipboard = Clipboard::capture(width, height, cells, true);
                 ctx.copy_text(tsv);
             }
+            ActiveSheet::Triangle => {
+                // Triangle copy/paste lands in a follow-up.
+            }
         }
     }
 
@@ -2088,6 +2321,10 @@ impl TescellateApp {
             ActiveSheet::Hex => {
                 let (min, _) = self.hex.selection.bounds();
                 (min.q, min.r)
+            }
+            ActiveSheet::Triangle => {
+                let (min, _) = self.triangle.selection.bounds();
+                (min.col, min.row)
             }
         };
         self.clipboard.mark_as_cut(origin);
@@ -2166,6 +2403,9 @@ impl TescellateApp {
                     anchor: far,
                     cursor,
                 };
+            }
+            ActiveSheet::Triangle => {
+                // Triangle paste lands in a follow-up.
             }
         }
         // A paste consumes the cut — the clipboard reverts to a copy.
@@ -2269,6 +2509,22 @@ impl TescellateApp {
                     })
                     .collect();
                 (self.hex.sheet_id, targets)
+            }
+            ActiveSheet::Triangle => {
+                let targets: Vec<(String, Option<String>)> = self
+                    .triangle
+                    .selection
+                    .fill_targets(dir)
+                    .into_iter()
+                    .map(|(target, from)| {
+                        let source = self
+                            .engine
+                            .get_cell(self.triangle.sheet_id, &triangle_address(from))
+                            .and_then(|s| s.source);
+                        (triangle_address(target), source)
+                    })
+                    .collect();
+                (self.triangle.sheet_id, targets)
             }
         };
         self.apply_edits(sheet, targets);
@@ -3515,6 +3771,189 @@ impl TescellateApp {
             }
         }
     }
+
+    /// Render the triangle sheet — fill, outline, and text per cell;
+    /// click-to-select; double-click to edit. Mirrors `draw_hex_grid`'s
+    /// shape but minus the formula-marquee, fill drag, and disc clip.
+    /// Triangles outside `triangle_in_view` aren't drawn.
+    fn draw_triangle_grid(&mut self, ui: &mut egui::Ui) {
+        let size = ui.available_size();
+        let (response, painter) = ui.allocate_painter(size, egui::Sense::click_and_drag());
+        let origin = response.rect.center();
+
+        // Pre-resolve the cells under each pointer interaction before
+        // touching `&mut self`, same shape as draw_hex_grid.
+        let clicked_coord = if response.clicked() {
+            response.interact_pointer_pos().and_then(|p| {
+                let local = Point2::new(p.x - origin.x, p.y - origin.y);
+                self.triangle_lattice
+                    .cell_at(local)
+                    .filter(|c| triangle_in_view(*c))
+            })
+        } else {
+            None
+        };
+        let drag_started_coord = if response.drag_started() {
+            response
+                .interact_pointer_pos()
+                .or(self.press_pos)
+                .and_then(|p| {
+                    let local = Point2::new(p.x - origin.x, p.y - origin.y);
+                    self.triangle_lattice
+                        .cell_at(local)
+                        .filter(|c| triangle_in_view(*c))
+                })
+        } else {
+            None
+        };
+        let dragged_coord = if response.dragged() {
+            response.interact_pointer_pos().and_then(|p| {
+                let local = Point2::new(p.x - origin.x, p.y - origin.y);
+                self.triangle_lattice
+                    .cell_at(local)
+                    .filter(|c| triangle_in_view(*c))
+            })
+        } else {
+            None
+        };
+
+        if let Some(coord) = clicked_coord {
+            self.commit_edit();
+            if ui.input(|i| i.modifiers.shift) {
+                self.triangle.selection.extend_to(coord);
+            } else {
+                self.triangle.selection.collapse_to(coord);
+            }
+        }
+        if let Some(coord) = drag_started_coord {
+            self.commit_edit();
+            self.triangle.selection.collapse_to(coord);
+        }
+        if let Some(coord) = dragged_coord {
+            self.triangle.selection.extend_to(coord);
+        }
+        if response.double_clicked() {
+            if let Some(p) = response.interact_pointer_pos() {
+                let local = Point2::new(p.x - origin.x, p.y - origin.y);
+                if let Some(coord) = self.triangle_lattice.cell_at(local) {
+                    if triangle_in_view(coord) {
+                        self.triangle.selection.collapse_to(coord);
+                        self.begin_edit(None);
+                    }
+                }
+            }
+        }
+        if response.secondary_clicked() {
+            // Right-click clears any in-flight edit (triangle context
+            // menu lands in a follow-up).
+            self.commit_edit();
+        }
+
+        // First pass: fills (so outlines and text draw on top).
+        let edge = ui.visuals().widgets.noninteractive.fg_stroke.color;
+        let outline = egui::Stroke::new(1.0, edge);
+        let selected_color = egui::Color32::from_rgba_unmultiplied(70, 120, 220, 60);
+        let r = TRIANGLE_RADIUS;
+        for row in -r..=r {
+            for col in -r..=r {
+                let coord = TriCoord::new(col, row);
+                let verts: Vec<egui::Pos2> = self
+                    .triangle_lattice
+                    .vertices(coord)
+                    .iter()
+                    .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
+                    .collect();
+                if verts.len() != 3 {
+                    continue;
+                }
+                let format = self.triangle_effective_format(coord);
+                let mut fill = format.fill.unwrap_or(egui::Color32::TRANSPARENT);
+                if self.triangle.selection.contains(coord) {
+                    // Tint the fill with the selection colour so the
+                    // active range stands out even when the cell has
+                    // its own fill colour.
+                    fill = blend_over(selected_color, fill);
+                }
+                if fill != egui::Color32::TRANSPARENT {
+                    painter.add(egui::Shape::convex_polygon(
+                        verts.clone(),
+                        fill,
+                        egui::Stroke::NONE,
+                    ));
+                }
+                // Outline.
+                let mut loop_pts = verts.clone();
+                loop_pts.push(verts[0]);
+                painter.add(egui::Shape::line(loop_pts, outline));
+            }
+        }
+
+        // Second pass: cell text at each centroid.
+        let fg = ui.visuals().text_color();
+        for row in -r..=r {
+            for col in -r..=r {
+                let coord = TriCoord::new(col, row);
+                let centroid = self.triangle_lattice.centroid(coord);
+                let p = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+                let text = self.triangle_cell_text(coord);
+                if text.is_empty() {
+                    continue;
+                }
+                painter.text(
+                    p,
+                    egui::Align2::CENTER_CENTER,
+                    text,
+                    egui::FontId::proportional(13.0),
+                    fg,
+                );
+            }
+        }
+
+        // Selection outline — every selected cell gets a brighter edge.
+        let selection_stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(70, 120, 220));
+        for coord in self.triangle.selection.cells() {
+            if !triangle_in_view(coord) {
+                continue;
+            }
+            let verts: Vec<egui::Pos2> = self
+                .triangle_lattice
+                .vertices(coord)
+                .iter()
+                .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
+                .collect();
+            if verts.len() != 3 {
+                continue;
+            }
+            let mut loop_pts = verts.clone();
+            loop_pts.push(verts[0]);
+            painter.add(egui::Shape::line(loop_pts, selection_stroke));
+        }
+
+        // In-cell edit overlay at the cursor centroid.
+        if let Some(edit) = &mut self.edit {
+            let centroid = self
+                .triangle_lattice
+                .centroid(self.triangle.selection.cursor);
+            let center = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+            let rect = egui::Rect::from_center_size(center, egui::vec2(1.4 * TRIANGLE_SIDE, 24.0));
+            let response = ui.put(
+                rect,
+                egui::TextEdit::singleline(&mut edit.buffer)
+                    .frame(true)
+                    .font(egui::TextStyle::Monospace),
+            );
+            if std::mem::take(&mut edit.fresh) {
+                response.request_focus();
+                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), response.id) {
+                    let end = egui::text::CCursor::new(edit.buffer.chars().count());
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                    egui::TextEdit::store_state(ui.ctx(), response.id, state);
+                }
+            }
+        }
+    }
 }
 
 impl eframe::App for TescellateApp {
@@ -3583,6 +4022,20 @@ impl eframe::App for TescellateApp {
                     self.apply_ribbon(action, ctx);
                 }
             }
+            ActiveSheet::Triangle => {
+                let current = self.triangle.formats.get(self.triangle.selection.cursor);
+                let can_undo = self.history.can_undo();
+                let can_redo = self.history.can_redo();
+                if let Some(action) = ribbon::ribbon(
+                    ui,
+                    &current,
+                    can_undo,
+                    can_redo,
+                    self.format_painter.is_some(),
+                ) {
+                    self.apply_ribbon(action, ctx);
+                }
+            }
         });
 
         egui::TopBottomPanel::top("tescellate_formula_bar")
@@ -3612,6 +4065,9 @@ impl eframe::App for TescellateApp {
                             }
                         }
                         ActiveSheet::Hex => {
+                            ui.monospace(addr.clone());
+                        }
+                        ActiveSheet::Triangle => {
                             ui.monospace(addr.clone());
                         }
                     }
@@ -3708,6 +4164,16 @@ impl eframe::App for TescellateApp {
                         self.refresh_find();
                     }
                 }
+                if ui
+                    .selectable_label(self.active == ActiveSheet::Triangle, "Tri demo")
+                    .clicked()
+                {
+                    self.commit_edit();
+                    self.active = ActiveSheet::Triangle;
+                    if self.find_open {
+                        self.refresh_find();
+                    }
+                }
                 // Selection statistics, pushed to the right edge.
                 let stats = stats::selection_stats(&self.selection_values());
                 if stats.nonempty > 0 {
@@ -3740,6 +4206,7 @@ impl eframe::App for TescellateApp {
                     .show(ui, |ui| self.draw_grid(ui));
             }
             ActiveSheet::Hex => self.draw_hex_grid(ui),
+            ActiveSheet::Triangle => self.draw_triangle_grid(ui),
         });
 
         self.conditional_window(ctx);
@@ -3855,6 +4322,20 @@ fn hex_step(coord: HexCoord, dir: Dir) -> HexCoord {
 /// Whether a hex coord lies within the rendered radius-3 view disc.
 fn hex_in_view(coord: HexCoord) -> bool {
     HexCoord::new(0, 0).distance(coord) <= HEX_VIEW_RADIUS
+}
+
+/// Step a triangle coord one cell along the keyboard direction. `col`
+/// is the horizontal half-base index, `row` the vertical row — left /
+/// right move along `col`, up / down along `row`. The triangle
+/// orientation is implicit in the parity of `col + row`, so a single
+/// `Right` step naturally toggles between `△` and `▽`.
+fn triangle_step(coord: TriCoord, dir: Dir) -> TriCoord {
+    match dir {
+        Dir::Left => TriCoord::new(coord.col - 1, coord.row),
+        Dir::Right => TriCoord::new(coord.col + 1, coord.row),
+        Dir::Up => TriCoord::new(coord.col, coord.row - 1),
+        Dir::Down => TriCoord::new(coord.col, coord.row + 1),
+    }
 }
 
 /// The hex cell a Ctrl+arrow jump lands on — [`grid::block_jump`] walking
@@ -4068,6 +4549,42 @@ fn format_number(n: f64) -> String {
 /// hex lattice canonicalizes to.
 fn hex_address(c: HexCoord) -> String {
     format!("H({},{})", c.q, c.r)
+}
+
+/// The `T(col,row)` address string for a triangle coord — the form the
+/// engine's triangle lattice canonicalizes to.
+fn triangle_address(c: TriCoord) -> String {
+    format!("T({},{})", c.col, c.row)
+}
+
+/// Whether `coord` is inside the currently-drawn triangle window.
+/// Mirrors `hex_in_view` — render and hit-test agree on the same bound.
+fn triangle_in_view(c: TriCoord) -> bool {
+    c.col.abs() <= TRIANGLE_RADIUS && c.row.abs() <= TRIANGLE_RADIUS
+}
+
+/// Alpha-blend `over` onto `under` with the standard source-over rule.
+/// Used for selection tinting: the translucent selection colour sits on
+/// top of the cell's base fill (which may itself be transparent).
+fn blend_over(over: egui::Color32, under: egui::Color32) -> egui::Color32 {
+    let oa = over.a() as f32 / 255.0;
+    let ua = under.a() as f32 / 255.0;
+    let out_a = oa + ua * (1.0 - oa);
+    if out_a <= 0.0 {
+        return egui::Color32::TRANSPARENT;
+    }
+    let blend = |o: u8, u: u8| -> u8 {
+        let o = o as f32;
+        let u = u as f32;
+        let v = (o * oa + u * ua * (1.0 - oa)) / out_a;
+        v.round().clamp(0.0, 255.0) as u8
+    };
+    egui::Color32::from_rgba_unmultiplied(
+        blend(over.r(), under.r()),
+        blend(over.g(), under.g()),
+        blend(over.b(), under.b()),
+        (out_a * 255.0).round().clamp(0.0, 255.0) as u8,
+    )
 }
 
 /// Human label for an [`EngineKind`] in the formula-bar language
