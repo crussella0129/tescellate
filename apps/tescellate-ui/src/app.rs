@@ -4066,6 +4066,33 @@ impl TescellateApp {
             painter.add(egui::Shape::line(loop_pts, selection_stroke));
         }
 
+        // Cut marquee — a dashed outline around each armed triangle,
+        // when the clipboard's cut belongs to this (triangle) sheet.
+        if let Some((oc, or)) = self.clipboard.cut_origin() {
+            if matches!(self.clipboard.source(), SourceLattice::Triangle) {
+                let (cw, ch) = self.clipboard.dimensions();
+                let dash = egui::Stroke::new(1.5, egui::Color32::from_rgb(70, 120, 220));
+                for j in 0..ch {
+                    for i in 0..cw {
+                        let coord = TriCoord::new(oc + i as i32, or + j as i32);
+                        if !triangle_in_view(coord) {
+                            continue;
+                        }
+                        let mut loop_pts: Vec<egui::Pos2> = self
+                            .triangle_lattice
+                            .vertices(coord)
+                            .iter()
+                            .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
+                            .collect();
+                        if let Some(&first) = loop_pts.first() {
+                            loop_pts.push(first);
+                        }
+                        painter.extend(egui::Shape::dashed_line(&loop_pts, dash, 4.0, 3.0));
+                    }
+                }
+            }
+        }
+
         // Formula-reference marquee — outline every triangle inside the
         // rectangular range of the current formula reference with a
         // dashed blue stroke. Only drawn while an edit is active so it
