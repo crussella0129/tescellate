@@ -99,6 +99,14 @@ pub trait EvalCtx {
             "RADIUS is not available on this lattice".into(),
         ))
     }
+    /// Lattice-native distance between two addresses, as an `i64`.
+    /// Default impl errors so engines opt in when the lattice can
+    /// answer; that is what `DISTANCE()` consults.
+    fn lattice_distance(&self, _a: &str, _b: &str) -> Result<i64, EvalError> {
+        Err(EvalError::Value(
+            "DISTANCE is not available on this lattice".into(),
+        ))
+    }
 }
 
 /// Wraps an `EvalCtx` with an additional `Env` scope. Used by `LAMBDA`,
