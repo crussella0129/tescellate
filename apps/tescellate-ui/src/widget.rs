@@ -48,70 +48,98 @@ impl WidgetKind {
     };
 }
 
-/// Map of square-sheet cells to the widget they render as.
+/// Map of cells to the widget they render as. Generic over the lattice
+/// coordinate `K` — the square sheet uses `Widgets<(u32, u32)>` and the
+/// hex sheet uses `Widgets<HexCoord>`. Mirrors the same lattice-generic
+/// pattern as [`crate::format::FormatMap`] and [`crate::note::NoteMap`].
 ///
-/// Serialized as a `Vec<((col, row), WidgetKind)>` because tuple keys are
-/// not valid JSON object keys — the on-disk form is `[[[c, r], kind], …]`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, from = "WidgetsRepr", into = "WidgetsRepr")]
-pub struct Widgets {
-    cells: HashMap<(u32, u32), WidgetKind>,
+/// Serialized as a `Vec<(K, WidgetKind)>` because hash-map keys must be
+/// strings in JSON — the on-disk form is `[[key, kind], …]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    from = "WidgetsRepr<K>",
+    into = "WidgetsRepr<K>",
+    bound(
+        serialize = "K: Serialize + Eq + std::hash::Hash + Copy",
+        deserialize = "K: Deserialize<'de> + Eq + std::hash::Hash + Copy"
+    )
+)]
+pub struct Widgets<K: Eq + std::hash::Hash + Copy> {
+    cells: HashMap<K, WidgetKind>,
 }
 
-#[derive(Default, Serialize, Deserialize)]
-struct WidgetsRepr {
-    cells: Vec<((u32, u32), WidgetKind)>,
+impl<K: Eq + std::hash::Hash + Copy> Default for Widgets<K> {
+    fn default() -> Self {
+        Self {
+            cells: HashMap::new(),
+        }
+    }
 }
 
-impl From<WidgetsRepr> for Widgets {
-    fn from(repr: WidgetsRepr) -> Self {
+#[derive(Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "K: Serialize",
+    deserialize = "K: Deserialize<'de> + Eq + std::hash::Hash"
+))]
+struct WidgetsRepr<K> {
+    cells: Vec<(K, WidgetKind)>,
+}
+
+impl<K: Eq + std::hash::Hash + Copy> Default for WidgetsRepr<K> {
+    fn default() -> Self {
+        Self { cells: Vec::new() }
+    }
+}
+
+impl<K: Eq + std::hash::Hash + Copy> From<WidgetsRepr<K>> for Widgets<K> {
+    fn from(repr: WidgetsRepr<K>) -> Self {
         Widgets {
             cells: repr.cells.into_iter().collect(),
         }
     }
 }
 
-impl From<Widgets> for WidgetsRepr {
-    fn from(w: Widgets) -> Self {
+impl<K: Eq + std::hash::Hash + Copy> From<Widgets<K>> for WidgetsRepr<K> {
+    fn from(w: Widgets<K>) -> Self {
         WidgetsRepr {
             cells: w.cells.into_iter().collect(),
         }
     }
 }
 
-impl Widgets {
+impl<K: Eq + std::hash::Hash + Copy> Widgets<K> {
     /// The widget kind for `cell`, if any.
-    pub fn kind(&self, cell: (u32, u32)) -> Option<WidgetKind> {
+    pub fn kind(&self, cell: K) -> Option<WidgetKind> {
         self.cells.get(&cell).copied()
     }
 
     /// Whether `cell` is any widget (checkbox, slider, …).
-    pub fn is_widget(&self, cell: (u32, u32)) -> bool {
+    pub fn is_widget(&self, cell: K) -> bool {
         self.cells.contains_key(&cell)
     }
 
     /// Whether `cell` is a checkbox toggle.
-    pub fn is_toggle(&self, cell: (u32, u32)) -> bool {
+    pub fn is_toggle(&self, cell: K) -> bool {
         matches!(self.kind(cell), Some(WidgetKind::Toggle))
     }
 
     /// Whether `cell` is a slider.
-    pub fn is_slider(&self, cell: (u32, u32)) -> bool {
+    pub fn is_slider(&self, cell: K) -> bool {
         matches!(self.kind(cell), Some(WidgetKind::Slider { .. }))
     }
 
     /// Whether `cell` is a clickable button.
-    pub fn is_button(&self, cell: (u32, u32)) -> bool {
+    pub fn is_button(&self, cell: K) -> bool {
         matches!(self.kind(cell), Some(WidgetKind::Button))
     }
 
     /// Whether `cell` is a progress bar.
-    pub fn is_progress_bar(&self, cell: (u32, u32)) -> bool {
+    pub fn is_progress_bar(&self, cell: K) -> bool {
         matches!(self.kind(cell), Some(WidgetKind::ProgressBar { .. }))
     }
 
     /// Set (or clear, with `kind = None`) the widget on `cell`.
-    pub fn set(&mut self, cell: (u32, u32), kind: Option<WidgetKind>) {
+    pub fn set(&mut self, cell: K, kind: Option<WidgetKind>) {
         match kind {
             Some(k) => {
                 self.cells.insert(cell, k);
@@ -124,7 +152,7 @@ impl Widgets {
 
     /// Convenience: turn `cell` into a checkbox (`on`) or remove its
     /// widget treatment entirely (`!on`).
-    pub fn set_toggle(&mut self, cell: (u32, u32), on: bool) {
+    pub fn set_toggle(&mut self, cell: K, on: bool) {
         if on {
             self.set(cell, Some(WidgetKind::Toggle));
         } else {
@@ -134,7 +162,7 @@ impl Widgets {
 
     /// Convenience: turn `cell` into a slider with the default range,
     /// or clear it (`!on`).
-    pub fn set_slider_default(&mut self, cell: (u32, u32), on: bool) {
+    pub fn set_slider_default(&mut self, cell: K, on: bool) {
         if on {
             self.set(cell, Some(WidgetKind::DEFAULT_SLIDER));
         } else {
@@ -144,13 +172,13 @@ impl Widgets {
 
     /// Set a slider on `cell` with an explicit `[min, max]` range.
     /// Replaces any prior widget kind on the cell.
-    pub fn set_slider(&mut self, cell: (u32, u32), min: f64, max: f64) {
+    pub fn set_slider(&mut self, cell: K, min: f64, max: f64) {
         self.set(cell, Some(WidgetKind::Slider { min, max }));
     }
 
     /// Convenience: turn `cell` into a clickable button (`on`) or
     /// clear its widget treatment (`!on`).
-    pub fn set_button(&mut self, cell: (u32, u32), on: bool) {
+    pub fn set_button(&mut self, cell: K, on: bool) {
         if on {
             self.set(cell, Some(WidgetKind::Button));
         } else {
@@ -160,7 +188,7 @@ impl Widgets {
 
     /// Turn `cell` into a progress bar with the given `max`. Replaces
     /// any prior widget kind.
-    pub fn set_progress_bar(&mut self, cell: (u32, u32), max: f64) {
+    pub fn set_progress_bar(&mut self, cell: K, max: f64) {
         self.set(cell, Some(WidgetKind::ProgressBar { max }));
     }
 
@@ -181,13 +209,13 @@ impl Widgets {
     }
 
     /// All `(cell, kind)` pairs. Used by state-IO snapshots.
-    pub fn iter(&self) -> impl Iterator<Item = (&(u32, u32), &WidgetKind)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &WidgetKind)> {
         self.cells.iter()
     }
 
     /// Replace the map with `(cell, kind)` pairs. Used by state-IO
     /// snapshots when restoring a saved workbook.
-    pub fn replace_with(&mut self, entries: impl IntoIterator<Item = ((u32, u32), WidgetKind)>) {
+    pub fn replace_with(&mut self, entries: impl IntoIterator<Item = (K, WidgetKind)>) {
         self.cells = entries.into_iter().collect();
     }
 }
@@ -352,15 +380,30 @@ mod tests {
     }
 
     #[test]
+    fn widgets_generic_with_hex_coord_round_trip() {
+        use tescellate_tess::hex::HexCoord;
+        let mut w: Widgets<HexCoord> = Widgets::default();
+        w.set_button(HexCoord::new(2, 2), true);
+        w.set_toggle(HexCoord::new(-1, 3), true);
+
+        let json = serde_json::to_string(&w).unwrap();
+        let back: Widgets<HexCoord> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.count(), 2);
+        assert!(back.is_button(HexCoord::new(2, 2)));
+        assert!(back.is_toggle(HexCoord::new(-1, 3)));
+    }
+
+    #[test]
     fn widgets_round_trip_with_every_kind() {
-        let mut w = Widgets::default();
+        let mut w: Widgets<(u32, u32)> = Widgets::default();
         w.set_toggle((0, 0), true);
         w.set_slider((1, 1), -5.0, 25.0);
         w.set_button((2, 2), true);
         w.set_progress_bar((3, 3), 500.0);
 
         let json = serde_json::to_string(&w).unwrap();
-        let back: Widgets = serde_json::from_str(&json).unwrap();
+        let back: Widgets<(u32, u32)> = serde_json::from_str(&json).unwrap();
 
         assert_eq!(back.count(), 4);
         assert!(back.is_toggle((0, 0)));

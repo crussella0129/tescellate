@@ -490,7 +490,11 @@ pub struct TescellateApp {
     /// The in-progress new rule in that editor.
     cond_draft: CondDraft,
     /// Square-sheet cells that render as interactive boolean toggles.
-    widgets: Widgets,
+    square_widgets: Widgets<(u32, u32)>,
+    /// Hex-sheet widgets. Mirrors `square_widgets` but keyed by
+    /// [`HexCoord`]. Populated by the Hex Game demo seed and by future
+    /// per-lattice ribbon paths.
+    hex_widgets: Widgets<HexCoord>,
     /// The formula bar's edit buffer — mirrors the active cell's source
     /// except while the bar itself is being edited.
     formula_bar: String,
@@ -587,9 +591,10 @@ impl TescellateApp {
         // resource tiles around the centre and a harvest cell that
         // sums the six edge-neighbours via `NEIGHBORS()`. Drag a tile
         // to edit its value; the harvest cell updates through the DAG
-        // in step. The dice-button + counter half of the demo is
-        // deferred to a later PR — square-sheet widgets need
-        // generalising to hex coords first.
+        // in step. The dice-button + counter half of the demo seeds
+        // a Roll Dice button at H(2,2) (source `=RANDBETWEEN(1,6)`,
+        // rerolls on every click) and a Score readout at H(3,2) that
+        // mirrors the dice value.
         let hex_sheet = engine.add_sheet("Hex Game", LatticeKind::HexPointy);
         for (addr, src) in [
             // The center: a label, plus a Harvest cell directly below
@@ -604,6 +609,13 @@ impl TescellateApp {
             ("H(0,-1)", "=6"), // wood
             ("H(1,-1)", "=2"), // ore
             ("H(-1,1)", "=7"), // grain
+            // Roll Dice — the cell's source IS the button's label;
+            // clicking re-fires the source through the engine, which
+            // for RANDBETWEEN advances the PRNG.
+            ("H(2,2)", "=RANDBETWEEN(1,6)"),
+            // Score readout — mirrors the dice value so a dedicated
+            // cell shows the most recent roll in plain form.
+            ("H(3,2)", "=H(2,2)"),
         ] {
             let _ = engine.set_cell(hex_sheet, addr, Some(src));
         }
@@ -698,8 +710,8 @@ impl TescellateApp {
             }],
             cond_window_open: false,
             cond_draft: CondDraft::default(),
-            widgets: {
-                let mut w = Widgets::default();
+            square_widgets: {
+                let mut w: Widgets<(u32, u32)> = Widgets::default();
                 w.set_toggle((3, 1), true);
                 // Budget-demo sliders on B5..B8 (Rent / Food /
                 // Transport / Savings Goal). 0–3000 range per the
@@ -713,6 +725,17 @@ impl TescellateApp {
                 // Savings Goal so the bar fills as the user
                 // under-spends. Read-only.
                 w.set_progress_bar((1, 12), 500.0);
+                w
+            },
+            hex_widgets: {
+                let mut w: Widgets<HexCoord> = Widgets::default();
+                // Hex Game demo (Demo B completion): a Roll Dice
+                // Button at H(2,2) whose source `=RANDBETWEEN(1,6)`
+                // re-fires on every click (RANDBETWEEN advances the
+                // PRNG each eval). Pair the dice cell with a
+                // separate Score readout cell that mirrors the dice
+                // value — seeded by T-201e's set_cell calls below.
+                w.set_button(HexCoord::new(2, 2), true);
                 w
             },
             formula_bar: String::new(),
@@ -1321,9 +1344,9 @@ impl TescellateApp {
             return;
         }
         let cells = self.square.selection.cells();
-        let all_on = cells.iter().all(|&c| self.widgets.is_toggle(c));
+        let all_on = cells.iter().all(|&c| self.square_widgets.is_toggle(c));
         for cell in cells {
-            self.widgets.set_toggle(cell, !all_on);
+            self.square_widgets.set_toggle(cell, !all_on);
         }
     }
 
@@ -1335,9 +1358,9 @@ impl TescellateApp {
             return;
         }
         let cells = self.square.selection.cells();
-        let all_on = cells.iter().all(|&c| self.widgets.is_slider(c));
+        let all_on = cells.iter().all(|&c| self.square_widgets.is_slider(c));
         for cell in cells {
-            self.widgets.set_slider_default(cell, !all_on);
+            self.square_widgets.set_slider_default(cell, !all_on);
         }
     }
 
@@ -1348,9 +1371,9 @@ impl TescellateApp {
             return;
         }
         let cells = self.square.selection.cells();
-        let all_on = cells.iter().all(|&c| self.widgets.is_button(c));
+        let all_on = cells.iter().all(|&c| self.square_widgets.is_button(c));
         for cell in cells {
-            self.widgets.set_button(cell, !all_on);
+            self.square_widgets.set_button(cell, !all_on);
         }
     }
 
@@ -1362,13 +1385,15 @@ impl TescellateApp {
             return;
         }
         let cells = self.square.selection.cells();
-        let all_on = cells.iter().all(|&c| self.widgets.is_progress_bar(c));
+        let all_on = cells
+            .iter()
+            .all(|&c| self.square_widgets.is_progress_bar(c));
         for cell in cells {
             if all_on {
-                self.widgets.set(cell, None);
+                self.square_widgets.set(cell, None);
             } else {
-                self.widgets
-                    .set_progress_bar(cell, widget::Widgets::DEFAULT_PROGRESS_MAX);
+                self.square_widgets
+                    .set_progress_bar(cell, widget::Widgets::<(u32, u32)>::DEFAULT_PROGRESS_MAX);
             }
         }
     }
@@ -3453,7 +3478,7 @@ impl TescellateApp {
                 }
                 // Widget cells (checkbox, slider) draw their own
                 // affordance in a later pass and skip the text pass.
-                if self.widgets.is_widget((c, r)) {
+                if self.square_widgets.is_widget((c, r)) {
                     continue;
                 }
                 let text = self.cell_text(c, r);
@@ -3587,14 +3612,14 @@ impl TescellateApp {
         // sliders. Each kind produces a (addr, source) write when the
         // user interacts; the writes apply as one edit per frame to
         // keep the engine recompute count bounded.
-        if !self.widgets.is_empty() {
+        if !self.square_widgets.is_empty() {
             let mut edits: Vec<(String, Option<String>)> = Vec::new();
             for r in 0..ROWS {
                 for c in 0..COLS {
                     if editing_cell == Some((c, r)) {
                         continue;
                     }
-                    let Some(kind) = self.widgets.kind((c, r)) else {
+                    let Some(kind) = self.square_widgets.kind((c, r)) else {
                         continue;
                     };
                     let rect = self.metrics.cell_rect(origin, c, r);
@@ -4101,6 +4126,69 @@ impl TescellateApp {
             }
         }
 
+        // Hex widgets — render Button + Toggle for cells in
+        // `hex_widgets`. Slider / ProgressBar fall through to the
+        // ordinary text render (those controls don't fit gracefully
+        // inside the 36-point hexagon; revisit if a user asks).
+        if !self.hex_widgets.is_empty() {
+            let editing_coord = self.edit.as_ref().map(|_| self.hex.selection.cursor);
+            let mut hex_edits: Vec<(HexCoord, Option<String>)> = Vec::new();
+            for (coord, kind) in self
+                .hex_widgets
+                .iter()
+                .map(|(c, k)| (*c, *k))
+                .collect::<Vec<_>>()
+            {
+                if editing_coord == Some(coord) || !hex_in_view(coord) {
+                    continue;
+                }
+                let centroid = self.hex_lattice.centroid(coord);
+                let center = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+                let rect = egui::Rect::from_center_size(
+                    center,
+                    egui::vec2(HEX_SIZE * 1.4, HEX_SIZE * 0.6),
+                );
+                let addr = hex_address(coord);
+                match kind {
+                    widget::WidgetKind::Button => {
+                        let label = self
+                            .engine
+                            .get_cell(self.hex.sheet_id, &addr)
+                            .and_then(|s| s.source)
+                            .unwrap_or_else(|| "Click".to_string());
+                        if ui.put(rect, egui::Button::new(label.clone())).clicked() {
+                            // Re-fire the source through the engine — for
+                            // `=RANDBETWEEN(...)` this advances the PRNG
+                            // and yields a fresh value.
+                            hex_edits.push((coord, Some(label)));
+                        }
+                    }
+                    widget::WidgetKind::Toggle => {
+                        let value = self
+                            .engine
+                            .get_cell(self.hex.sheet_id, &addr)
+                            .map(|s| s.value)
+                            .unwrap_or(CellValue::Empty);
+                        let mut checked = widget::bool_state(&value);
+                        if ui
+                            .put(rect, egui::Checkbox::new(&mut checked, ""))
+                            .changed()
+                        {
+                            hex_edits.push((coord, Some(widget::bool_source(checked).to_string())));
+                        }
+                    }
+                    // Slider / ProgressBar on hex falls through to the
+                    // ordinary text render (the cell value still shows).
+                    widget::WidgetKind::Slider { .. } | widget::WidgetKind::ProgressBar { .. } => {}
+                }
+            }
+            for (coord, source) in hex_edits {
+                let _ =
+                    self.engine
+                        .set_cell(self.hex.sheet_id, &hex_address(coord), source.as_deref());
+            }
+        }
+
         // The in-cell editor overlay, sized to sit within the hexagon.
         if let Some(edit) = &mut self.edit {
             let centroid = self.hex_lattice.centroid(self.hex.selection.cursor);
@@ -4584,8 +4672,10 @@ impl TescellateApp {
         let mut tri_formats = FormatMap::new();
         tri_formats.replace_with(self.triangle.formats.iter().map(|(k, v)| (*k, v.clone())));
 
-        let mut widgets = widget::Widgets::default();
-        widgets.replace_with(self.widgets.iter().map(|(k, v)| (*k, *v)));
+        let mut sq_widgets: widget::Widgets<(u32, u32)> = widget::Widgets::default();
+        sq_widgets.replace_with(self.square_widgets.iter().map(|(k, v)| (*k, *v)));
+        let mut hex_widgets: widget::Widgets<HexCoord> = widget::Widgets::default();
+        hex_widgets.replace_with(self.hex_widgets.iter().map(|(k, v)| (*k, *v)));
 
         UiSnapshot {
             active_sheet: active,
@@ -4594,7 +4684,8 @@ impl TescellateApp {
             square_formats: sq_formats,
             hex_formats,
             triangle_formats: tri_formats,
-            widgets,
+            square_widgets: sq_widgets,
+            hex_widgets,
             square_notes: self
                 .notes
                 .iter()
@@ -4640,8 +4731,10 @@ impl TescellateApp {
         self.triangle
             .formats
             .replace_with(s.triangle_formats.iter().map(|(k, v)| (*k, v.clone())));
-        self.widgets
-            .replace_with(s.widgets.iter().map(|(k, v)| (*k, *v)));
+        self.square_widgets
+            .replace_with(s.square_widgets.iter().map(|(k, v)| (*k, *v)));
+        self.hex_widgets
+            .replace_with(s.hex_widgets.iter().map(|(k, v)| (*k, *v)));
         self.notes.replace_with(s.square_notes);
         self.hex_notes.replace_with(s.hex_notes);
         self.triangle_notes.replace_with(s.triangle_notes);
