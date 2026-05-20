@@ -380,6 +380,21 @@ mod tests {
     }
 
     #[test]
+    fn widgets_generic_with_tri_coord_round_trip() {
+        use tescellate_tess::triangle::TriCoord;
+        let mut w: Widgets<TriCoord> = Widgets::default();
+        w.set_toggle(TriCoord::new(2, -1), true);
+        w.set_button(TriCoord::new(0, 0), true);
+
+        let json = serde_json::to_string(&w).unwrap();
+        let back: Widgets<TriCoord> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.count(), 2);
+        assert!(back.is_toggle(TriCoord::new(2, -1)));
+        assert!(back.is_button(TriCoord::new(0, 0)));
+    }
+
+    #[test]
     fn widgets_generic_with_hex_coord_round_trip() {
         use tescellate_tess::hex::HexCoord;
         let mut w: Widgets<HexCoord> = Widgets::default();

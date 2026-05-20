@@ -495,6 +495,12 @@ pub struct TescellateApp {
     /// [`HexCoord`]. Populated by the Hex Game demo seed and by future
     /// per-lattice ribbon paths.
     hex_widgets: Widgets<HexCoord>,
+    /// Triangle-sheet widgets. Mirrors `square_widgets`/`hex_widgets`
+    /// but keyed by [`TriCoord`]. Closes the ADR-005 per-lattice
+    /// symmetry — the triangle sheet now carries the same widget
+    /// surface as the other two. Same Button + Toggle support; Slider
+    /// and ProgressBar fall through to text render (ADR-006).
+    triangle_widgets: Widgets<TriCoord>,
     /// The formula bar's edit buffer — mirrors the active cell's source
     /// except while the bar itself is being edited.
     formula_bar: String,
@@ -643,6 +649,10 @@ impl TescellateApp {
             ("T(2,0)", "=4"),
             ("T(3,0)", "=6"),
             ("T(2,1)", "=T(2,0) + T(3,0)"),
+            // Toggle widget seed (paired with the triangle_widgets
+            // initialiser above). Starts unchecked so the user sees
+            // the canonical "blank checkbox" state on first launch.
+            ("T(2,-1)", "FALSE"),
         ] {
             let _ = engine.set_cell(triangle_sheet, addr, Some(src));
         }
@@ -736,6 +746,16 @@ impl TescellateApp {
                 // separate Score readout cell that mirrors the dice
                 // value — seeded by T-201e's set_cell calls below.
                 w.set_button(HexCoord::new(2, 2), true);
+                w
+            },
+            triangle_widgets: {
+                let mut w: Widgets<TriCoord> = Widgets::default();
+                // A small Toggle seed at T(2, -1) — outside the
+                // existing up/dn label pattern — so the triangle
+                // sheet has a visible widget surface to point at in
+                // docs/screenshots. The accompanying set_cell below
+                // initialises the cell to FALSE.
+                w.set_toggle(TriCoord::new(2, -1), true);
                 w
             },
             formula_bar: String::new(),
@@ -4478,6 +4498,67 @@ impl TescellateApp {
             }
         }
 
+        // Triangle widgets — Button + Toggle for cells in
+        // `triangle_widgets`. Slider/ProgressBar fall through to the
+        // ordinary text render (the inscribed rect of a 56-side
+        // equilateral triangle is too small for those controls; same
+        // deferral as hex per ADR-006).
+        if !self.triangle_widgets.is_empty() {
+            let editing_coord = self.edit.as_ref().map(|_| self.triangle.selection.cursor);
+            let mut tri_edits: Vec<(TriCoord, Option<String>)> = Vec::new();
+            for (coord, kind) in self
+                .triangle_widgets
+                .iter()
+                .map(|(c, k)| (*c, *k))
+                .collect::<Vec<_>>()
+            {
+                if editing_coord == Some(coord) || !triangle_in_view(coord) {
+                    continue;
+                }
+                let centroid = self.triangle_lattice.centroid(coord);
+                let center = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+                let rect = egui::Rect::from_center_size(
+                    center,
+                    egui::vec2(TRIANGLE_SIDE * 0.7, TRIANGLE_SIDE * 0.4),
+                );
+                let addr = triangle_address(coord);
+                match kind {
+                    widget::WidgetKind::Button => {
+                        let label = self
+                            .engine
+                            .get_cell(self.triangle.sheet_id, &addr)
+                            .and_then(|s| s.source)
+                            .unwrap_or_else(|| "Click".to_string());
+                        if ui.put(rect, egui::Button::new(label.clone())).clicked() {
+                            tri_edits.push((coord, Some(label)));
+                        }
+                    }
+                    widget::WidgetKind::Toggle => {
+                        let value = self
+                            .engine
+                            .get_cell(self.triangle.sheet_id, &addr)
+                            .map(|s| s.value)
+                            .unwrap_or(CellValue::Empty);
+                        let mut checked = widget::bool_state(&value);
+                        if ui
+                            .put(rect, egui::Checkbox::new(&mut checked, ""))
+                            .changed()
+                        {
+                            tri_edits.push((coord, Some(widget::bool_source(checked).to_string())));
+                        }
+                    }
+                    widget::WidgetKind::Slider { .. } | widget::WidgetKind::ProgressBar { .. } => {}
+                }
+            }
+            for (coord, source) in tri_edits {
+                let _ = self.engine.set_cell(
+                    self.triangle.sheet_id,
+                    &triangle_address(coord),
+                    source.as_deref(),
+                );
+            }
+        }
+
         // In-cell edit overlay at the cursor centroid.
         if let Some(edit) = &mut self.edit {
             let centroid = self
@@ -4676,6 +4757,8 @@ impl TescellateApp {
         sq_widgets.replace_with(self.square_widgets.iter().map(|(k, v)| (*k, *v)));
         let mut hex_widgets: widget::Widgets<HexCoord> = widget::Widgets::default();
         hex_widgets.replace_with(self.hex_widgets.iter().map(|(k, v)| (*k, *v)));
+        let mut tri_widgets: widget::Widgets<TriCoord> = widget::Widgets::default();
+        tri_widgets.replace_with(self.triangle_widgets.iter().map(|(k, v)| (*k, *v)));
 
         UiSnapshot {
             active_sheet: active,
@@ -4686,6 +4769,7 @@ impl TescellateApp {
             triangle_formats: tri_formats,
             square_widgets: sq_widgets,
             hex_widgets,
+            triangle_widgets: tri_widgets,
             square_notes: self
                 .notes
                 .iter()
@@ -4735,6 +4819,8 @@ impl TescellateApp {
             .replace_with(s.square_widgets.iter().map(|(k, v)| (*k, *v)));
         self.hex_widgets
             .replace_with(s.hex_widgets.iter().map(|(k, v)| (*k, *v)));
+        self.triangle_widgets
+            .replace_with(s.triangle_widgets.iter().map(|(k, v)| (*k, *v)));
         self.notes.replace_with(s.square_notes);
         self.hex_notes.replace_with(s.hex_notes);
         self.triangle_notes.replace_with(s.triangle_notes);
