@@ -4250,19 +4250,27 @@ impl eframe::App for TescellateApp {
                         _ => {}
                     }
                     // Per-cell language picker. Shows the active cell's
-                    // effective engine (its override, or the workbook
-                    // default if not overridden); selecting a value
-                    // records an override on the active cell.
+                    // engine: an explicit override, or `None` meaning
+                    // "inherit the workbook default". Picking "Default"
+                    // clears any override; picking a specific engine
+                    // sets one.
                     let (sheet, picker_addr) = self.active_target();
                     let snapshot = self.engine.get_cell(sheet, &picker_addr);
-                    let cell_override = snapshot.as_ref().and_then(|s| s.engine);
+                    let cell_override: Option<EngineKind> =
+                        snapshot.as_ref().and_then(|s| s.engine);
                     let default_engine = self.engine.default_engine();
-                    let effective = cell_override.unwrap_or(default_engine);
-                    let mut new_engine = effective;
+                    let mut new_choice: Option<EngineKind> = cell_override;
+                    let display = picker_label(cell_override, default_engine);
                     egui::ComboBox::from_id_salt("language_picker")
-                        .selected_text(engine_label(effective, cell_override.is_some()))
-                        .width(110.0)
+                        .selected_text(display)
+                        .width(140.0)
                         .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut new_choice,
+                                None,
+                                format!("Default ({})", engine_label(default_engine, true)),
+                            );
+                            ui.separator();
                             for kind in [
                                 EngineKind::ExcelLite,
                                 EngineKind::Python,
@@ -4270,16 +4278,14 @@ impl eframe::App for TescellateApp {
                                 EngineKind::RustNative,
                             ] {
                                 ui.selectable_value(
-                                    &mut new_engine,
-                                    kind,
+                                    &mut new_choice,
+                                    Some(kind),
                                     engine_label(kind, false),
                                 );
                             }
                         });
-                    if new_engine != effective {
-                        let _ = self
-                            .engine
-                            .set_cell_engine(sheet, &picker_addr, Some(new_engine));
+                    if new_choice != cell_override {
+                        let _ = self.engine.set_cell_engine(sheet, &picker_addr, new_choice);
                     }
                     ui.separator();
                     let width = ui.available_width();
@@ -4790,6 +4796,17 @@ fn engine_label(kind: EngineKind, is_override: bool) -> String {
         base.to_string()
     } else {
         format!("{base} (default)")
+    }
+}
+
+/// Picker selected-text for the formula-bar language ComboBox. The
+/// closed combo shows the cell's *intent*: a `None` override means
+/// "Default ({base})" because the cell follows the workbook default;
+/// an explicit override shows that engine's name verbatim.
+fn picker_label(cell_override: Option<EngineKind>, default_engine: EngineKind) -> String {
+    match cell_override {
+        None => format!("Default ({})", engine_label(default_engine, true)),
+        Some(kind) => engine_label(kind, true),
     }
 }
 
