@@ -188,6 +188,86 @@ fn randbetween_rejects_a_reversed_range() {
 }
 
 #[test]
+fn xlookup_exact_match_default() {
+    assert_eq!(num(r#"XLOOKUP("b", ["a","b","c"], [10,20,30])"#), 20.0);
+}
+
+#[test]
+fn xlookup_returns_if_not_found_when_provided() {
+    assert_eq!(
+        text(r#"XLOOKUP("z", ["a","b","c"], [10,20,30], "missing")"#),
+        "missing",
+    );
+}
+
+#[test]
+fn xlookup_errors_when_missing_and_no_default() {
+    assert!(eval_src(r#"XLOOKUP("z", ["a","b","c"], [10,20,30])"#).is_err());
+}
+
+#[test]
+fn xlookup_match_mode_exact_or_next_larger() {
+    // match_mode = 1 picks the next-larger value when no exact match.
+    assert_eq!(num(r#"XLOOKUP(2.5, [1,2,3], [10,20,30], "", 1)"#), 30.0);
+}
+
+#[test]
+fn xlookup_match_mode_exact_or_next_smaller() {
+    // match_mode = -1 picks the next-smaller value when no exact match.
+    assert_eq!(num(r#"XLOOKUP(2.5, [1,2,3], [10,20,30], "", -1)"#), 20.0);
+}
+
+#[test]
+fn xlookup_search_mode_minus_one_finds_last_match() {
+    // search_mode = -1 walks last → first, so the trailing "a" wins.
+    assert_eq!(
+        num(r#"XLOOKUP("a", ["a","b","a"], [1,2,3], "", 0, -1)"#),
+        3.0
+    );
+}
+
+#[test]
+fn xlookup_wildcard_match_mode_is_deferred() {
+    // match_mode = 2 is documented but not yet implemented; the engine
+    // surfaces a clear error rather than silently mis-matching.
+    assert!(eval_src(r#"XLOOKUP("b*", ["a","b","c"], [1,2,3], "", 2)"#).is_err());
+}
+
+#[test]
+fn stdev_dot_p_aliases_stdevp() {
+    // STDEV.P (Excel 2010 modern spelling) returns the same as STDEVP.
+    let dotted = num("STDEV.P([1,2,3,4,5])");
+    let legacy = num("STDEVP([1,2,3,4,5])");
+    assert!((dotted - legacy).abs() < 1e-12);
+}
+
+#[test]
+fn stdev_dot_s_aliases_stdev() {
+    let dotted = num("STDEV.S([1,2,3,4,5])");
+    let legacy = num("STDEV([1,2,3,4,5])");
+    assert!((dotted - legacy).abs() < 1e-12);
+}
+
+#[test]
+fn var_dot_p_aliases_varp() {
+    let dotted = num("VAR.P([1,2,3,4,5])");
+    let legacy = num("VARP([1,2,3,4,5])");
+    assert!((dotted - legacy).abs() < 1e-12);
+}
+
+#[test]
+fn var_dot_s_aliases_var() {
+    let dotted = num("VAR.S([1,2,3,4,5])");
+    let legacy = num("VAR([1,2,3,4,5])");
+    assert!((dotted - legacy).abs() < 1e-12);
+}
+
+#[test]
+fn mode_sngl_aliases_mode() {
+    assert_eq!(num("MODE.SNGL([1,2,2,3])"), num("MODE([1,2,2,3])"));
+}
+
+#[test]
 fn disk_is_an_alias_for_radius() {
     // Both should land at the same cell count: a square 3×3 around
     // A1 (the ctx anchor) = 9. The ctx only knows A1..A3; non-
