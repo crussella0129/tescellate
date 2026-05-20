@@ -3741,15 +3741,20 @@ impl TescellateApp {
             if coord == cursor {
                 continue;
             }
-            // Cells inside the selected range take the selection fill.
-            let fill = if self.hex.selection.contains(coord) {
+            // Cells inside the selected range take the selection fill
+            // AND the selection's thick stroke, so a multi-cell range
+            // reads as one connected highlight instead of a body-only
+            // tint with a thick border on the cursor alone.
+            let in_selection = self.hex.selection.contains(coord);
+            let fill = if in_selection {
                 sel_bg
             } else if self.find.is_match(CellId::Hex(coord)) {
                 egui::Color32::from_rgb(255, 236, 170)
             } else {
                 self.hex_effective_format(coord).fill.unwrap_or(cell_bg)
             };
-            self.paint_hex(&painter, origin, coord, fill, line, text_color);
+            let stroke = if in_selection { sel_stroke } else { line };
+            self.paint_hex(&painter, origin, coord, fill, stroke, text_color);
         }
         // The cursor hex is painted last so its ring sits above every
         // neighbour's shared border. While editing, the text editor
