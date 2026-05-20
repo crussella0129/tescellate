@@ -4,7 +4,11 @@
 
 A spreadsheet where cells are not stuck being squares and the flow of time itself becomes a tool.
 
-Tescellate is a DAG-evaluated workbook with **tessellating cell shapes** — squares, hexagons, triangles, parallelograms, and (eventually) any periodic tiling — and a **switchable formula language per cell**: Excel-style, Python (embedded via PyO3), or Rust (Rhai-preview with an optional rustc-compiled native path).
+Tescellate is a DAG-evaluated workbook with: 
+
+- **Tessellating Cell Shapes** — squares, hexagons, triangles and Voronoi cells, with unique conditional formatting capabilities in some cases
+- **Switchable formula language per cell**: Excel-style, Python (embedded via PyO3), or Rust (Rhai-preview with an optional rustc-compiled native path)
+- **Programmable Widgets & Real-Time vs. Static Functionality: Build actual mock applications and games from your spreadsheets. Make them usable with 'stage mode' - hides all ribbons and editing tools.
 
 > **Status: Phase 0** — foundation only. Nothing user-visible works yet. See [`PLAN.md`](./PLAN.md) for the architecture and roadmap.
 
