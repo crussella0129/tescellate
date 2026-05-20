@@ -1,4 +1,7 @@
-//! Math functions: ABS, ROUND, MOD, POWER, SQRT, EXP, LN, LOG, INT, TRUNC, SIGN.
+//! Math functions: ABS, ROUND, MOD, POWER, SQRT, EXP, LN, LOG, INT,
+//! TRUNC, SIGN, PI, RAND, RANDBETWEEN.
+
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::coerce::{arity_n, arity_range, to_number};
 use super::FunctionRegistry;
@@ -6,6 +9,32 @@ use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
 use tescellate_core::CellValue;
+
+/// Process-wide PRNG state shared by `RAND` and `RANDBETWEEN`. The
+/// state is mutated on every call (consecutive calls inside the same
+/// recompute return distinct values, matching what spreadsheet users
+/// expect). The engine is single-threaded so `Relaxed` ordering is
+/// fine; the atomic is just for `static mut` avoidance.
+///
+/// Seeded with a fixed non-zero constant — deterministic across the
+/// first call sequence after process start, which is what the tests
+/// rely on. A future enhancement can mix in the system clock when
+/// available (wasm needs a JS interop for that).
+static RNG_STATE: AtomicU64 = AtomicU64::new(0x9E3779B97F4A7C15);
+
+/// One step of an xorshift64* generator. Cheap, no dependencies,
+/// passes BigCrush — overkill for spreadsheet dice but free.
+fn next_u64() -> u64 {
+    let mut s = RNG_STATE.load(Ordering::Relaxed);
+    if s == 0 {
+        s = 1;
+    }
+    s ^= s << 13;
+    s ^= s >> 7;
+    s ^= s << 17;
+    RNG_STATE.store(s, Ordering::Relaxed);
+    s.wrapping_mul(0x2545F491_4F6CDD1D)
+}
 
 fn one_num(name: &str, args: &[Expr], ctx: &dyn EvalCtx) -> Result<f64, EvalError> {
     arity_n(name, args, 1)?;
@@ -139,6 +168,32 @@ pub fn pi(args: &[Expr], _ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
     Ok(CellValue::Number(std::f64::consts::PI))
 }
 
+/// `RAND()` — pseudo-random float in `[0, 1)`. Each call advances the
+/// generator, so two `RAND()` calls in the same recompute return
+/// different values.
+pub fn rand(args: &[Expr], _ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("RAND", args, 0)?;
+    // Top 53 bits of a u64 give a uniform-ish float in [0, 1).
+    let bits = next_u64() >> 11;
+    Ok(CellValue::Number(bits as f64 / (1u64 << 53) as f64))
+}
+
+/// `RANDBETWEEN(min, max)` — pseudo-random integer in `[min, max]`
+/// inclusive. Errors when `max < min`. Returned as
+/// `CellValue::Integer` so downstream `IF` / arithmetic doesn't have
+/// to coerce.
+pub fn randbetween(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_n("RANDBETWEEN", args, 2)?;
+    let min = to_number(&eval(&args[0], ctx)?)?.floor() as i64;
+    let max = to_number(&eval(&args[1], ctx)?)?.floor() as i64;
+    if max < min {
+        return Err(EvalError::Value("RANDBETWEEN: max must be >= min".into()));
+    }
+    let range = (max - min + 1) as u64;
+    let value = min + (next_u64() % range) as i64;
+    Ok(CellValue::Integer(value))
+}
+
 pub fn register(r: &mut FunctionRegistry) {
     r.add("ABS", abs);
     r.add("ROUND", round);
@@ -154,4 +209,6 @@ pub fn register(r: &mut FunctionRegistry) {
     r.add("TRUNC", trunc);
     r.add("SIGN", sign);
     r.add("PI", pi);
+    r.add("RAND", rand);
+    r.add("RANDBETWEEN", randbetween);
 }

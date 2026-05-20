@@ -151,6 +151,63 @@ fn binding_and_lambda_forms() {
 }
 
 #[test]
+fn randbetween_returns_an_integer_in_range_inclusive() {
+    // 100 trials so a degenerate "always returns the same number"
+    // implementation surfaces — the test still passes for the
+    // PRNG because the bounds check is the load-bearing invariant.
+    for _ in 0..100 {
+        match eval_src("RANDBETWEEN(2, 12)") {
+            Ok(CellValue::Integer(i)) => {
+                assert!(
+                    (2..=12).contains(&i),
+                    "RANDBETWEEN drew {i} outside [2, 12]"
+                );
+            }
+            other => panic!("RANDBETWEEN expected Integer, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn randbetween_degenerate_range_returns_that_value() {
+    // min == max collapses to exactly that value, every time.
+    for _ in 0..10 {
+        assert_eq!(
+            eval_src("RANDBETWEEN(7, 7)").unwrap(),
+            CellValue::Integer(7),
+        );
+    }
+}
+
+#[test]
+fn randbetween_rejects_a_reversed_range() {
+    assert!(
+        eval_src("RANDBETWEEN(10, 1)").is_err(),
+        "RANDBETWEEN with max < min must error",
+    );
+}
+
+#[test]
+fn rand_returns_a_unit_interval_float() {
+    // Two draws are very unlikely to repeat — confirms the PRNG
+    // actually advances on each call.
+    let a = match eval_src("RAND()") {
+        Ok(CellValue::Number(n)) => n,
+        other => panic!("RAND expected Number, got {other:?}"),
+    };
+    let b = match eval_src("RAND()") {
+        Ok(CellValue::Number(n)) => n,
+        other => panic!("RAND expected Number, got {other:?}"),
+    };
+    assert!((0.0..1.0).contains(&a), "RAND drew {a} outside [0, 1)");
+    assert!((0.0..1.0).contains(&b), "RAND drew {b} outside [0, 1)");
+    assert_ne!(
+        a, b,
+        "two RAND() calls returned the same value — PRNG stalled"
+    );
+}
+
+#[test]
 fn errors() {
     // A formula that cannot produce a value evaluates to an error.
     assert!(eval_src("1 / 0").is_err(), "division by zero");
