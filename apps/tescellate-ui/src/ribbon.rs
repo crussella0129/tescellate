@@ -155,31 +155,32 @@ fn ribbon_group(
 
 /// Estimated widths (points) of each ribbon group in the order they
 /// render, used to decide which trailing groups collapse into the
-/// More menu. The numbers come from measuring actual rendered
-/// widths in the running app — v115 used 15-20% larger estimates,
-/// which left a group's worth of empty space before the ⋮ button.
+/// More menu. v119 trims another ~6% off each estimate — the v117
+/// numbers were still leaving roughly a quarter-group of empty space
+/// to the right of the last inline group at most window widths.
 const GROUP_WIDTHS: &[f32] = &[
-    115.0, // History (Undo, Redo)
-    260.0, // Clipboard (Copy, Cut, Paste, Paste values, Painter)
-    440.0, // Font (B, I, S, U, Wrap, Size combo, Text colour, Fill colour)
-    250.0, // Alignment (L, C, R, V Top, Mid, Btm)
-    230.0, // Number (combo, +.0, -.0, (-))
-    150.0, // Borders (All, Outer, None)
-    200.0, // Cells (Clear, Conditional…, Checkbox)
-    85.0,  // Data (AutoSum)
-    100.0, // View (?, Theme)
+    108.0, // History (Undo, Redo)
+    244.0, // Clipboard (Copy, Cut, Paste, Paste values, Painter)
+    410.0, // Font (B, I, S, U, Wrap, Size combo, Text colour, Fill colour)
+    232.0, // Alignment (L, C, R, V Top, Mid, Btm)
+    213.0, // Number (combo, +.0, -.0, (-))
+    138.0, // Borders (All, Outer, None)
+    184.0, // Cells (Clear, Conditional…, Checkbox)
+    78.0,  // Data (AutoSum)
+    92.0,  // View (?, Theme)
 ];
 
 /// Width reserved at the right edge for the "More ⋮" overflow menu.
-/// `⋮` is a small symbol — a `menu_button` around it is about 28 px
-/// wide, plus a few pixels of margin so the button doesn't crowd the
-/// last inline group.
-const MORE_WIDTH: f32 = 32.0;
+/// `⋮` is a small symbol — a bare `menu_button` around it is about
+/// 24 px wide. 26 leaves a couple of pixels of breathing room without
+/// reserving space the button doesn't actually use.
+const MORE_WIDTH: f32 = 26.0;
 
 /// Right-edge buffer kept between the last group and the window's
-/// right edge / the More button. Tight — the v115 buffer was 16 px
-/// and left visible slack.
-const RIGHT_MARGIN: f32 = 4.0;
+/// right edge / the More button. egui's item_spacing already gives
+/// the inline frames a visual gap, so RIGHT_MARGIN can be zero — the
+/// buffer was just absorbing slop from the old estimates.
+const RIGHT_MARGIN: f32 = 0.0;
 
 /// Inner buttons of the History group — undo/redo.
 fn group_history(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<RibbonAction> {
@@ -896,8 +897,8 @@ mod tests {
 
     #[test]
     fn fit_count_overflows_trailing_groups_when_window_is_narrow() {
-        // 200+200+200=600 > 300 budget. With MORE_WIDTH=32 and
-        // RIGHT_MARGIN=4: budget = 300 - 32 - 4 = 264. Only the
+        // 200+200+200=600 > 300 budget. With MORE_WIDTH=26 and
+        // RIGHT_MARGIN=0: budget = 300 - 26 - 0 = 274. Only the
         // first group (200) fits — the second would push acc to 400.
         assert_eq!(fit_count(&[200.0, 200.0, 200.0], 300.0), 1);
     }
@@ -911,23 +912,31 @@ mod tests {
 
     #[test]
     fn fit_count_keeps_all_groups_at_the_exact_breakpoint() {
-        // total=200, RIGHT_MARGIN=4 -> everything fits at avail=204.
-        assert_eq!(fit_count(&[100.0, 100.0], 204.0), 2);
+        // total=200, RIGHT_MARGIN=0 -> everything fits at avail=200.
+        assert_eq!(fit_count(&[100.0, 100.0], 200.0), 2);
         // Just below the breakpoint -> overflow path engages and at
-        // avail=203 budget = 203-32-4 = 167; first group (100) fits,
+        // avail=199 budget = 199-26-0 = 173; first group (100) fits,
         // second (acc=200) overflows.
-        assert_eq!(fit_count(&[100.0, 100.0], 203.0), 1);
+        assert_eq!(fit_count(&[100.0, 100.0], 199.0), 1);
     }
 
     #[test]
-    fn fit_count_tightens_overflow_compared_to_v115_estimates() {
-        // Regression guard for v116's tighter budget. At a real
-        // laptop width (1366 px) v115's estimates returned 4 groups
-        // inline — leaving a Font-group-sized gap to the right of
-        // the last visible group. v116 should pack at least 5 in.
+    fn fit_count_tightens_overflow_at_common_window_widths() {
+        // Regression guard: v117's GROUP_WIDTHS fit 4 inline groups
+        // at 1280, 5 at 1366 and 1440. v119's tighter estimates fit
+        // one more group at each common width below 4K — closing the
+        // ~0.25-block trailing gap the user reported.
+        assert!(
+            fit_count(GROUP_WIDTHS, 1280.0) >= 5,
+            "v119 should fit ≥5 groups at 1280px"
+        );
         assert!(
             fit_count(GROUP_WIDTHS, 1366.0) >= 5,
-            "v116 should fit ≥5 groups at 1366px"
+            "v119 should fit ≥5 groups at 1366px"
+        );
+        assert!(
+            fit_count(GROUP_WIDTHS, 1440.0) >= 6,
+            "v119 should fit ≥6 groups at 1440px"
         );
     }
 }
