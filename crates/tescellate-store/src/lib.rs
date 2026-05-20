@@ -243,6 +243,60 @@ mod tests {
     }
 
     #[test]
+    fn ui_state_default_is_empty_object() {
+        let ui = UiState::default();
+        // Default is null (transparent wrapper around `Value::default()`),
+        // but `empty()` is the canonical empty-object form. Both satisfy
+        // `is_empty` and round-trip into the store layer.
+        assert!(ui.is_empty());
+        assert!(UiState::empty().is_empty());
+        let json = serde_json::to_value(UiState::empty()).unwrap();
+        assert_eq!(json, serde_json::json!({}));
+    }
+
+    #[test]
+    fn round_trip_preserves_ui_state() {
+        let wb = sample();
+        let ui: UiState = serde_json::json!({
+            "answer": 42,
+            "list": [1, 2, 3],
+            "nested": { "stage_mode": true, "active_sheet": "Hex" }
+        })
+        .into();
+
+        let bytes = save_full_to_bytes(&wb, &ui).unwrap();
+        let (wb_back, ui_back) = load_full_from_bytes(&bytes).unwrap();
+
+        assert_eq!(wb_back.meta.title, "test");
+        assert_eq!(ui_back, ui);
+    }
+
+    #[test]
+    fn reads_v0_as_empty_ui_state() {
+        // Hand-build a v0 zip: manifest with format_version: 0, workbook.json,
+        // and *no* ui.json. The new loader must accept it and yield
+        // UiState::default().
+        let wb = sample();
+        let wb_bytes = serde_json::to_vec(&wb).unwrap();
+        let mut v0_zip = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(Cursor::new(&mut v0_zip));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            w.start_file("manifest.json", opts).unwrap();
+            w.write_all(br#"{"format_version": 0, "engines": ["excel_lite"]}"#)
+                .unwrap();
+            w.start_file("workbook.json", opts).unwrap();
+            w.write_all(&wb_bytes).unwrap();
+            w.finish().unwrap();
+        }
+
+        let (wb_back, ui_back) = load_full_from_bytes(&v0_zip).unwrap();
+        assert_eq!(wb_back.meta.title, "test");
+        assert_eq!(ui_back, UiState::default());
+    }
+
+    #[test]
     fn refuses_unknown_format_version() {
         let wb = sample();
         let mut bytes = save_to_bytes(&wb).unwrap();

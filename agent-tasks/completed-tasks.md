@@ -11,3 +11,9 @@
 - **Completed:** 2026-05-20T17:45:00Z
 - **Files modified:** crates/tescellate-store/src/lib.rs
 - **Commit:** `715c4ec`
+
+## T-003 (sprint 0)
+- **Description:** Round-trip + v0-tolerance + UiState default tests in `tescellate-store`.
+- **Completed:** 2026-05-20T17:50:00Z
+- **Files modified:** crates/tescellate-store/src/lib.rs
+- **Commit:** `04c2d90`
