@@ -104,3 +104,34 @@ Slider and ProgressBar fall through to the ordinary text render —
 display. If a real use case lands, the right answer is a different
 control shape (vertical handle inside the hex polygon), not a layout
 tweak to the existing rectangular slider.
+
+## ADR-007 — Lexer accepts `.<letters>` continuations after idents (sprint 3)
+**Date:** 2026-05-20
+**Status:** Adopted, shipped in v147 (PR #178).
+
+`lex_ident_or_ref` learned to consume `.<letters>` runs after the
+alphanumeric identifier tail. This lets Excel's modern dotted-name
+functions (STDEV.P, VAR.S, COVARIANCE.P, MODE.SNGL, RANK.EQ, …) lex
+as a single `Ident` and register against the function registry under
+their dotted spelling.
+
+Why letters-only after the dot: float literals like `3.14` start with
+a digit and take the `lex_number` branch, so they're unaffected.
+Restricting the continuation to alphabetic chars also keeps the rule
+visually distinct — `A1.X` doesn't get swallowed into a strange ident
+because `A1` is a CellRef token before the dot rule runs.
+
+## ADR-008 — XLOOKUP ships parallel-array semantics; 2D-result variant deferred (sprint 3)
+**Date:** 2026-05-20
+**Status:** Adopted, shipped in v147.
+
+Sprint 3's XLOOKUP requires `lookup_array.len() == result_array.len()`
+and indexes into the flattened result by position. Excel's "return a
+whole row from a 2D table" variant is a follow-up that pairs with the
+cell-reference-shape work needed for OFFSET / INDIRECT.
+
+Why this scope: the parallel-array form is the dominant use case (per
+Microsoft's docs and StackOverflow patterns), the implementation is
+clean, and shipping it now unblocks the 70-80% of XLOOKUP queries
+without committing to a half-finished 2D shape that would need
+backwards-incompat changes when the full ref system lands.
