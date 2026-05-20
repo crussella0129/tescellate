@@ -40,3 +40,39 @@ wire against without churning the on-disk format mid-flight.
 
 The `TescellateApp::capture_state` / `restore_state` methods are
 gated `#[allow(dead_code)]` until sprint 1 calls them.
+
+## ADR-003 — `rfd` carries `gtk3` feature on wasm32 (sprint 1)
+**Date:** 2026-05-20
+**Status:** Adopted, shipped in v145 (PR #176).
+
+`rfd 0.14`'s build script unconditionally panics if neither `gtk3` nor
+`xdg-portal` is enabled, even when targeting wasm32 where the
+wasm-specific codepath runs and no native backend is linked.
+`xdg-portal` brings a transitive requirement on `tokio` or `async-std`;
+`gtk3` does not. We pick `gtk3` on wasm32 only — the gtk system libs
+never link on wasm32 because all the gtk-using rfd code is
+`cfg(not(target_arch = "wasm32"))`-gated. Native targets use the
+default backend selection (ComDlg32 on Windows, native dialog on macOS,
+gtk3 on Linux).
+
+Revisit if rfd 0.15+ ships a "wasm-only" feature that skips the build
+script check.
+
+## ADR-004 — `mark_dirty` over-fires; autosave debounce absorbs the cost (sprint 1)
+**Date:** 2026-05-20
+**Status:** Adopted, shipped in v145.
+
+`mark_dirty()` is called centrally at command-dispatch and
+ribbon-action-dispatch — once per user action, not once per genuine
+state mutation. That means Save itself, Find, Help, Zoom, etc. all flip
+the dirty bit even though they don't change persistent state. The 2 s
+`maybe_autosave` debounce + the explicit `dirty = false` in Save / Open
+makes the over-fire cost a wash in practice (a no-op redundant write).
+This is a deliberate trade against the alternative of threading
+mark_dirty through every individual mutation site, which is the kind of
+audit that rots silently when a new mutation site is added without
+updating it.
+
+If autosave becomes a hotspot in the future, the right tightening is a
+"genuinely-mutating commands" allowlist in `apply()`, not adding
+mark_dirty to each call site.
