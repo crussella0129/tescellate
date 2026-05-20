@@ -766,7 +766,6 @@ impl TescellateApp {
     }
 
     /// The triangle-sheet cell value used by conditional formatting.
-    #[allow(dead_code)]
     fn triangle_cell_value(&self, coord: TriCoord) -> CellValue {
         self.engine
             .get_cell(self.triangle.sheet_id, &triangle_address(coord))
@@ -774,11 +773,16 @@ impl TescellateApp {
             .unwrap_or_default()
     }
 
-    /// The effective cell format for a triangle-sheet cell — base format
-    /// plus any conditional-rule overrides. (Conditional formatting
-    /// isn't yet wired on the triangle sheet; this is the hook for it.)
+    /// The effective cell format for a triangle-sheet cell — base
+    /// format plus any conditional-rule overrides for the cell's
+    /// current value. Cond rules apply uniformly across every sheet.
     fn triangle_effective_format(&self, coord: TriCoord) -> CellFormat {
-        self.triangle.formats.get(coord)
+        let base = self.triangle.formats.get(coord);
+        if self.cond_rules.is_empty() {
+            base
+        } else {
+            conditional::effective_format(&base, &self.triangle_cell_value(coord), &self.cond_rules)
+        }
     }
 
     /// The raw source of the active square cell (the selection cursor).
