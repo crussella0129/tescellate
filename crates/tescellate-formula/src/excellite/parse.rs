@@ -26,13 +26,19 @@ const MAX_EXPR_DEPTH: u32 = 128;
 /// canonical address string. Otherwise return `None` and let the parser
 /// keep it as a function call.
 ///
-/// Today: `H(int, int)` → `H(q,r)`. Hooks for triangle, parallelogram,
-/// Archimedean polygon codes, etc. land in their respective phases.
+/// Today: `H(int, int)` → `H(q,r)` for hex; `T(int, int)` → `T(col,row)`
+/// for triangle. Hooks for parallelogram and other lattices land in
+/// their respective phases.
 fn recognise_lattice_address(name: &str, args: &[Expr]) -> Option<String> {
     if name == "H" && args.len() == 2 {
         let q = literal_int(&args[0])?;
         let r = literal_int(&args[1])?;
         return Some(format!("H({q},{r})"));
+    }
+    if name == "T" && args.len() == 2 {
+        let col = literal_int(&args[0])?;
+        let row = literal_int(&args[1])?;
+        return Some(format!("T({col},{row})"));
     }
     None
 }
