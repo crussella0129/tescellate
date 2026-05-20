@@ -101,6 +101,35 @@ impl GridMetrics {
         self.row_h.insert(row, height.max(MIN_ROW_H));
     }
 
+    /// All non-default column widths, as `(col, width)` pairs. Used by
+    /// the state-IO snapshot to round-trip user-resized columns.
+    pub fn col_widths_iter(&self) -> impl Iterator<Item = (u32, f32)> + '_ {
+        self.col_w.iter().map(|(c, w)| (*c, *w))
+    }
+
+    /// All non-default row heights, as `(row, height)` pairs.
+    pub fn row_heights_iter(&self) -> impl Iterator<Item = (u32, f32)> + '_ {
+        self.row_h.iter().map(|(r, h)| (*r, *h))
+    }
+
+    /// Replace stored col widths / row heights from `(idx, size)` pairs.
+    /// Sizes below the per-axis minimum are clamped on the way in. Used
+    /// by state-IO snapshots when restoring a saved workbook.
+    pub fn replace_with(
+        &mut self,
+        col_widths: impl IntoIterator<Item = (u32, f32)>,
+        row_heights: impl IntoIterator<Item = (u32, f32)>,
+    ) {
+        self.col_w = col_widths
+            .into_iter()
+            .map(|(c, w)| (c, w.max(MIN_COL_W)))
+            .collect();
+        self.row_h = row_heights
+            .into_iter()
+            .map(|(r, h)| (r, h.max(MIN_ROW_H)))
+            .collect();
+    }
+
     /// X of a column's left edge, relative to the grid origin. Column 0
     /// starts just past the row-header band.
     pub fn col_left(&self, col: u32) -> f32 {

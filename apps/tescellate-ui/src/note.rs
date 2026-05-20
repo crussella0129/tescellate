@@ -59,6 +59,17 @@ impl<K: Eq + std::hash::Hash + Copy> NoteMap<K> {
     pub fn count(&self) -> usize {
         self.notes.len()
     }
+
+    /// All `(cell, note)` pairs. Used by state-IO snapshots.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &str)> {
+        self.notes.iter().map(|(k, v)| (k, v.as_str()))
+    }
+
+    /// Replace the map with `(cell, text)` pairs. Used by state-IO
+    /// snapshots when restoring a saved workbook.
+    pub fn replace_with(&mut self, entries: impl IntoIterator<Item = (K, String)>) {
+        self.notes = entries.into_iter().collect();
+    }
 }
 
 #[cfg(test)]

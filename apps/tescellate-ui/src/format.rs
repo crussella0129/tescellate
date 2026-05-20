@@ -380,12 +380,43 @@ pub fn adjust_decimals(format: NumberFormat, delta: i32) -> NumberFormat {
 /// A cell absent from the map is unstyled, so an empty map is a plain
 /// sheet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "K: Serialize + Eq + std::hash::Hash",
-    deserialize = "K: Deserialize<'de> + Eq + std::hash::Hash"
-))]
+#[serde(
+    from = "FormatMapRepr<K>",
+    into = "FormatMapRepr<K>",
+    bound(
+        serialize = "K: Serialize + Eq + std::hash::Hash + Copy",
+        deserialize = "K: Deserialize<'de> + Eq + std::hash::Hash + Copy"
+    )
+)]
 pub struct FormatMap<K> {
     formats: HashMap<K, CellFormat>,
+}
+
+/// Vec-of-pair on-disk form for `FormatMap` (JSON object keys must be
+/// strings; tuple/struct keys won't serialize through the HashMap path).
+#[derive(Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "K: Serialize",
+    deserialize = "K: Deserialize<'de> + Eq + std::hash::Hash"
+))]
+struct FormatMapRepr<K> {
+    entries: Vec<(K, CellFormat)>,
+}
+
+impl<K: Eq + std::hash::Hash + Copy> From<FormatMapRepr<K>> for FormatMap<K> {
+    fn from(r: FormatMapRepr<K>) -> Self {
+        FormatMap {
+            formats: r.entries.into_iter().collect(),
+        }
+    }
+}
+
+impl<K: Eq + std::hash::Hash + Copy> From<FormatMap<K>> for FormatMapRepr<K> {
+    fn from(m: FormatMap<K>) -> Self {
+        FormatMapRepr {
+            entries: m.formats.into_iter().collect(),
+        }
+    }
 }
 
 impl<K> Default for FormatMap<K> {
@@ -421,6 +452,17 @@ impl<K: Eq + std::hash::Hash + Copy> FormatMap<K> {
     /// How many cells carry non-default formatting.
     pub fn styled_count(&self) -> usize {
         self.formats.len()
+    }
+
+    /// All `(cell, format)` pairs. Used by state-IO snapshots.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &CellFormat)> {
+        self.formats.iter()
+    }
+
+    /// Replace the map with `(cell, format)` pairs. Used by state-IO
+    /// snapshots when restoring a saved workbook.
+    pub fn replace_with(&mut self, entries: impl IntoIterator<Item = (K, CellFormat)>) {
+        self.formats = entries.into_iter().collect();
     }
 }
 

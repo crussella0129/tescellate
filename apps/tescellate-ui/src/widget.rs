@@ -179,6 +179,17 @@ impl Widgets {
     pub fn count(&self) -> usize {
         self.cells.len()
     }
+
+    /// All `(cell, kind)` pairs. Used by state-IO snapshots.
+    pub fn iter(&self) -> impl Iterator<Item = (&(u32, u32), &WidgetKind)> {
+        self.cells.iter()
+    }
+
+    /// Replace the map with `(cell, kind)` pairs. Used by state-IO
+    /// snapshots when restoring a saved workbook.
+    pub fn replace_with(&mut self, entries: impl IntoIterator<Item = ((u32, u32), WidgetKind)>) {
+        self.cells = entries.into_iter().collect();
+    }
 }
 
 /// A toggle cell's checkbox state — checked only when the cell currently

@@ -4337,6 +4337,92 @@ impl TescellateApp {
             }
         }
     }
+
+    /// Snapshot the persistent slice of the app state for serialization
+    /// alongside the workbook. See [`crate::state_io::UiSnapshot`]. The
+    /// `#[allow(dead_code)]` is because the dialog/autosave wiring that
+    /// calls this lands in a follow-up PR; the method is here so the
+    /// snapshot contract is reviewable as a self-contained unit.
+    #[allow(dead_code)]
+    pub(crate) fn capture_state(&self) -> crate::state_io::UiSnapshot {
+        use crate::state_io::{ActiveSheetTag, UiSnapshot};
+        let active = match self.active {
+            ActiveSheet::Square => ActiveSheetTag::Square,
+            ActiveSheet::Hex => ActiveSheetTag::Hex,
+            ActiveSheet::Triangle => ActiveSheetTag::Triangle,
+        };
+        let mut sq_formats = FormatMap::new();
+        sq_formats.replace_with(self.square.formats.iter().map(|(k, v)| (*k, v.clone())));
+        let mut hex_formats = FormatMap::new();
+        hex_formats.replace_with(self.hex.formats.iter().map(|(k, v)| (*k, v.clone())));
+        let mut tri_formats = FormatMap::new();
+        tri_formats.replace_with(self.triangle.formats.iter().map(|(k, v)| (*k, v.clone())));
+
+        let mut widgets = widget::Widgets::default();
+        widgets.replace_with(self.widgets.iter().map(|(k, v)| (*k, *v)));
+
+        UiSnapshot {
+            active_sheet: active,
+            stage_mode: self.stage_mode,
+            dark_mode: self.dark_mode,
+            square_formats: sq_formats,
+            hex_formats,
+            triangle_formats: tri_formats,
+            widgets,
+            square_notes: self
+                .notes
+                .iter()
+                .map(|(k, v)| (*k, v.to_string()))
+                .collect(),
+            hex_notes: self
+                .hex_notes
+                .iter()
+                .map(|(k, v)| (*k, v.to_string()))
+                .collect(),
+            triangle_notes: self
+                .triangle_notes
+                .iter()
+                .map(|(k, v)| (*k, v.to_string()))
+                .collect(),
+            conditional_rules: self.cond_rules.clone(),
+            column_widths: self.metrics.col_widths_iter().collect(),
+            row_heights: self.metrics.row_heights_iter().collect(),
+            is_fresh_seed: false,
+        }
+    }
+
+    /// Apply a previously-captured snapshot back onto the app. Engine
+    /// state (cell sources / values) is not touched — that's loaded
+    /// separately via [`WorkbookEngine::open_bytes`]. Ephemeral state
+    /// (history, drag flags, dialogs) is reset to defaults by the caller
+    /// when it constructs a fresh app before calling this.
+    #[allow(dead_code)]
+    pub(crate) fn restore_state(&mut self, s: crate::state_io::UiSnapshot) {
+        use crate::state_io::ActiveSheetTag;
+        self.active = match s.active_sheet {
+            ActiveSheetTag::Square => ActiveSheet::Square,
+            ActiveSheetTag::Hex => ActiveSheet::Hex,
+            ActiveSheetTag::Triangle => ActiveSheet::Triangle,
+        };
+        self.stage_mode = s.stage_mode;
+        self.dark_mode = s.dark_mode;
+        self.square
+            .formats
+            .replace_with(s.square_formats.iter().map(|(k, v)| (*k, v.clone())));
+        self.hex
+            .formats
+            .replace_with(s.hex_formats.iter().map(|(k, v)| (*k, v.clone())));
+        self.triangle
+            .formats
+            .replace_with(s.triangle_formats.iter().map(|(k, v)| (*k, v.clone())));
+        self.widgets
+            .replace_with(s.widgets.iter().map(|(k, v)| (*k, *v)));
+        self.notes.replace_with(s.square_notes);
+        self.hex_notes.replace_with(s.hex_notes);
+        self.triangle_notes.replace_with(s.triangle_notes);
+        self.cond_rules = s.conditional_rules;
+        self.metrics.replace_with(s.column_widths, s.row_heights);
+    }
 }
 
 impl eframe::App for TescellateApp {

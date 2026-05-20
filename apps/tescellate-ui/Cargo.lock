@@ -3027,6 +3027,7 @@ dependencies = [
  "serde_json",
  "tescellate-core",
  "tescellate-formula",
+ "tescellate-store",
  "tescellate-tess",
  "wasm-bindgen-futures",
 ]

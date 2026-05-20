@@ -19,6 +19,7 @@ pub mod note;
 pub mod ribbon;
 pub mod selection;
 pub mod sort;
+pub mod state_io;
 pub mod stats;
 pub mod widget;
 
