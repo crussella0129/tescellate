@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-002 (sprint 0): Bump `FORMAT_VERSION` to 1; extend `save`/`load` with UiState; tolerate v0 — touches: crates/tescellate-store/src/lib.rs
 - [ ] T-003 (sprint 0): Round-trip + version-tolerance tests in `tescellate-store` — touches: crates/tescellate-store/src/lib.rs
 - [ ] T-004 (sprint 0): `WorkbookEngine::save_bytes` / `open_bytes` byte API — touches: crates/tescellate-formula/src/engine.rs
 - [ ] T-005 (sprint 0): Serde derives + Color32 adapter on UI types — touches: apps/tescellate-ui/src/{widget.rs,format.rs,conditional.rs,note.rs}

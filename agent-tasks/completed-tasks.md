@@ -5,3 +5,9 @@
 - **Completed:** 2026-05-20T17:40:00Z
 - **Files modified:** crates/tescellate-store/src/lib.rs
 - **Commit:** `4b0aa3d`
+
+## T-002 (sprint 0)
+- **Description:** Bump `FORMAT_VERSION` to 1; introduce `save_full` / `load_full` carrying `UiState`; tolerate v0 reads (no `ui.json` → `UiState::default()`).
+- **Completed:** 2026-05-20T17:45:00Z
+- **Files modified:** crates/tescellate-store/src/lib.rs
+- **Commit:** `715c4ec`
