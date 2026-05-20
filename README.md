@@ -1,5 +1,7 @@
 # Tescellate
 
+(Under Construction)
+
 A spreadsheet where cells are not stuck being squares.
 
 Tescellate is a DAG-evaluated workbook with **tessellating cell shapes** — squares, hexagons, triangles, parallelograms, and (eventually) any periodic tiling — and a **switchable formula language per cell**: Excel-style, Python (embedded via PyO3), or Rust (Rhai-preview with an optional rustc-compiled native path).
