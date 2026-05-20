@@ -435,6 +435,11 @@ pub struct TescellateApp {
     /// `Some` while a drag inside formula-mode on the square sheet is
     /// building a range reference. See [`formula_mode::DragState`].
     formula_drag: Option<formula_mode::DragState<(u32, u32)>>,
+    /// `Some` while a fill-handle drag is in progress on the square
+    /// sheet. The stored tuple is the original cursor cell at drag
+    /// start; on release, that cell's value is copied into every
+    /// newly-included cell of the extended selection.
+    fill_drag: Option<(u32, u32)>,
     /// The square-sheet formula reference the user pointed at — drawn
     /// as a dashed marquee on the grid until the edit is committed or
     /// cancelled. See [`formula_mode::Highlight`].
@@ -560,6 +565,7 @@ impl TescellateApp {
             format_painter: None,
             formula_drag: None,
             formula_highlight: None,
+            fill_drag: None,
             hex_formula_drag: None,
             hex_formula_highlight: None,
             formats: FormatMap::new(),
@@ -2239,6 +2245,41 @@ impl TescellateApp {
         self.apply_edits(sheet, targets);
     }
 
+    /// The on-screen rect of the square sheet's fill handle — a small
+    /// filled square nudged onto the bottom-right corner of the
+    /// current selection's bounding rect.
+    fn fill_handle_rect(&self, origin: egui::Pos2) -> egui::Rect {
+        const SIZE: f32 = 8.0;
+        let (_, (max_c, max_r)) = self.selection.bounds();
+        let cell = self.metrics.cell_rect(origin, max_c, max_r);
+        let center = cell.right_bottom();
+        egui::Rect::from_center_size(center, egui::vec2(SIZE, SIZE))
+    }
+
+    /// Copy the original cursor cell's value into every cell of
+    /// `extended` that is NOT inside `original`. Called on fill-handle
+    /// release — the simple single-cell pattern (multi-cell pattern
+    /// repeat / arithmetic series come later).
+    fn fill_handle_apply(&mut self, source: (u32, u32), extended: ((u32, u32), (u32, u32))) {
+        let ((min_c, min_r), (max_c, max_r)) = extended;
+        let source_value = self
+            .engine
+            .get_cell(self.square_sheet, &grid::cell_address(source.0, source.1))
+            .and_then(|s| s.source);
+        let mut targets = Vec::new();
+        for r in min_r..=max_r {
+            for c in min_c..=max_c {
+                if (c, r) == source {
+                    continue;
+                }
+                targets.push((grid::cell_address(c, r), source_value.clone()));
+            }
+        }
+        if !targets.is_empty() {
+            self.apply_edits(self.square_sheet, targets);
+        }
+    }
+
     /// Resize the header border under an in-progress drag. The headers
     /// are both frozen, so the hit-tests use their floating origins —
     /// `col_hdr_origin` for column borders, `row_hdr_origin` for row.
@@ -2384,6 +2425,7 @@ impl TescellateApp {
             self.prev_cursor = self.selection.cursor;
         }
 
+        let fill_handle_rect = self.fill_handle_rect(origin);
         if let Some(p) = response.hover_pos() {
             if self
                 .metrics
@@ -2397,6 +2439,8 @@ impl TescellateApp {
                 .is_some()
             {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeRow);
+            } else if fill_handle_rect.contains(p) {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             }
         }
         self.handle_resize(&response, col_hdr_origin, row_hdr_origin);
@@ -2451,7 +2495,14 @@ impl TescellateApp {
                 .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
             if response.drag_started() {
                 if let Some(p) = self.press_pos.or_else(|| response.interact_pointer_pos()) {
-                    if in_formula {
+                    if fill_handle_rect.contains(p) {
+                        // Fill-handle drag — record the original cursor
+                        // cell as the source; subsequent dragged frames
+                        // extend the selection and the release applies
+                        // the fill.
+                        self.commit_edit();
+                        self.fill_drag = Some(self.selection.cursor);
+                    } else if in_formula {
                         // Formula-mode drag — `formula_mode::drag_start`
                         // writes the start cell's address, records the
                         // anchor, and gives us the initial highlight.
@@ -2488,7 +2539,14 @@ impl TescellateApp {
                 }
             } else if response.dragged() {
                 if let Some(p) = response.interact_pointer_pos() {
-                    if let Some(drag) = self.formula_drag {
+                    if self.fill_drag.is_some() {
+                        if let Some(cell) = self
+                            .metrics
+                            .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
+                        {
+                            self.selection.extend_to(cell);
+                        }
+                    } else if let Some(drag) = self.formula_drag {
                         if let Some(cell) = self
                             .metrics
                             .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
@@ -2530,6 +2588,10 @@ impl TescellateApp {
         if response.drag_stopped() {
             self.header_drag = None;
             self.formula_drag = None;
+            if let Some(source) = self.fill_drag.take() {
+                let bounds = self.selection.bounds();
+                self.fill_handle_apply(source, bounds);
+            }
         }
         if response.clicked() {
             if let Some(cell) = self.cell_under(&response, origin, header_x, header_y) {
@@ -2766,6 +2828,14 @@ impl TescellateApp {
             0.0,
             egui::Stroke::new(2.0, sel_color),
         );
+
+        // The fill handle — a small filled square at the bottom-right
+        // of the selection's bounding rect. Dragging it extends the
+        // selection and, on release, copies the original cursor cell
+        // into every newly-included cell (Excel/Sheets' fill handle).
+        let handle_rect = self.fill_handle_rect(origin);
+        painter.rect_filled(handle_rect, 0.0, sel_color);
+        painter.rect_stroke(handle_rect, 0.0, egui::Stroke::new(1.0, cell_bg));
 
         // The cut marquee — a dashed border around the armed range, when
         // the clipboard's cut belongs to this (square) sheet.
