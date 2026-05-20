@@ -576,8 +576,15 @@ impl TescellateApp {
         // engine's triangle range arithmetic is visible.
         let triangle_sheet = engine.add_sheet("Tri demo", LatticeKind::Triangle);
         for (addr, src) in [
-            ("T(0,0)", "△"),
-            ("T(1,0)", "▽"),
+            // egui's default font doesn't carry the geometric-shape
+            // glyphs `△ ▽`, which render as tofu boxes — using short
+            // text labels makes the orientation legible without a
+            // custom font. Loading a Unicode font with these glyphs
+            // (or rendering the orientation indicator as a small
+            // geometric drawing in `draw_triangle_grid`) is a clean
+            // follow-up.
+            ("T(0,0)", "up"),
+            ("T(1,0)", "dn"),
             ("T(2,0)", "=4"),
             ("T(3,0)", "=6"),
             ("T(2,1)", "=T(2,0) + T(3,0)"),
