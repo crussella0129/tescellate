@@ -18,6 +18,39 @@ use thiserror::Error;
 
 pub const FORMAT_VERSION: u32 = 0;
 
+/// Opaque UI-side state ridden alongside the workbook inside a `.tscl`.
+///
+/// The store treats this as a transparent JSON blob — it does not interpret
+/// or validate fields. The egui front-end owns the schema (per-sheet formats,
+/// widget catalogues, conditional rules, stage flags, etc.) and serializes /
+/// deserializes its own typed snapshot against this value. Anything else that
+/// later wants to ride along inside a workbook file uses the same envelope.
+///
+/// On disk this lands in `ui.json` inside the zip; v0 files predate the field
+/// and load as `UiState::default()`, which is `{}`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UiState(pub serde_json::Value);
+
+impl UiState {
+    pub fn empty() -> Self {
+        UiState(serde_json::Value::Object(serde_json::Map::new()))
+    }
+    pub fn is_empty(&self) -> bool {
+        matches!(&self.0, serde_json::Value::Null)
+            || matches!(&self.0, serde_json::Value::Object(m) if m.is_empty())
+    }
+    pub fn as_value(&self) -> &serde_json::Value {
+        &self.0
+    }
+}
+
+impl From<serde_json::Value> for UiState {
+    fn from(v: serde_json::Value) -> Self {
+        UiState(v)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum StoreError {
     #[error("io: {0}")]
