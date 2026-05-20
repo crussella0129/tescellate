@@ -1,13 +1,19 @@
-//! The pure selected-range model for the square sheet.
+//! The pure selected-range model.
 //!
-//! A [`Selection`] is an `anchor` cell and a `cursor` (the active cell).
-//! The selected range is the inclusive rectangle spanning the two — a
-//! single cell when they coincide. No egui and no engine here, so the
-//! whole model is exercised by ordinary `cargo test`.
+//! A [`Selection<C>`] is an `anchor` cell and a `cursor` (the active
+//! cell). The selected range is the inclusive rectangle spanning the
+//! two — a single cell when they coincide. The lattice provides a
+//! [`Coord`] implementation; the selection logic itself is lattice-
+//! agnostic. Stage B of the unified-lattice refactor: square cells
+//! `(u32,u32)` and `HexCoord` flow through the same `Selection<C>`
+//! type, so triangle / voronoi grids inherit the model for free.
+//!
+//! No egui and no engine here, so every method is exercised by
+//! ordinary `cargo test`.
 
 use tescellate_tess::hex::HexCoord;
 
-/// A zero-indexed `(column, row)` cell.
+/// A zero-indexed `(column, row)` cell on the square grid.
 pub type Cell = (u32, u32);
 
 /// Which way a fill propagates across the selection.
@@ -17,25 +23,235 @@ pub enum FillDir {
     Right,
 }
 
-/// A rectangular cell selection — an `anchor` and a `cursor`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Selection {
-    /// Where the selection was anchored (a plain move, or the start of a
-    /// shift-extend / drag).
-    pub anchor: Cell,
-    /// The active cell — where editing happens and arrows move from.
-    pub cursor: Cell,
+/// Lattice-agnostic coordinate operations [`Selection<C>`] needs. Each
+/// concrete coord type (`(u32,u32)` for the square grid, `HexCoord` for
+/// the hex grid) implements this; new lattices add an impl rather than
+/// a parallel `Selection` struct.
+///
+/// The methods are deliberately framed in terms of *normalised*
+/// `(min, max)` rectangles — selection takes care of normalising the
+/// anchor/cursor pair via [`Coord::min_max`] before calling the rest.
+pub trait Coord: Copy + PartialEq + Eq {
+    /// Normalised `(min, max)` corners of the rectangle spanning `self`
+    /// and `other`. Order-independent: callers can pass anchor and
+    /// cursor in either order and get the same answer.
+    fn min_max(self, other: Self) -> (Self, Self);
+
+    /// Every coord in the inclusive rectangle `[min, max]`. Order is
+    /// deterministic (row-major for square, q-then-r for hex).
+    fn rect_cells(min: Self, max: Self) -> Vec<Self>;
+
+    /// Whether `coord` falls inside the inclusive rectangle.
+    fn rect_contains(min: Self, max: Self, coord: Self) -> bool;
+
+    /// Per-axis spans of the rectangle, each ≥ 1.
+    fn rect_dims(min: Self, max: Self) -> (u32, u32);
+
+    /// `(target, source)` pairs to fill a multi-cell rect from its
+    /// leading edge along `dir`. Empty if the rect is already single
+    /// along that axis (a one-row range filled Down, etc.).
+    fn rect_fill_targets(min: Self, max: Self, dir: FillDir) -> Vec<(Self, Self)>;
+
+    /// Step back one cell along `dir`. `None` if the neighbour is out
+    /// of bounds (e.g. row 0 filling Down for the square grid). Hex's
+    /// axial coords are unbounded, so its impl never returns `None`.
+    fn step_back(self, dir: FillDir) -> Option<Self>;
 }
 
-impl Selection {
+impl Coord for Cell {
+    fn min_max(self, other: Self) -> (Self, Self) {
+        let (a, b) = (self, other);
+        ((a.0.min(b.0), a.1.min(b.1)), (a.0.max(b.0), a.1.max(b.1)))
+    }
+
+    fn rect_cells((mc, mr): Self, (xc, xr): Self) -> Vec<Self> {
+        let mut out = Vec::with_capacity(((xc - mc + 1) * (xr - mr + 1)) as usize);
+        for r in mr..=xr {
+            for c in mc..=xc {
+                out.push((c, r));
+            }
+        }
+        out
+    }
+
+    fn rect_contains((mc, mr): Self, (xc, xr): Self, (c, r): Self) -> bool {
+        c >= mc && c <= xc && r >= mr && r <= xr
+    }
+
+    fn rect_dims((mc, mr): Self, (xc, xr): Self) -> (u32, u32) {
+        (xc - mc + 1, xr - mr + 1)
+    }
+
+    fn rect_fill_targets((mc, mr): Self, (xc, xr): Self, dir: FillDir) -> Vec<(Self, Self)> {
+        let mut pairs = Vec::new();
+        match dir {
+            FillDir::Down => {
+                for c in mc..=xc {
+                    for r in (mr + 1)..=xr {
+                        pairs.push(((c, r), (c, mr)));
+                    }
+                }
+            }
+            FillDir::Right => {
+                for r in mr..=xr {
+                    for c in (mc + 1)..=xc {
+                        pairs.push(((c, r), (mc, r)));
+                    }
+                }
+            }
+        }
+        pairs
+    }
+
+    fn step_back(self, dir: FillDir) -> Option<Self> {
+        let (c, r) = self;
+        match dir {
+            // `then` is lazy — `r - 1` would underflow `u32` if eagerly
+            // evaluated when `r == 0`, so the closure form is required
+            // even though `then_some` reads slightly cleaner.
+            FillDir::Down => (r > 0).then(|| (c, r - 1)),
+            FillDir::Right => (c > 0).then(|| (c - 1, r)),
+        }
+    }
+}
+
+impl Coord for HexCoord {
+    fn min_max(self, other: Self) -> (Self, Self) {
+        (
+            HexCoord::new(self.q.min(other.q), self.r.min(other.r)),
+            HexCoord::new(self.q.max(other.q), self.r.max(other.r)),
+        )
+    }
+
+    fn rect_cells(min: Self, max: Self) -> Vec<Self> {
+        let mut out = Vec::with_capacity(((max.q - min.q + 1) * (max.r - min.r + 1)) as usize);
+        for r in min.r..=max.r {
+            for q in min.q..=max.q {
+                out.push(HexCoord::new(q, r));
+            }
+        }
+        out
+    }
+
+    fn rect_contains(min: Self, max: Self, coord: Self) -> bool {
+        coord.q >= min.q && coord.q <= max.q && coord.r >= min.r && coord.r <= max.r
+    }
+
+    fn rect_dims(min: Self, max: Self) -> (u32, u32) {
+        ((max.q - min.q + 1) as u32, (max.r - min.r + 1) as u32)
+    }
+
+    fn rect_fill_targets(min: Self, max: Self, dir: FillDir) -> Vec<(Self, Self)> {
+        let mut pairs = Vec::new();
+        match dir {
+            FillDir::Down => {
+                for q in min.q..=max.q {
+                    for r in (min.r + 1)..=max.r {
+                        pairs.push((HexCoord::new(q, r), HexCoord::new(q, min.r)));
+                    }
+                }
+            }
+            FillDir::Right => {
+                for r in min.r..=max.r {
+                    for q in (min.q + 1)..=max.q {
+                        pairs.push((HexCoord::new(q, r), HexCoord::new(min.q, r)));
+                    }
+                }
+            }
+        }
+        pairs
+    }
+
+    fn step_back(self, dir: FillDir) -> Option<Self> {
+        // Axial coords are unbounded i32 — the neighbour always exists.
+        match dir {
+            FillDir::Down => Some(HexCoord::new(self.q, self.r - 1)),
+            FillDir::Right => Some(HexCoord::new(self.q - 1, self.r)),
+        }
+    }
+}
+
+/// A rectangular cell selection — an `anchor` and a `cursor`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Selection<C: Coord> {
+    /// Where the selection was anchored (a plain move, or the start of a
+    /// shift-extend / drag).
+    pub anchor: C,
+    /// The active cell — where editing happens and arrows move from.
+    pub cursor: C,
+}
+
+impl<C: Coord> Selection<C> {
     /// A one-cell selection.
-    pub fn single(cell: Cell) -> Self {
+    pub fn single(coord: C) -> Self {
         Self {
-            anchor: cell,
-            cursor: cell,
+            anchor: coord,
+            cursor: coord,
         }
     }
 
+    /// Move the whole selection to one cell — a plain arrow or click.
+    pub fn collapse_to(&mut self, coord: C) {
+        self.anchor = coord;
+        self.cursor = coord;
+    }
+
+    /// Move the cursor while keeping the anchor — a shift-extend or drag.
+    pub fn extend_to(&mut self, coord: C) {
+        self.cursor = coord;
+    }
+
+    /// Whether the selection covers more than one cell.
+    pub fn is_range(&self) -> bool {
+        self.anchor != self.cursor
+    }
+
+    /// Normalised `(min, max)` corners of the selected rectangle.
+    pub fn bounds(&self) -> (C, C) {
+        self.anchor.min_max(self.cursor)
+    }
+
+    /// Whether `coord` falls inside the selected rectangle.
+    pub fn contains(&self, coord: C) -> bool {
+        let (min, max) = self.bounds();
+        C::rect_contains(min, max, coord)
+    }
+
+    /// `(axis_a, axis_b)` extents of the selection — at least `(1, 1)`.
+    /// For square, this is `(columns, rows)`; for hex, `(q-span, r-span)`.
+    pub fn dimensions(&self) -> (u32, u32) {
+        let (min, max) = self.bounds();
+        C::rect_dims(min, max)
+    }
+
+    /// Every cell in the selection. Row-major for square, q-then-r for hex.
+    pub fn cells(&self) -> Vec<C> {
+        let (min, max) = self.bounds();
+        C::rect_cells(min, max)
+    }
+
+    /// The `(target, source)` cell pairs for a fill. A multi-cell range
+    /// fills its leading edge across the rest of the selection. A
+    /// single cell pulls from its neighbour one step back. The list is
+    /// empty when there is nothing to fill (a single-axis range filled
+    /// along that axis, or a single cell already at the grid edge).
+    pub fn fill_targets(&self, dir: FillDir) -> Vec<(C, C)> {
+        if self.is_range() {
+            let (min, max) = self.bounds();
+            C::rect_fill_targets(min, max, dir)
+        } else {
+            self.cursor
+                .step_back(dir)
+                .map(|n| vec![(self.cursor, n)])
+                .unwrap_or_default()
+        }
+    }
+}
+
+/// Square-grid-specific constructors. These rely on row/column
+/// semantics that hex doesn't have, so they live in their own impl
+/// block on `Selection<Cell>` rather than on the generic `Selection<C>`.
+impl Selection<Cell> {
     /// A selection spanning an entire column — every row `0..rows`. The
     /// active cell is the column's top, `(col, 0)`, as spreadsheets
     /// place it.
@@ -78,201 +294,16 @@ impl Selection {
             cursor: (0, 0),
         }
     }
-
-    /// Move the whole selection to one cell — a plain arrow or click.
-    pub fn collapse_to(&mut self, cell: Cell) {
-        self.anchor = cell;
-        self.cursor = cell;
-    }
-
-    /// Move the cursor while keeping the anchor — a shift-extend or drag.
-    pub fn extend_to(&mut self, cell: Cell) {
-        self.cursor = cell;
-    }
-
-    /// Whether the selection covers more than one cell.
-    pub fn is_range(&self) -> bool {
-        self.anchor != self.cursor
-    }
-
-    /// The inclusive `(min, max)` corners of the selected rectangle —
-    /// normalised, so it holds whichever way the anchor and cursor lie.
-    pub fn bounds(&self) -> (Cell, Cell) {
-        let (ac, ar) = self.anchor;
-        let (cc, cr) = self.cursor;
-        ((ac.min(cc), ar.min(cr)), (ac.max(cc), ar.max(cr)))
-    }
-
-    /// Whether `cell` falls inside the selected rectangle.
-    pub fn contains(&self, cell: Cell) -> bool {
-        let ((min_c, min_r), (max_c, max_r)) = self.bounds();
-        let (c, r) = cell;
-        c >= min_c && c <= max_c && r >= min_r && r <= max_r
-    }
-
-    /// `(columns, rows)` spanned by the selection — at least `(1, 1)`.
-    pub fn dimensions(&self) -> (u32, u32) {
-        let ((min_c, min_r), (max_c, max_r)) = self.bounds();
-        (max_c - min_c + 1, max_r - min_r + 1)
-    }
-
-    /// Every cell in the selection, row-major.
-    pub fn cells(&self) -> impl Iterator<Item = Cell> {
-        let ((min_c, min_r), (max_c, max_r)) = self.bounds();
-        (min_r..=max_r).flat_map(move |r| (min_c..=max_c).map(move |c| (c, r)))
-    }
-
-    /// The `(target, source)` cell pairs for a fill. A multi-cell range
-    /// fills its leading edge — the top row for `Down`, the left column
-    /// for `Right` — across the rest of the selection. A single cell
-    /// pulls from its neighbour one step back. The list is empty when
-    /// there is nothing to fill (a single-row range filled down, or a
-    /// single cell already at the grid edge).
-    pub fn fill_targets(&self, dir: FillDir) -> Vec<(Cell, Cell)> {
-        let ((min_c, min_r), (max_c, max_r)) = self.bounds();
-        let mut pairs = Vec::new();
-        match dir {
-            FillDir::Down => {
-                if !self.is_range() {
-                    if min_r > 0 {
-                        pairs.push(((min_c, min_r), (min_c, min_r - 1)));
-                    }
-                } else {
-                    for c in min_c..=max_c {
-                        for r in (min_r + 1)..=max_r {
-                            pairs.push(((c, r), (c, min_r)));
-                        }
-                    }
-                }
-            }
-            FillDir::Right => {
-                if !self.is_range() {
-                    if min_c > 0 {
-                        pairs.push(((min_c, min_r), (min_c - 1, min_r)));
-                    }
-                } else {
-                    for r in min_r..=max_r {
-                        for c in (min_c + 1)..=max_c {
-                            pairs.push(((c, r), (min_c, r)));
-                        }
-                    }
-                }
-            }
-        }
-        pairs
-    }
 }
 
-/// A rectangular hex selection — an `anchor` hex and a `cursor` hex.
-/// The selected range is the axial parallelogram between them (every
-/// cell whose `q` and `r` lie within the corners), the same shape the
-/// engine's `H(a,b):H(c,d)` range describes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HexSelection {
-    pub anchor: HexCoord,
-    pub cursor: HexCoord,
-}
+/// A rectangular cell selection on the square sheet.
+pub type SquareSelection = Selection<Cell>;
 
-impl HexSelection {
-    /// A one-cell hex selection.
-    pub fn single(coord: HexCoord) -> Self {
-        Self {
-            anchor: coord,
-            cursor: coord,
-        }
-    }
-
-    /// Move the whole selection to one cell — a plain move or click.
-    pub fn collapse_to(&mut self, coord: HexCoord) {
-        self.anchor = coord;
-        self.cursor = coord;
-    }
-
-    /// Move the cursor while keeping the anchor — a shift-extend.
-    pub fn extend_to(&mut self, coord: HexCoord) {
-        self.cursor = coord;
-    }
-
-    /// Whether the selection covers more than one cell.
-    pub fn is_range(&self) -> bool {
-        self.anchor != self.cursor
-    }
-
-    /// The inclusive `(q, r)` min/max corners — normalised, so it holds
-    /// whichever way the anchor and cursor lie.
-    pub fn bounds(&self) -> ((i32, i32), (i32, i32)) {
-        (
-            (
-                self.anchor.q.min(self.cursor.q),
-                self.anchor.r.min(self.cursor.r),
-            ),
-            (
-                self.anchor.q.max(self.cursor.q),
-                self.anchor.r.max(self.cursor.r),
-            ),
-        )
-    }
-
-    /// Whether `coord` falls inside the axial parallelogram.
-    pub fn contains(&self, coord: HexCoord) -> bool {
-        let ((min_q, min_r), (max_q, max_r)) = self.bounds();
-        coord.q >= min_q && coord.q <= max_q && coord.r >= min_r && coord.r <= max_r
-    }
-
-    /// `(q-span, r-span)` of the selection — at least `(1, 1)`.
-    pub fn dimensions(&self) -> (i32, i32) {
-        let ((min_q, min_r), (max_q, max_r)) = self.bounds();
-        (max_q - min_q + 1, max_r - min_r + 1)
-    }
-
-    /// Every cell of the axial parallelogram, in q-then-r order.
-    pub fn cells(&self) -> Vec<HexCoord> {
-        let ((min_q, min_r), (max_q, max_r)) = self.bounds();
-        let mut out = Vec::new();
-        for r in min_r..=max_r {
-            for q in min_q..=max_q {
-                out.push(HexCoord::new(q, r));
-            }
-        }
-        out
-    }
-
-    /// The `(target, source)` cell pairs for a fill — the hex analog of
-    /// [`Selection::fill_targets`]. A multi-cell range fills its leading
-    /// edge (the `min_r` row down each `q`-column for `Down`, the
-    /// `min_q` column right along each `r`-row for `Right`) across the
-    /// rest of the selection. A single cell pulls from its neighbour one
-    /// axial step back. Empty for a single-row range filled down.
-    pub fn fill_targets(&self, dir: FillDir) -> Vec<(HexCoord, HexCoord)> {
-        let ((min_q, min_r), (max_q, max_r)) = self.bounds();
-        let mut pairs = Vec::new();
-        match dir {
-            FillDir::Down => {
-                if !self.is_range() {
-                    pairs.push((HexCoord::new(min_q, min_r), HexCoord::new(min_q, min_r - 1)));
-                } else {
-                    for q in min_q..=max_q {
-                        for r in (min_r + 1)..=max_r {
-                            pairs.push((HexCoord::new(q, r), HexCoord::new(q, min_r)));
-                        }
-                    }
-                }
-            }
-            FillDir::Right => {
-                if !self.is_range() {
-                    pairs.push((HexCoord::new(min_q, min_r), HexCoord::new(min_q - 1, min_r)));
-                } else {
-                    for r in min_r..=max_r {
-                        for q in (min_q + 1)..=max_q {
-                            pairs.push((HexCoord::new(q, r), HexCoord::new(min_q, r)));
-                        }
-                    }
-                }
-            }
-        }
-        pairs
-    }
-}
+/// A rectangular hex selection. The selected range is the axial
+/// parallelogram between anchor and cursor (every cell whose `q` and
+/// `r` lie within the corners), the same shape the engine's
+/// `H(a,b):H(c,d)` range describes.
+pub type HexSelection = Selection<HexCoord>;
 
 #[cfg(test)]
 mod tests {
@@ -374,8 +405,8 @@ mod tests {
     fn bounds_are_normalised_when_the_cursor_is_above_the_anchor() {
         // Anchor bottom-right, cursor top-left — bounds still min/max.
         let s = Selection {
-            anchor: (4, 6),
-            cursor: (2, 1),
+            anchor: (4u32, 6u32),
+            cursor: (2u32, 1u32),
         };
         assert_eq!(s.bounds(), ((2, 1), (4, 6)));
         assert_eq!(s.dimensions(), (3, 6));
@@ -386,10 +417,10 @@ mod tests {
     #[test]
     fn cells_enumerates_the_whole_rectangle() {
         let s = Selection {
-            anchor: (1, 1),
-            cursor: (2, 3),
+            anchor: (1u32, 1u32),
+            cursor: (2u32, 3u32),
         };
-        let cells: Vec<Cell> = s.cells().collect();
+        let cells: Vec<Cell> = s.cells();
         assert_eq!(cells.len(), 6);
         assert!(cells.contains(&(1, 1)));
         assert!(cells.contains(&(2, 3)));
@@ -400,17 +431,16 @@ mod tests {
 
     #[test]
     fn cells_of_a_single_selection_is_just_that_cell() {
-        let s = Selection::single((7, 2));
-        let cells: Vec<Cell> = s.cells().collect();
-        assert_eq!(cells, vec![(7, 2)]);
+        let s = Selection::single((7u32, 2u32));
+        assert_eq!(s.cells(), vec![(7, 2)]);
     }
 
     #[test]
     fn fill_down_propagates_the_top_row_per_column() {
         // A 2-column × 3-row range: rows 1 and 2 fill from row 0.
         let s = Selection {
-            anchor: (0, 0),
-            cursor: (1, 2),
+            anchor: (0u32, 0u32),
+            cursor: (1u32, 2u32),
         };
         let pairs = s.fill_targets(FillDir::Down);
         assert_eq!(pairs.len(), 4);
@@ -423,8 +453,8 @@ mod tests {
     #[test]
     fn fill_right_propagates_the_left_column_per_row() {
         let s = Selection {
-            anchor: (0, 0),
-            cursor: (2, 1),
+            anchor: (0u32, 0u32),
+            cursor: (2u32, 1u32),
         };
         let pairs = s.fill_targets(FillDir::Right);
         assert_eq!(pairs.len(), 4);
@@ -437,18 +467,18 @@ mod tests {
     #[test]
     fn fill_on_a_single_cell_pulls_from_the_neighbour() {
         assert_eq!(
-            Selection::single((3, 5)).fill_targets(FillDir::Down),
+            Selection::single((3u32, 5u32)).fill_targets(FillDir::Down),
             vec![((3, 5), (3, 4))],
         );
         assert_eq!(
-            Selection::single((4, 2)).fill_targets(FillDir::Right),
+            Selection::single((4u32, 2u32)).fill_targets(FillDir::Right),
             vec![((4, 2), (3, 2))],
         );
         // A cell at the grid edge has no neighbour to pull from.
-        assert!(Selection::single((3, 0))
+        assert!(Selection::single((3u32, 0u32))
             .fill_targets(FillDir::Down)
             .is_empty());
-        assert!(Selection::single((0, 2))
+        assert!(Selection::single((0u32, 2u32))
             .fill_targets(FillDir::Right)
             .is_empty());
     }
@@ -456,8 +486,8 @@ mod tests {
     #[test]
     fn fill_down_on_a_single_row_range_is_a_noop() {
         let s = Selection {
-            anchor: (0, 4),
-            cursor: (3, 4),
+            anchor: (0u32, 4u32),
+            cursor: (3u32, 4u32),
         };
         assert!(s.fill_targets(FillDir::Down).is_empty());
     }
@@ -481,7 +511,9 @@ mod tests {
             anchor: HexCoord::new(3, 4),
             cursor: HexCoord::new(1, 0),
         };
-        assert_eq!(s.bounds(), ((1, 0), (3, 4)));
+        let (min, max) = s.bounds();
+        assert_eq!((min.q, min.r), (1, 0));
+        assert_eq!((max.q, max.r), (3, 4));
         assert!(s.contains(HexCoord::new(2, 2)));
         assert!(!s.contains(HexCoord::new(4, 2)));
     }

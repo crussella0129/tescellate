@@ -23,7 +23,7 @@ use crate::history::History;
 use crate::keymap::{self, Command, Dir, Mode};
 use crate::note::NoteMap;
 use crate::ribbon::{self, RibbonAction};
-use crate::selection::{FillDir, HexSelection, Selection};
+use crate::selection::{FillDir, HexSelection, Selection, SquareSelection};
 use crate::sort;
 use crate::stats;
 use crate::widget::{self, Widgets};
@@ -428,7 +428,7 @@ pub struct TescellateApp {
     /// Which sheet is on screen.
     active: ActiveSheet,
     /// The selected cell range on the square sheet.
-    selection: Selection,
+    selection: SquareSelection,
     /// The square cursor as of the last frame — drives scroll-to-cursor.
     prev_cursor: (u32, u32),
     /// The selected hex range on the hex sheet.
@@ -771,6 +771,7 @@ impl TescellateApp {
             ActiveSheet::Square => self
                 .selection
                 .cells()
+                .into_iter()
                 .map(|(c, r)| {
                     self.engine
                         .get_cell(self.square_sheet, &grid::cell_address(c, r))
@@ -1042,7 +1043,7 @@ impl TescellateApp {
         if self.active != ActiveSheet::Square {
             return;
         }
-        let cells: Vec<(u32, u32)> = self.selection.cells().collect();
+        let cells = self.selection.cells();
         let all_on = cells.iter().all(|&c| self.widgets.is_toggle(c));
         for cell in cells {
             self.widgets.set_toggle(cell, !all_on);
@@ -1109,7 +1110,8 @@ impl TescellateApp {
                 }
             }
             ActiveSheet::Hex => {
-                let ((min_q, min_r), (max_q, max_r)) = self.hex_selection.bounds();
+                let (min, max) = self.hex_selection.bounds();
+                let (min_q, min_r, max_q, max_r) = (min.q, min.r, max.q, max.r);
                 let total = (max_r - min_r + 1) as usize;
                 let mut targets = Vec::new();
                 for q in min_q..=max_q {
@@ -1166,7 +1168,8 @@ impl TescellateApp {
                 self.apply_edits(self.square_sheet, targets);
             }
             ActiveSheet::Hex => {
-                let ((min_q, min_r), (max_q, max_r)) = self.hex_selection.bounds();
+                let (min, max) = self.hex_selection.bounds();
+                let (min_q, min_r, max_q, max_r) = (min.q, min.r, max.q, max.r);
                 let key_q = self.hex_selection.cursor.q;
                 let keys: Vec<CellValue> = (min_r..=max_r)
                     .map(|r| self.hex_cell_value(HexCoord::new(key_q, r)))
@@ -1203,7 +1206,7 @@ impl TescellateApp {
     /// The square-sheet border apply — `border_sides` per cell.
     fn apply_square_border(&mut self, mode: BorderMode) {
         let bounds = self.selection.bounds();
-        let cells: Vec<(u32, u32)> = self.selection.cells().collect();
+        let cells = self.selection.cells();
         let mut edits = Vec::new();
         for cell in cells {
             let before = self.formats.get(cell);
@@ -1688,7 +1691,7 @@ impl TescellateApp {
     /// of same-cell format edits (a colour-picker drag) collapses into
     /// one undo step.
     fn format_square_range(&mut self, edit: impl Fn(&mut CellFormat)) {
-        let cells: Vec<(u32, u32)> = self.selection.cells().collect();
+        let cells = self.selection.cells();
         let mut edits = Vec::new();
         for cell in cells {
             let before = self.formats.get(cell);
@@ -1787,7 +1790,7 @@ impl TescellateApp {
     ) {
         let target = match self.active {
             ActiveSheet::Square => {
-                let cells: Vec<(u32, u32)> = self.selection.cells().collect();
+                let cells = self.selection.cells();
                 toggle_target(cells.iter().map(|&c| get(&self.formats.get(c))))
             }
             ActiveSheet::Hex => {
@@ -1993,6 +1996,7 @@ impl TescellateApp {
                 let targets = self
                     .selection
                     .cells()
+                    .into_iter()
                     .map(|(c, r)| (grid::cell_address(c, r), None))
                     .collect();
                 (self.square_sheet, targets)
@@ -2050,7 +2054,8 @@ impl TescellateApp {
                 ctx.copy_text(tsv);
             }
             ActiveSheet::Hex => {
-                let ((min_q, min_r), (max_q, max_r)) = self.hex_selection.bounds();
+                let (min, max) = self.hex_selection.bounds();
+                let (min_q, min_r, max_q, max_r) = (min.q, min.r, max.q, max.r);
                 let (width, height) = self.hex_selection.dimensions();
                 let mut cells = Vec::new();
                 let mut tsv = String::new();
@@ -2065,7 +2070,7 @@ impl TescellateApp {
                     }
                     tsv.push('\n');
                 }
-                self.clipboard = Clipboard::capture(width as u32, height as u32, cells, true);
+                self.clipboard = Clipboard::capture(width, height, cells, true);
                 ctx.copy_text(tsv);
             }
         }
@@ -2083,8 +2088,8 @@ impl TescellateApp {
                 (c as i32, r as i32)
             }
             ActiveSheet::Hex => {
-                let ((q, r), _) = self.hex_selection.bounds();
-                (q, r)
+                let (min, _) = self.hex_selection.bounds();
+                (min.q, min.r)
             }
         };
         self.clipboard.mark_as_cut(origin);
@@ -3833,8 +3838,9 @@ fn hex_jump(
 /// are `bounds`: the hex directly below the selection's bottom row that
 /// should hold the result, and the `=FUNC(...)` formula (`func` is an
 /// aggregate name). `None` when that hex falls outside the visible disc.
-fn hex_autosum(bounds: ((i32, i32), (i32, i32)), func: &str) -> Option<(HexCoord, String)> {
-    let ((min_q, min_r), (max_q, max_r)) = bounds;
+fn hex_autosum(bounds: (HexCoord, HexCoord), func: &str) -> Option<(HexCoord, String)> {
+    let (min, max) = bounds;
+    let (min_q, min_r, max_q, max_r) = (min.q, min.r, max.q, max.r);
     let target = HexCoord::new(min_q, max_r + 1);
     if !hex_in_view(target) {
         return None;
@@ -4301,7 +4307,7 @@ mod tests {
     fn hex_autosum_sums_into_the_hex_below() {
         // The column H(0,-1):H(0,1) totals into H(0,2).
         assert_eq!(
-            hex_autosum(((0, -1), (0, 1)), "SUM"),
+            hex_autosum((HexCoord::new(0, -1), HexCoord::new(0, 1)), "SUM"),
             Some((HexCoord::new(0, 2), "=SUM(H(0,-1):H(0,1))".to_string())),
         );
     }
@@ -4309,12 +4315,12 @@ mod tests {
     #[test]
     fn hex_autosum_single_cell_and_chosen_function() {
         assert_eq!(
-            hex_autosum(((1, 0), (1, 0)), "SUM"),
+            hex_autosum((HexCoord::new(1, 0), HexCoord::new(1, 0)), "SUM"),
             Some((HexCoord::new(1, 1), "=SUM(H(1,0))".to_string())),
         );
         // The chosen aggregate name is used verbatim.
         assert_eq!(
-            hex_autosum(((0, -1), (0, 1)), "AVERAGE"),
+            hex_autosum((HexCoord::new(0, -1), HexCoord::new(0, 1)), "AVERAGE"),
             Some((HexCoord::new(0, 2), "=AVERAGE(H(0,-1):H(0,1))".to_string())),
         );
     }
@@ -4322,7 +4328,10 @@ mod tests {
     #[test]
     fn hex_autosum_is_none_outside_the_view() {
         // The total hex would land past the radius-3 view disc.
-        assert_eq!(hex_autosum(((0, 2), (0, 3)), "SUM"), None);
+        assert_eq!(
+            hex_autosum((HexCoord::new(0, 2), HexCoord::new(0, 3)), "SUM"),
+            None,
+        );
     }
 
     #[test]
