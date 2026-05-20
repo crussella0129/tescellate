@@ -8,11 +8,29 @@
 use std::collections::HashMap;
 
 use egui::Color32;
+use serde::{Deserialize, Serialize};
 use tescellate_tess::hex::HexCoord;
+
+/// Serialize `egui::Color32` as a `[r, g, b, a]` byte array. `Color32`
+/// is not `Serialize` by default in our pinned egui; round-tripping
+/// through RGBA bytes is lossless for the cell-format colour fields.
+pub(crate) mod color_rgba_opt {
+    use egui::Color32;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(c: &Option<Color32>, s: S) -> Result<S::Ok, S::Error> {
+        c.map(|c| c.to_srgba_unmultiplied()).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Color32>, D::Error> {
+        Ok(Option::<[u8; 4]>::deserialize(d)?
+            .map(|[r, g, b, a]| Color32::from_rgba_unmultiplied(r, g, b, a)))
+    }
+}
 
 /// Horizontal text alignment within a cell. `Auto` defers to the cell's
 /// value type at render time — see [`effective_align`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum HAlign {
     /// Right for numbers, left for everything else — the default.
     #[default]
@@ -34,7 +52,7 @@ pub fn effective_align(align: HAlign, numeric: bool) -> HAlign {
 }
 
 /// Vertical text alignment within a cell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum VAlign {
     Top,
     /// Centred — the default.
@@ -55,7 +73,7 @@ pub fn vertical_offset(align: VAlign, height: f32, content: f32, pad: f32) -> f3
 }
 
 /// The font size of a cell's text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum FontSize {
     Small,
     /// The standard cell font — the default.
@@ -76,7 +94,7 @@ impl FontSize {
 }
 
 /// How a numeric cell value is rendered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum NumberFormat {
     /// The engine's natural rendering.
     #[default]
@@ -102,7 +120,8 @@ pub enum NumberFormat {
 }
 
 /// Which sides of a cell carry a border line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Borders {
     pub top: bool,
     pub bottom: bool,
@@ -153,7 +172,8 @@ pub fn border_sides(
 
 /// Which of a hexagon's six edges carry a border line. Edge `i` is the
 /// segment from hex vertex `i` to vertex `i + 1`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct HexBorders {
     pub edges: [bool; 6],
 }
@@ -194,7 +214,8 @@ pub fn hex_outer_borders(cell: HexCoord, selected: impl Fn(HexCoord) -> bool) ->
 }
 
 /// The full visual format of one cell. The `Default` is "no formatting".
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CellFormat {
     pub bold: bool,
     pub italic: bool,
@@ -203,7 +224,9 @@ pub struct CellFormat {
     pub align: HAlign,
     pub valign: VAlign,
     pub font_size: FontSize,
+    #[serde(with = "color_rgba_opt")]
     pub text_color: Option<Color32>,
+    #[serde(with = "color_rgba_opt")]
     pub fill: Option<Color32>,
     pub number: NumberFormat,
     pub borders: Borders,
@@ -356,9 +379,44 @@ pub fn adjust_decimals(format: NumberFormat, delta: i32) -> NumberFormat {
 /// `K` — `(u32, u32)` for the square sheet, `HexCoord` for the hex sheet.
 /// A cell absent from the map is unstyled, so an empty map is a plain
 /// sheet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    from = "FormatMapRepr<K>",
+    into = "FormatMapRepr<K>",
+    bound(
+        serialize = "K: Serialize + Eq + std::hash::Hash + Copy",
+        deserialize = "K: Deserialize<'de> + Eq + std::hash::Hash + Copy"
+    )
+)]
 pub struct FormatMap<K> {
     formats: HashMap<K, CellFormat>,
+}
+
+/// Vec-of-pair on-disk form for `FormatMap` (JSON object keys must be
+/// strings; tuple/struct keys won't serialize through the HashMap path).
+#[derive(Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "K: Serialize",
+    deserialize = "K: Deserialize<'de> + Eq + std::hash::Hash"
+))]
+struct FormatMapRepr<K> {
+    entries: Vec<(K, CellFormat)>,
+}
+
+impl<K: Eq + std::hash::Hash + Copy> From<FormatMapRepr<K>> for FormatMap<K> {
+    fn from(r: FormatMapRepr<K>) -> Self {
+        FormatMap {
+            formats: r.entries.into_iter().collect(),
+        }
+    }
+}
+
+impl<K: Eq + std::hash::Hash + Copy> From<FormatMap<K>> for FormatMapRepr<K> {
+    fn from(m: FormatMap<K>) -> Self {
+        FormatMapRepr {
+            entries: m.formats.into_iter().collect(),
+        }
+    }
 }
 
 impl<K> Default for FormatMap<K> {
@@ -394,6 +452,17 @@ impl<K: Eq + std::hash::Hash + Copy> FormatMap<K> {
     /// How many cells carry non-default formatting.
     pub fn styled_count(&self) -> usize {
         self.formats.len()
+    }
+
+    /// All `(cell, format)` pairs. Used by state-IO snapshots.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &CellFormat)> {
+        self.formats.iter()
+    }
+
+    /// Replace the map with `(cell, format)` pairs. Used by state-IO
+    /// snapshots when restoring a saved workbook.
+    pub fn replace_with(&mut self, entries: impl IntoIterator<Item = (K, CellFormat)>) {
+        self.formats = entries.into_iter().collect();
     }
 }
 
@@ -582,6 +651,67 @@ mod tests {
             ..Default::default()
         };
         assert!(!f.is_default());
+    }
+
+    #[test]
+    fn cell_format_round_trips_through_json() {
+        let f = CellFormat {
+            bold: true,
+            italic: true,
+            strikethrough: true,
+            underline: true,
+            align: HAlign::Right,
+            valign: VAlign::Top,
+            font_size: FontSize::Large,
+            text_color: Some(Color32::from_rgba_unmultiplied(11, 22, 33, 255)),
+            fill: Some(Color32::from_rgba_unmultiplied(44, 55, 66, 128)),
+            number: NumberFormat::Number { decimals: 2 },
+            borders: Borders {
+                top: true,
+                bottom: true,
+                left: false,
+                right: true,
+            },
+            hex_borders: HexBorders {
+                edges: [true, false, true, false, true, false],
+            },
+            negative_red: true,
+            wrap_text: true,
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        let back: CellFormat = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, f);
+    }
+
+    #[test]
+    fn color32_serializes_as_rgba_array() {
+        // The Option<Color32> adapter is the actual ser/de touch point;
+        // verify both directions through a one-field harness. egui stores
+        // colours premultiplied internally, so non-255 alphas round-trip
+        // lossily — the UI never uses transparent fills today, so we test
+        // the opaque case (which is the load-bearing one).
+        #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+        struct Probe {
+            #[serde(with = "super::color_rgba_opt")]
+            c: Option<Color32>,
+        }
+        let some = Probe {
+            c: Some(Color32::from_rgba_unmultiplied(11, 22, 33, 255)),
+        };
+        let json = serde_json::to_string(&some).unwrap();
+        // Inline-check the encoding so a layout regression surfaces here.
+        assert!(
+            json.contains("[11,22,33,255]"),
+            "encoded form changed: {json}"
+        );
+        let back: Probe = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, some);
+
+        let none = Probe { c: None };
+        let json = serde_json::to_string(&none).unwrap();
+        assert!(json.contains("null"));
+        let back: Probe = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, none);
     }
 
     #[test]

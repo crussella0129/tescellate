@@ -30,6 +30,9 @@ hashbrown = { workspace = true }
 libloading = { version = "0.8", optional = true }
 pyo3 = { version = "0.23", features = ["auto-initialize"], optional = true }
 
+[dev-dependencies]
+serde_json = { workspace = true }
+
 # Compiled-vs-interpreted benchmark; needs the native compile pipeline.
 [[example]]
 name = "native_bench"

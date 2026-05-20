@@ -1,0 +1,43 @@
+# Completed Tasks Log (Append-Only)
+
+## T-001 (sprint 0)
+- **Description:** Add `UiState` opaque-JSON type to `tescellate-store`.
+- **Completed:** 2026-05-20T17:40:00Z
+- **Files modified:** crates/tescellate-store/src/lib.rs
+- **Commit:** `4b0aa3d`
+
+## T-002 (sprint 0)
+- **Description:** Bump `FORMAT_VERSION` to 1; introduce `save_full` / `load_full` carrying `UiState`; tolerate v0 reads (no `ui.json` → `UiState::default()`).
+- **Completed:** 2026-05-20T17:45:00Z
+- **Files modified:** crates/tescellate-store/src/lib.rs
+- **Commit:** `715c4ec`
+
+## T-003 (sprint 0)
+- **Description:** Round-trip + v0-tolerance + UiState default tests in `tescellate-store`.
+- **Completed:** 2026-05-20T17:50:00Z
+- **Files modified:** crates/tescellate-store/src/lib.rs
+- **Commit:** `04c2d90`
+
+## T-004 (sprint 0)
+- **Description:** `WorkbookEngine::save_bytes` / `open_bytes` byte API; path-API now delegates; serde_json moved to dev-deps for engine tests.
+- **Completed:** 2026-05-20T18:00:00Z
+- **Files modified:** crates/tescellate-formula/src/engine.rs, crates/tescellate-formula/Cargo.toml
+- **Commit:** `e17f6de`
+
+## T-005 (sprint 0)
+- **Description:** Serde derives on UI types (WidgetKind/Widgets, CellFormat/Borders/HexBorders/HAlign/VAlign/FontSize/NumberFormat, FormatMap, Condition/Rule, NoteMap). Color32 round-trips as `[r,g,b,a]` via `to_srgba_unmultiplied`. Widgets serializes as a Vec of (cell, kind) pairs (JSON object keys must be strings).
+- **Completed:** 2026-05-20T18:25:00Z
+- **Files modified:** apps/tescellate-ui/Cargo.toml, apps/tescellate-ui/src/format.rs, apps/tescellate-ui/src/widget.rs, apps/tescellate-ui/src/conditional.rs, apps/tescellate-ui/src/note.rs
+- **Commit:** `712f626`
+
+## T-006 (sprint 0)
+- **Description:** `state_io.rs` with `UiSnapshot` + `ActiveSheetTag` + JSON adapters. Capture/restore methods on `TescellateApp` (gated `#[allow(dead_code)]` until the dialog wiring lands). Adds Vec-of-pair adapters to FormatMap so non-string-key HashMaps round-trip through JSON; new public `iter()`/`replace_with()` helpers on FormatMap/Widgets/NoteMap/GridMetrics for state-IO callers.
+- **Completed:** 2026-05-20T18:50:00Z
+- **Files modified:** apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/lib.rs, apps/tescellate-ui/src/app.rs, apps/tescellate-ui/src/format.rs, apps/tescellate-ui/src/widget.rs, apps/tescellate-ui/src/note.rs, apps/tescellate-ui/src/grid.rs, apps/tescellate-ui/Cargo.toml
+- **Commit:** `b0d4cfe`
+
+## T-015 (sprint 0)
+- **Description:** Local CI gate run — `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo test --workspace`, plus the same on `apps/tescellate-ui`, plus `cargo build --target wasm32-unknown-unknown` on the UI crate. All green. Two fmt drifts fixed (engine.rs, widget.rs, state_io.rs); one clippy `bool_assert_comparison` fixed.
+- **Completed:** 2026-05-20T18:55:00Z
+- **Files modified:** crates/tescellate-formula/src/engine.rs, apps/tescellate-ui/src/widget.rs, apps/tescellate-ui/src/state_io.rs
+- **Commit:** `5e8b46c`

@@ -7,10 +7,16 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
+
 /// Free-text notes attached to cells, keyed by a lattice's coordinate
 /// type `K` — `(u32, u32)` for the square sheet, `HexCoord` for the hex
 /// sheet.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "K: Serialize + Eq + std::hash::Hash",
+    deserialize = "K: Deserialize<'de> + Eq + std::hash::Hash"
+))]
 pub struct NoteMap<K> {
     notes: HashMap<K, String>,
 }
@@ -52,6 +58,17 @@ impl<K: Eq + std::hash::Hash + Copy> NoteMap<K> {
     /// How many cells carry a note.
     pub fn count(&self) -> usize {
         self.notes.len()
+    }
+
+    /// All `(cell, note)` pairs. Used by state-IO snapshots.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &str)> {
+        self.notes.iter().map(|(k, v)| (k, v.as_str()))
+    }
+
+    /// Replace the map with `(cell, text)` pairs. Used by state-IO
+    /// snapshots when restoring a saved workbook.
+    pub fn replace_with(&mut self, entries: impl IntoIterator<Item = (K, String)>) {
+        self.notes = entries.into_iter().collect();
     }
 }
 

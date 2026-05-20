@@ -3023,8 +3023,11 @@ version = "0.0.0"
 dependencies = [
  "eframe",
  "egui",
+ "serde",
+ "serde_json",
  "tescellate-core",
  "tescellate-formula",
+ "tescellate-store",
  "tescellate-tess",
  "wasm-bindgen-futures",
 ]

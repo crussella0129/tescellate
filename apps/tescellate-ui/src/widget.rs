@@ -14,11 +14,12 @@
 
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use tescellate_core::CellValue;
 
 /// The kind of widget a cell renders as. Cells with no entry in
 /// [`Widgets`] render as ordinary text/number/formula cells.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum WidgetKind {
     /// A boolean checkbox; checked iff the cell's value is `TRUE`.
     Toggle,
@@ -48,9 +49,34 @@ impl WidgetKind {
 }
 
 /// Map of square-sheet cells to the widget they render as.
-#[derive(Debug, Clone, Default)]
+///
+/// Serialized as a `Vec<((col, row), WidgetKind)>` because tuple keys are
+/// not valid JSON object keys — the on-disk form is `[[[c, r], kind], …]`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, from = "WidgetsRepr", into = "WidgetsRepr")]
 pub struct Widgets {
     cells: HashMap<(u32, u32), WidgetKind>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct WidgetsRepr {
+    cells: Vec<((u32, u32), WidgetKind)>,
+}
+
+impl From<WidgetsRepr> for Widgets {
+    fn from(repr: WidgetsRepr) -> Self {
+        Widgets {
+            cells: repr.cells.into_iter().collect(),
+        }
+    }
+}
+
+impl From<Widgets> for WidgetsRepr {
+    fn from(w: Widgets) -> Self {
+        WidgetsRepr {
+            cells: w.cells.into_iter().collect(),
+        }
+    }
 }
 
 impl Widgets {
@@ -152,6 +178,17 @@ impl Widgets {
     /// How many cells carry a widget.
     pub fn count(&self) -> usize {
         self.cells.len()
+    }
+
+    /// All `(cell, kind)` pairs. Used by state-IO snapshots.
+    pub fn iter(&self) -> impl Iterator<Item = (&(u32, u32), &WidgetKind)> {
+        self.cells.iter()
+    }
+
+    /// Replace the map with `(cell, kind)` pairs. Used by state-IO
+    /// snapshots when restoring a saved workbook.
+    pub fn replace_with(&mut self, entries: impl IntoIterator<Item = ((u32, u32), WidgetKind)>) {
+        self.cells = entries.into_iter().collect();
     }
 }
 
@@ -312,6 +349,33 @@ mod tests {
         // A non-positive max collapses to a full bar (misconfigured
         // range fails visibly rather than dividing by zero).
         assert_eq!(progress_fraction(&CellValue::Number(50.0), 0.0), 1.0);
+    }
+
+    #[test]
+    fn widgets_round_trip_with_every_kind() {
+        let mut w = Widgets::default();
+        w.set_toggle((0, 0), true);
+        w.set_slider((1, 1), -5.0, 25.0);
+        w.set_button((2, 2), true);
+        w.set_progress_bar((3, 3), 500.0);
+
+        let json = serde_json::to_string(&w).unwrap();
+        let back: Widgets = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.count(), 4);
+        assert!(back.is_toggle((0, 0)));
+        assert_eq!(
+            back.kind((1, 1)),
+            Some(WidgetKind::Slider {
+                min: -5.0,
+                max: 25.0
+            }),
+        );
+        assert!(back.is_button((2, 2)));
+        assert_eq!(
+            back.kind((3, 3)),
+            Some(WidgetKind::ProgressBar { max: 500.0 })
+        );
     }
 
     #[test]

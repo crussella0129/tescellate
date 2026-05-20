@@ -1,14 +1,16 @@
 //! `.tscl` file format I/O. See PLAN.md §9.
 //!
-//! A `.tscl` file is a zip archive with this layout (Phase 1):
+//! A `.tscl` file is a zip archive with this layout:
 //!
 //! ```text
-//! manifest.json   { "format_version": 0, "engines": [...] }
+//! manifest.json   { "format_version": 1, "engines": [...] }
 //! workbook.json   serialized `Workbook`
+//! ui.json         opaque [`UiState`] JSON (added in v1)
 //! ```
 //!
-//! Future phases add `sheets/<id>.json` for large workbooks,
-//! `formulas/native/<hash>.rs` for cached Rust compilations, and
+//! v0 files (manifest.format_version == 0) predate `ui.json` and load with
+//! [`UiState::default()`]. Future phases add `sheets/<id>.json` for large
+//! workbooks, `formulas/native/<hash>.rs` for cached Rust compilations, and
 //! `trust.json` for the native-formula trust manifest.
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +18,43 @@ use std::io::{Cursor, Read, Seek, Write};
 use tescellate_core::{EngineKind, Workbook};
 use thiserror::Error;
 
-pub const FORMAT_VERSION: u32 = 0;
+/// Highest format version this build can write and read at full fidelity.
+/// v0 files are still readable for migration; reads of v0 fill in
+/// [`UiState::default()`].
+pub const FORMAT_VERSION: u32 = 1;
+
+/// Opaque UI-side state ridden alongside the workbook inside a `.tscl`.
+///
+/// The store treats this as a transparent JSON blob — it does not interpret
+/// or validate fields. The egui front-end owns the schema (per-sheet formats,
+/// widget catalogues, conditional rules, stage flags, etc.) and serializes /
+/// deserializes its own typed snapshot against this value. Anything else that
+/// later wants to ride along inside a workbook file uses the same envelope.
+///
+/// On disk this lands in `ui.json` inside the zip; v0 files predate the field
+/// and load as `UiState::default()`, which is `{}`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UiState(pub serde_json::Value);
+
+impl UiState {
+    pub fn empty() -> Self {
+        UiState(serde_json::Value::Object(serde_json::Map::new()))
+    }
+    pub fn is_empty(&self) -> bool {
+        matches!(&self.0, serde_json::Value::Null)
+            || matches!(&self.0, serde_json::Value::Object(m) if m.is_empty())
+    }
+    pub fn as_value(&self) -> &serde_json::Value {
+        &self.0
+    }
+}
+
+impl From<serde_json::Value> for UiState {
+    fn from(v: serde_json::Value) -> Self {
+        UiState(v)
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -40,7 +78,14 @@ pub struct Manifest {
     pub engines: Vec<EngineKind>,
 }
 
-pub fn save<W: Write + Seek>(workbook: &Workbook, writer: W) -> Result<(), StoreError> {
+/// Persist a workbook together with an opaque UI state. Writes v1 of the
+/// format. `ui` is serialized verbatim into `ui.json`; pass
+/// [`UiState::default()`] when no UI state is being tracked.
+pub fn save_full<W: Write + Seek>(
+    workbook: &Workbook,
+    ui: &UiState,
+    writer: W,
+) -> Result<(), StoreError> {
     let mut zip = zip::ZipWriter::new(writer);
     let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -55,11 +100,17 @@ pub fn save<W: Write + Seek>(workbook: &Workbook, writer: W) -> Result<(), Store
     zip.start_file("workbook.json", opts)?;
     zip.write_all(&serde_json::to_vec(workbook)?)?;
 
+    zip.start_file("ui.json", opts)?;
+    zip.write_all(&serde_json::to_vec(ui)?)?;
+
     zip.finish()?;
     Ok(())
 }
 
-pub fn load<R: Read + Seek>(reader: R) -> Result<Workbook, StoreError> {
+/// Load a workbook + opaque UI state. v0 files (no `ui.json`) load with
+/// `(workbook, UiState::default())`. Unknown future versions error with
+/// [`StoreError::Version`].
+pub fn load_full<R: Read + Seek>(reader: R) -> Result<(Workbook, UiState), StoreError> {
     let mut zip = zip::ZipArchive::new(reader)?;
 
     let manifest: Manifest = {
@@ -68,7 +119,7 @@ pub fn load<R: Read + Seek>(reader: R) -> Result<Workbook, StoreError> {
         f.read_to_string(&mut buf)?;
         serde_json::from_str(&buf)?
     };
-    if manifest.format_version != FORMAT_VERSION {
+    if manifest.format_version > FORMAT_VERSION {
         return Err(StoreError::Version(manifest.format_version));
     }
 
@@ -79,7 +130,29 @@ pub fn load<R: Read + Seek>(reader: R) -> Result<Workbook, StoreError> {
         serde_json::from_str(&buf)?
     };
 
-    Ok(workbook)
+    // ui.json is optional: v0 doesn't have it; tolerate FileNotFound and
+    // surface real read/parse errors otherwise.
+    let ui = match zip.by_name("ui.json") {
+        Ok(mut f) => {
+            let mut buf = String::new();
+            f.read_to_string(&mut buf)?;
+            serde_json::from_str(&buf)?
+        }
+        Err(zip::result::ZipError::FileNotFound) => UiState::default(),
+        Err(e) => return Err(StoreError::Zip(e)),
+    };
+
+    Ok((workbook, ui))
+}
+
+/// Persist a workbook with no UI state. Thin wrapper over [`save_full`].
+pub fn save<W: Write + Seek>(workbook: &Workbook, writer: W) -> Result<(), StoreError> {
+    save_full(workbook, &UiState::default(), writer)
+}
+
+/// Load a workbook discarding any UI state. Thin wrapper over [`load_full`].
+pub fn load<R: Read + Seek>(reader: R) -> Result<Workbook, StoreError> {
+    load_full(reader).map(|(wb, _ui)| wb)
 }
 
 /// Helper for in-memory round-trips, used by tests and the IPC layer.
@@ -91,6 +164,18 @@ pub fn save_to_bytes(workbook: &Workbook) -> Result<Vec<u8>, StoreError> {
 
 pub fn load_from_bytes(bytes: &[u8]) -> Result<Workbook, StoreError> {
     load(Cursor::new(bytes))
+}
+
+/// In-memory `save_full` for the wasm UI and IPC layer.
+pub fn save_full_to_bytes(workbook: &Workbook, ui: &UiState) -> Result<Vec<u8>, StoreError> {
+    let mut buf: Vec<u8> = Vec::new();
+    save_full(workbook, ui, Cursor::new(&mut buf))?;
+    Ok(buf)
+}
+
+/// In-memory `load_full` for the wasm UI and IPC layer.
+pub fn load_full_from_bytes(bytes: &[u8]) -> Result<(Workbook, UiState), StoreError> {
+    load_full(Cursor::new(bytes))
 }
 
 #[cfg(test)]
@@ -155,6 +240,60 @@ mod tests {
         let a1 = sheet.cells.get("A1").unwrap();
         assert_eq!(a1.source.as_deref(), Some("=42"));
         assert_eq!(a1.value, CellValue::Number(42.0));
+    }
+
+    #[test]
+    fn ui_state_default_is_empty_object() {
+        let ui = UiState::default();
+        // Default is null (transparent wrapper around `Value::default()`),
+        // but `empty()` is the canonical empty-object form. Both satisfy
+        // `is_empty` and round-trip into the store layer.
+        assert!(ui.is_empty());
+        assert!(UiState::empty().is_empty());
+        let json = serde_json::to_value(UiState::empty()).unwrap();
+        assert_eq!(json, serde_json::json!({}));
+    }
+
+    #[test]
+    fn round_trip_preserves_ui_state() {
+        let wb = sample();
+        let ui: UiState = serde_json::json!({
+            "answer": 42,
+            "list": [1, 2, 3],
+            "nested": { "stage_mode": true, "active_sheet": "Hex" }
+        })
+        .into();
+
+        let bytes = save_full_to_bytes(&wb, &ui).unwrap();
+        let (wb_back, ui_back) = load_full_from_bytes(&bytes).unwrap();
+
+        assert_eq!(wb_back.meta.title, "test");
+        assert_eq!(ui_back, ui);
+    }
+
+    #[test]
+    fn reads_v0_as_empty_ui_state() {
+        // Hand-build a v0 zip: manifest with format_version: 0, workbook.json,
+        // and *no* ui.json. The new loader must accept it and yield
+        // UiState::default().
+        let wb = sample();
+        let wb_bytes = serde_json::to_vec(&wb).unwrap();
+        let mut v0_zip = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(Cursor::new(&mut v0_zip));
+            let opts = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            w.start_file("manifest.json", opts).unwrap();
+            w.write_all(br#"{"format_version": 0, "engines": ["excel_lite"]}"#)
+                .unwrap();
+            w.start_file("workbook.json", opts).unwrap();
+            w.write_all(&wb_bytes).unwrap();
+            w.finish().unwrap();
+        }
+
+        let (wb_back, ui_back) = load_full_from_bytes(&v0_zip).unwrap();
+        assert_eq!(wb_back.meta.title, "test");
+        assert_eq!(ui_back, UiState::default());
     }
 
     #[test]

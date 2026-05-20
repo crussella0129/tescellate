@@ -416,6 +416,7 @@ dependencies = [
  "libloading",
  "pyo3",
  "serde",
+ "serde_json",
  "tescellate-core",
  "tescellate-store",
  "tescellate-tess",
