@@ -46,6 +46,9 @@ pub enum RibbonAction {
     OpenConditional,
     /// Turn the selection into (or out of) boolean checkbox cells.
     ToggleWidget,
+    /// Turn the selection into (or out of) slider cells with the
+    /// default 0–100 range.
+    ToggleSlider,
     /// Aggregate the selection (`SUM`, `AVERAGE`, …) into the cell below it.
     Aggregate(&'static str),
     /// Apply a border mode across the selection.
@@ -434,6 +437,13 @@ fn group_cells(ui: &mut egui::Ui) -> Option<RibbonAction> {
         .clicked()
     {
         action = Some(RibbonAction::ToggleWidget);
+    }
+    if ui
+        .button("Slider")
+        .on_hover_text("Turn the selected cells into 0–100 sliders")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleSlider);
     }
     action
 }

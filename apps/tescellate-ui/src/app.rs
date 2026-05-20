@@ -1136,6 +1136,7 @@ impl TescellateApp {
             RibbonAction::PasteValues => self.paste(PasteMode::ValuesOnly),
             RibbonAction::OpenConditional => self.cond_window_open = true,
             RibbonAction::ToggleWidget => self.toggle_widget_cells(),
+            RibbonAction::ToggleSlider => self.toggle_slider_cells(),
             RibbonAction::Aggregate(func) => self.autosum(func),
             RibbonAction::SetBorders(mode) => self.apply_border(mode),
             RibbonAction::ToggleNegativeRed => {
@@ -1197,6 +1198,20 @@ impl TescellateApp {
         let all_on = cells.iter().all(|&c| self.widgets.is_toggle(c));
         for cell in cells {
             self.widgets.set_toggle(cell, !all_on);
+        }
+    }
+
+    /// Convert the selected square cells into slider widgets — or
+    /// back into ordinary cells if they all already are. Sliders use
+    /// the default 0–100 range; per-cell range config lands later.
+    fn toggle_slider_cells(&mut self) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let cells = self.square.selection.cells();
+        let all_on = cells.iter().all(|&c| self.widgets.is_slider(c));
+        for cell in cells {
+            self.widgets.set_slider_default(cell, !all_on);
         }
     }
 
@@ -3278,8 +3293,9 @@ impl TescellateApp {
                 if editing_cell == Some((c, r)) {
                     continue;
                 }
-                // Toggle cells are drawn as a checkbox in a later pass.
-                if self.widgets.is_toggle((c, r)) {
+                // Widget cells (checkbox, slider) draw their own
+                // affordance in a later pass and skip the text pass.
+                if self.widgets.is_widget((c, r)) {
                     continue;
                 }
                 let text = self.cell_text(c, r);
@@ -3408,27 +3424,56 @@ impl TescellateApp {
             }
         }
 
-        // Boolean toggle cells render as a clickable checkbox.
+        // Widget cells render with their kind's affordance: a
+        // clickable checkbox for toggles, a draggable slider for
+        // sliders. Each kind produces a (addr, source) write when the
+        // user interacts; the writes apply as one edit per frame to
+        // keep the engine recompute count bounded.
         if !self.widgets.is_empty() {
-            let mut flipped = None;
+            let mut edits: Vec<(String, Option<String>)> = Vec::new();
             for r in 0..ROWS {
                 for c in 0..COLS {
-                    if !self.widgets.is_toggle((c, r)) || editing_cell == Some((c, r)) {
+                    if editing_cell == Some((c, r)) {
                         continue;
                     }
+                    let Some(kind) = self.widgets.kind((c, r)) else {
+                        continue;
+                    };
                     let rect = self.metrics.cell_rect(origin, c, r);
-                    let mut checked = widget::bool_state(&self.cell_value(c, r));
-                    if ui
-                        .put(rect, egui::Checkbox::new(&mut checked, ""))
-                        .changed()
-                    {
-                        flipped = Some((grid::cell_address(c, r), checked));
+                    match kind {
+                        widget::WidgetKind::Toggle => {
+                            let mut checked = widget::bool_state(&self.cell_value(c, r));
+                            if ui
+                                .put(rect, egui::Checkbox::new(&mut checked, ""))
+                                .changed()
+                            {
+                                edits.push((
+                                    grid::cell_address(c, r),
+                                    Some(widget::bool_source(checked).to_string()),
+                                ));
+                            }
+                        }
+                        widget::WidgetKind::Slider { min, max } => {
+                            let mut value = widget::slider_value(&self.cell_value(c, r), min, max);
+                            // Drag-only slider (no numeric editor) — the
+                            // cell stays terse and looks like an app
+                            // control rather than a spreadsheet cell.
+                            let response = ui.put(
+                                rect.shrink(2.0),
+                                egui::Slider::new(&mut value, min..=max).show_value(true),
+                            );
+                            if response.changed() {
+                                edits.push((
+                                    grid::cell_address(c, r),
+                                    Some(widget::slider_source(value)),
+                                ));
+                            }
+                        }
                     }
                 }
             }
-            if let Some((addr, checked)) = flipped {
-                let source = widget::bool_source(checked).to_string();
-                self.apply_edits(self.square.sheet_id, vec![(addr, Some(source))]);
+            if !edits.is_empty() {
+                self.apply_edits(self.square.sheet_id, edits);
             }
         }
 
