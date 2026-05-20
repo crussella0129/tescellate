@@ -89,3 +89,9 @@
 - **Completed:** 2026-05-20T20:55:00Z
 - **Files modified:** (git only)
 - **Commit:** `bf932d3`
+
+## T-201 (sprint 2) — Widgets<K> + hex_widgets + hex render dispatch + Hex Game seed
+- **Description:** Generalised `Widgets` to coord-generic `Widgets<K>` (mirrors FormatMap<K>/NoteMap<K>); split `app.widgets` into `square_widgets: Widgets<(u32,u32)>` and `hex_widgets: Widgets<HexCoord>`. Hex render pass dispatches Button (re-fires source on click) + Toggle (writes `bool_source` on change); Slider/ProgressBar on hex deferred. UiSnapshot gained `square_widgets` (`#[serde(alias = "widgets")]` for v145 back-compat) and `hex_widgets`. Hex Game demo seed adds `H(2,2)=RANDBETWEEN(1,6)` (Button widget) and `H(3,2)=H(2,2)` (Score readout). New tests: `widgets_generic_with_hex_coord_round_trip`, `v145_snapshot_loads_square_widgets_via_alias`. 248/248 UI tests pass.
+- **Completed:** 2026-05-20T21:25:00Z
+- **Files modified:** apps/tescellate-ui/src/widget.rs, apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/app.rs
+- **Commit:** `189fdbb`

@@ -49,7 +49,9 @@ pub struct UiSnapshot {
     pub square_formats: FormatMap<(u32, u32)>,
     pub hex_formats: FormatMap<HexCoord>,
     pub triangle_formats: FormatMap<TriCoord>,
-    pub widgets: Widgets,
+    #[serde(alias = "widgets")]
+    pub square_widgets: Widgets<(u32, u32)>,
+    pub hex_widgets: Widgets<HexCoord>,
     #[serde(with = "vec_pair::square_notes")]
     pub square_notes: HashMap<(u32, u32), String>,
     #[serde(with = "vec_pair::hex_notes")]
@@ -172,9 +174,11 @@ mod tests {
 
     #[test]
     fn snapshot_round_trips_through_ui_state() {
-        let mut widgets = Widgets::default();
-        widgets.set_slider((1, 5), 0.0, 100.0);
-        widgets.set_toggle((2, 5), true);
+        let mut sq_widgets: Widgets<(u32, u32)> = Widgets::default();
+        sq_widgets.set_slider((1, 5), 0.0, 100.0);
+        sq_widgets.set_toggle((2, 5), true);
+        let mut hex_widgets: Widgets<HexCoord> = Widgets::default();
+        hex_widgets.set_button(HexCoord::new(2, 2), true);
 
         let mut square_formats: FormatMap<(u32, u32)> = FormatMap::new();
         square_formats.update((0, 0), |f| {
@@ -189,7 +193,8 @@ mod tests {
             square_formats,
             hex_formats: FormatMap::default(),
             triangle_formats: FormatMap::default(),
-            widgets,
+            square_widgets: sq_widgets,
+            hex_widgets,
             square_notes: [((3, 3), "remember this".to_string())]
                 .into_iter()
                 .collect(),
@@ -212,8 +217,9 @@ mod tests {
 
         assert_eq!(back.active_sheet, ActiveSheetTag::Hex);
         assert!(back.stage_mode);
-        assert!(back.widgets.is_slider((1, 5)));
-        assert!(back.widgets.is_toggle((2, 5)));
+        assert!(back.square_widgets.is_slider((1, 5)));
+        assert!(back.square_widgets.is_toggle((2, 5)));
+        assert!(back.hex_widgets.is_button(HexCoord::new(2, 2)));
         assert!(back.square_formats.get((0, 0)).bold);
         assert_eq!(
             back.square_notes.get(&(3, 3)).map(String::as_str),
@@ -230,6 +236,24 @@ mod tests {
         assert_eq!(snap.active_sheet, ActiveSheetTag::Square);
         assert!(!snap.stage_mode);
         assert_eq!(snap.conditional_rules.len(), 0);
+    }
+
+    #[test]
+    fn v145_snapshot_loads_square_widgets_via_alias() {
+        // A v145-era snapshot used the field name `widgets` for the
+        // (square-only) widget map. The v146 schema renames that to
+        // `square_widgets` and adds `hex_widgets` — the rename carries
+        // `#[serde(alias = "widgets")]` so a v145 save still loads.
+        let v145_json = serde_json::json!({
+            "active_sheet": "Square",
+            "stage_mode": false,
+            "widgets": {
+                "cells": [[[1, 1], "Toggle"]]
+            }
+        });
+        let snap: UiSnapshot = serde_json::from_value(v145_json).unwrap();
+        assert!(snap.square_widgets.is_toggle((1, 1)));
+        assert!(snap.hex_widgets.is_empty());
     }
 
     #[test]
