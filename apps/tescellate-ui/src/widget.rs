@@ -25,6 +25,12 @@ pub enum WidgetKind {
     /// A horizontal slider clamped to `[min, max]`; the thumb reads
     /// the cell's numeric value and a drag rewrites it.
     Slider { min: f64, max: f64 },
+    /// A clickable action button. Clicking re-fires the cell's
+    /// current source through the engine, so a cell holding a
+    /// non-deterministic expression (`RAND`, `NOW`, …) recomputes
+    /// to a fresh value on each press. Cells with literal sources
+    /// re-eval to the same value — effectively a no-op.
+    Button,
 }
 
 impl WidgetKind {
@@ -63,6 +69,11 @@ impl Widgets {
         matches!(self.kind(cell), Some(WidgetKind::Slider { .. }))
     }
 
+    /// Whether `cell` is a clickable button.
+    pub fn is_button(&self, cell: (u32, u32)) -> bool {
+        matches!(self.kind(cell), Some(WidgetKind::Button))
+    }
+
     /// Set (or clear, with `kind = None`) the widget on `cell`.
     pub fn set(&mut self, cell: (u32, u32), kind: Option<WidgetKind>) {
         match kind {
@@ -99,6 +110,16 @@ impl Widgets {
     /// Replaces any prior widget kind on the cell.
     pub fn set_slider(&mut self, cell: (u32, u32), min: f64, max: f64) {
         self.set(cell, Some(WidgetKind::Slider { min, max }));
+    }
+
+    /// Convenience: turn `cell` into a clickable button (`on`) or
+    /// clear its widget treatment (`!on`).
+    pub fn set_button(&mut self, cell: (u32, u32), on: bool) {
+        if on {
+            self.set(cell, Some(WidgetKind::Button));
+        } else {
+            self.set(cell, None);
+        }
     }
 
     /// Whether no cell carries a widget — lets the renderer skip its
@@ -217,6 +238,18 @@ mod tests {
             slider_value(&CellValue::Text("hi".into()), 10.0, 90.0),
             10.0
         );
+    }
+
+    #[test]
+    fn set_and_query_button() {
+        let mut w = Widgets::default();
+        w.set_button((1, 1), true);
+        assert!(w.is_button((1, 1)));
+        assert!(!w.is_toggle((1, 1)));
+        assert!(!w.is_slider((1, 1)));
+        assert!(w.is_widget((1, 1)));
+        w.set_button((1, 1), false);
+        assert!(!w.is_widget((1, 1)));
     }
 
     #[test]

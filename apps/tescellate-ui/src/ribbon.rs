@@ -49,6 +49,9 @@ pub enum RibbonAction {
     /// Turn the selection into (or out of) slider cells with the
     /// default 0–100 range.
     ToggleSlider,
+    /// Turn the selection into (or out of) clickable button cells —
+    /// clicking re-fires the cell's source.
+    ToggleButton,
     /// Aggregate the selection (`SUM`, `AVERAGE`, …) into the cell below it.
     Aggregate(&'static str),
     /// Apply a border mode across the selection.
@@ -444,6 +447,13 @@ fn group_cells(ui: &mut egui::Ui) -> Option<RibbonAction> {
         .clicked()
     {
         action = Some(RibbonAction::ToggleSlider);
+    }
+    if ui
+        .button("Button")
+        .on_hover_text("Turn the selected cells into clickable buttons (re-fires the formula)")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleButton);
     }
     action
 }

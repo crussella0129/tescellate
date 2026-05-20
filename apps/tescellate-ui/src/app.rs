@@ -1164,6 +1164,7 @@ impl TescellateApp {
             RibbonAction::OpenConditional => self.cond_window_open = true,
             RibbonAction::ToggleWidget => self.toggle_widget_cells(),
             RibbonAction::ToggleSlider => self.toggle_slider_cells(),
+            RibbonAction::ToggleButton => self.toggle_button_cells(),
             RibbonAction::Aggregate(func) => self.autosum(func),
             RibbonAction::SetBorders(mode) => self.apply_border(mode),
             RibbonAction::ToggleNegativeRed => {
@@ -1239,6 +1240,19 @@ impl TescellateApp {
         let all_on = cells.iter().all(|&c| self.widgets.is_slider(c));
         for cell in cells {
             self.widgets.set_slider_default(cell, !all_on);
+        }
+    }
+
+    /// Convert the selected square cells into button widgets — or
+    /// back into ordinary cells if they all already are.
+    fn toggle_button_cells(&mut self) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let cells = self.square.selection.cells();
+        let all_on = cells.iter().all(|&c| self.widgets.is_button(c));
+        for cell in cells {
+            self.widgets.set_button(cell, !all_on);
         }
     }
 
@@ -3494,6 +3508,27 @@ impl TescellateApp {
                                     grid::cell_address(c, r),
                                     Some(widget::slider_source(value)),
                                 ));
+                            }
+                        }
+                        widget::WidgetKind::Button => {
+                            // Cell source is the label; an empty cell
+                            // gets a placeholder so the button is
+                            // still clickable.
+                            let label = self.cell_source(c, r);
+                            let label = if label.is_empty() {
+                                "Click".to_string()
+                            } else {
+                                label
+                            };
+                            if ui
+                                .put(rect.shrink(2.0), egui::Button::new(label.clone()))
+                                .clicked()
+                            {
+                                // Re-fire the cell's own source through
+                                // the engine. A side-effecting expression
+                                // (RAND, NOW…) recomputes; a literal
+                                // round-trips to itself.
+                                edits.push((grid::cell_address(c, r), Some(label)));
                             }
                         }
                     }
