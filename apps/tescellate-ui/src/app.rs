@@ -3453,57 +3453,61 @@ impl TescellateApp {
             }
         }
 
-        // The frozen row header — floated to the viewport's left edge
-        // so the 1/2/3 column stays visible as the cells scroll right.
-        // Drawn after the cells so it overpaints any column that scrolls
-        // beneath it.
-        for r in 0..ROWS {
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(header_x, origin.y + self.metrics.row_top(r)),
-                egui::vec2(grid::HEADER_W, self.metrics.row_height(r)),
-            );
-            painter.rect_filled(rect, 0.0, header_bg);
-            // Tint the active cell's row header.
-            if r == self.square.selection.cursor.1 {
-                painter.rect_filled(rect, 0.0, sel_tint);
+        // The frozen row + column headers (and their shared corner) —
+        // floated to the viewport's edges so the 1/2/3 strip and A/B/C
+        // strip stay visible as the cells scroll. Skipped entirely in
+        // Stage Mode so the sheet reads as an app, not a spreadsheet.
+        if !self.stage_mode {
+            // Row header — drawn after the cells so it overpaints any
+            // column that scrolls beneath it.
+            for r in 0..ROWS {
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(header_x, origin.y + self.metrics.row_top(r)),
+                    egui::vec2(grid::HEADER_W, self.metrics.row_height(r)),
+                );
+                painter.rect_filled(rect, 0.0, header_bg);
+                // Tint the active cell's row header.
+                if r == self.square.selection.cursor.1 {
+                    painter.rect_filled(rect, 0.0, sel_tint);
+                }
+                painter.rect_stroke(rect, 0.0, grid_line);
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    (r + 1).to_string(),
+                    font.clone(),
+                    text_color,
+                );
             }
-            painter.rect_stroke(rect, 0.0, grid_line);
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                (r + 1).to_string(),
-                font.clone(),
-                text_color,
-            );
-        }
-        // The frozen column header — floated to the viewport's top edge
-        // so the A/B/C strip stays visible as the cells scroll down.
-        for c in 0..COLS {
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(origin.x + self.metrics.col_left(c), header_y),
-                egui::vec2(self.metrics.col_width(c), grid::HEADER_H),
-            );
-            painter.rect_filled(rect, 0.0, header_bg);
-            // Tint the active cell's column header.
-            if c == self.square.selection.cursor.0 {
-                painter.rect_filled(rect, 0.0, sel_tint);
+            // Column header.
+            for c in 0..COLS {
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(origin.x + self.metrics.col_left(c), header_y),
+                    egui::vec2(self.metrics.col_width(c), grid::HEADER_H),
+                );
+                painter.rect_filled(rect, 0.0, header_bg);
+                // Tint the active cell's column header.
+                if c == self.square.selection.cursor.0 {
+                    painter.rect_filled(rect, 0.0, sel_tint);
+                }
+                painter.rect_stroke(rect, 0.0, grid_line);
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    grid::column_label(c),
+                    font.clone(),
+                    text_color,
+                );
             }
-            painter.rect_stroke(rect, 0.0, grid_line);
-            painter.text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                grid::column_label(c),
-                font.clone(),
-                text_color,
+            // The header corner — drawn last so it always sits above
+            // both frozen header bands.
+            let corner_rect = egui::Rect::from_min_size(
+                corner_origin,
+                egui::vec2(grid::HEADER_W, grid::HEADER_H),
             );
+            painter.rect_filled(corner_rect, 0.0, header_bg);
+            painter.rect_stroke(corner_rect, 0.0, grid_line);
         }
-        // The header corner — drawn last so it always sits above both
-        // frozen header bands, even when one of them scrolls into the
-        // other's track.
-        let corner_rect =
-            egui::Rect::from_min_size(corner_origin, egui::vec2(grid::HEADER_W, grid::HEADER_H));
-        painter.rect_filled(corner_rect, 0.0, header_bg);
-        painter.rect_stroke(corner_rect, 0.0, grid_line);
     }
 
     /// Paint one hexagon — its polygon and cell value — using vertices
