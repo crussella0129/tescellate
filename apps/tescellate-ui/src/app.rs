@@ -560,19 +560,27 @@ impl TescellateApp {
             let _ = engine.set_cell(square_sheet, addr, Some(src));
         }
 
-        // A pointy-top hex sheet: a labelled core, its six edge-neighbors,
-        // and a cell summing an axial range — the hex address form is
-        // `H(q,r)`, and `SUM` over a hex range is an axial parallelogram.
-        let hex_sheet = engine.add_sheet("Hex demo", LatticeKind::HexPointy);
+        // Hex Game demo (launch Demo B). A pointy-top hex board with
+        // resource tiles around the centre and a harvest cell that
+        // sums the six edge-neighbours via `NEIGHBORS()`. Drag a tile
+        // to edit its value; the harvest cell updates through the DAG
+        // in step. The dice-button + counter half of the demo is
+        // deferred to a later PR — square-sheet widgets need
+        // generalising to hex coords first.
+        let hex_sheet = engine.add_sheet("Hex Game", LatticeKind::HexPointy);
         for (addr, src) in [
-            ("H(0,0)", "core"),
-            ("H(1,0)", "=12"),
-            ("H(-1,0)", "=20"),
-            ("H(0,1)", "=10"),
-            ("H(0,-1)", "=15"),
-            ("H(1,-1)", "=8"),
-            ("H(-1,1)", "=5"),
-            ("H(0,2)", "=SUM(H(-1,-1):H(1,1))"),
+            // The center: a label, plus a Harvest cell directly below
+            // it that aggregates the six edge-neighbours via NEIGHBORS.
+            ("H(0,0)", "Center"),
+            ("H(0,2)", "=SUM(NEIGHBORS(H(0,0)))"),
+            // Inner ring — six resource tiles (wood / ore / grain
+            // round-robined) with numeric yields.
+            ("H(1,0)", "=4"),  // wood
+            ("H(-1,0)", "=3"), // ore
+            ("H(0,1)", "=5"),  // grain
+            ("H(0,-1)", "=6"), // wood
+            ("H(1,-1)", "=2"), // ore
+            ("H(-1,1)", "=7"), // grain
         ] {
             let _ = engine.set_cell(hex_sheet, addr, Some(src));
         }
@@ -4508,7 +4516,7 @@ impl eframe::App for TescellateApp {
                         }
                     }
                     if ui
-                        .selectable_label(self.active == ActiveSheet::Hex, "Hex demo")
+                        .selectable_label(self.active == ActiveSheet::Hex, "Hex Game")
                         .clicked()
                     {
                         self.commit_edit();
