@@ -125,17 +125,19 @@ pub fn number_format_label(format: NumberFormat) -> &'static str {
 }
 
 /// Draw a single bordered ribbon group titled `title`, with `content`
-/// laid out horizontally inside the frame and the title shown as a
-/// small caption underneath. The frame keeps its contents together
-/// even when the parent `horizontal_wrapped` flows to a new line — so
-/// each group is one persistent visual block rather than dissolving
-/// into a flat strip of buttons.
+/// laid out in a wrapping horizontal row inside the frame and the
+/// title shown as a small caption underneath.
+///
+/// The inner `horizontal_wrapped` lets a single group's controls flow
+/// onto a second row when the window is narrow — combined with the
+/// outer `horizontal_wrapped` over all groups, the ribbon condenses
+/// gracefully at any window width instead of overflowing horizontally.
 fn ribbon_group(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::group(ui.style())
         .inner_margin(egui::Margin::symmetric(6.0, 3.0))
         .show(ui, |ui| {
             ui.vertical(|ui| {
-                ui.horizontal(|ui| content(ui));
+                ui.horizontal_wrapped(|ui| content(ui));
                 ui.add_space(1.0);
                 ui.small(egui::RichText::new(title).weak());
             });
