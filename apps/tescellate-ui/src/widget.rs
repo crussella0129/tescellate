@@ -95,6 +95,12 @@ impl Widgets {
         }
     }
 
+    /// Set a slider on `cell` with an explicit `[min, max]` range.
+    /// Replaces any prior widget kind on the cell.
+    pub fn set_slider(&mut self, cell: (u32, u32), min: f64, max: f64) {
+        self.set(cell, Some(WidgetKind::Slider { min, max }));
+    }
+
     /// Whether no cell carries a widget — lets the renderer skip its
     /// widget pass entirely.
     pub fn is_empty(&self) -> bool {
