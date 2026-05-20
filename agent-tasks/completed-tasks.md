@@ -118,4 +118,10 @@
 - **Description:** New `crates/tescellate-tess/src/voronoi.rs` module: `VoronoiCoord(u32)` + `VoronoiLattice { seeds, bounds }`. Lattice trait impl: `cell_at` via nearest-seed Euclidean, `centroid` returns seed, `vertices` via Sutherland-Hodgman polygon clipping of bounds against every other seed's perpendicular bisector, `neighbors` returns every other seed (Direction::N placeholder; Delaunay-correct adjacency deferred to v150). `LatticeKind::Voronoi`, `LatticeHandle::Voronoi`, `ParsedCoord::Voronoi` variants threaded through `lib.rs` (every match arm updated). Address format `V(N)`. 8-seed default config in a 400×400 box. 10 new unit tests + 2 handle round-trip tests. Engine `add_sheet` integration + UI render deferred to v150.
 - **Completed:** 2026-05-20T23:45:00Z
 - **Files modified:** crates/tescellate-tess/src/voronoi.rs (new), crates/tescellate-tess/src/lib.rs, crates/tescellate-core/src/extent.rs
-- **Commit:** `e050c37`
+- **Commit:** `e050c37` (PR #180 squash-merged as `7e6a8e9`)
+
+## T-601..T-607 (sprint 6) — Voronoi UI: complete Demo C
+- **Description:** Threaded the Voronoi engine bringup all the way through to the UI. `impl Coord for VoronoiCoord` in `selection.rs` (degenerate `min_max` / `rect_cells` — Voronoi is single-cell-selection only this sprint). `TescellateApp` gains `voronoi_lattice: VoronoiLattice` and `voronoi: Sheet<VoronoiCoord>` fields. `ActiveSheet::Voronoi`, `CellId::Voronoi(VoronoiCoord)`, `ActiveSheetTag::Voronoi` variants threaded through every match in `app.rs` and `state_io.rs`. New `draw_voronoi_grid` render fn: convex-polygon fill (per-seed palette), centroid text, selection stroke, double-click-to-edit overlay. 4th "Voronoi" tab added to the tab bar. Eight demo seeds (`V(0)=Plains, V(1)=Forest, V(2)=42, V(3)=Tundra, V(4)=V(2)+8, V(5)=Desert, V(6)=Coast, V(7)=Highlands`) showcase mixed labels + a formula. v151 follow-up: widgets / formatting / range selection / fill drag / copy-paste on Voronoi.
+- **Completed:** 2026-05-21T01:30:00Z
+- **Files modified:** apps/tescellate-ui/src/app.rs, apps/tescellate-ui/src/selection.rs, apps/tescellate-ui/src/state_io.rs
+- **Commit:** PENDING
