@@ -556,6 +556,13 @@ impl TescellateApp {
             ("B11", "=B3-B10"),
             ("A12", "Status"),
             ("B12", "=IF(B11>=0, \"Under\", \"Over\")"),
+            ("A13", "Goal Progress"),
+            // Cell mirrors Remaining so the progress bar fills as the
+            // user under-spends. The widget's max is the initial
+            // Savings Goal (500); changing the goal at runtime won't
+            // re-tune the bar — that lands when widget config grows
+            // a formula-bound max.
+            ("B13", "=B11"),
         ] {
             let _ = engine.set_cell(square_sheet, addr, Some(src));
         }
@@ -686,6 +693,10 @@ impl TescellateApp {
                 for r in 4..=7 {
                     w.set_slider((1, r), 0.0, 3000.0);
                 }
+                // Goal Progress bar at B13 — max matches the initial
+                // Savings Goal so the bar fills as the user
+                // under-spends. Read-only.
+                w.set_progress_bar((1, 12), 500.0);
                 w
             },
             formula_bar: String::new(),
@@ -1173,6 +1184,7 @@ impl TescellateApp {
             RibbonAction::ToggleWidget => self.toggle_widget_cells(),
             RibbonAction::ToggleSlider => self.toggle_slider_cells(),
             RibbonAction::ToggleButton => self.toggle_button_cells(),
+            RibbonAction::ToggleProgressBar => self.toggle_progress_bar_cells(),
             RibbonAction::Aggregate(func) => self.autosum(func),
             RibbonAction::SetBorders(mode) => self.apply_border(mode),
             RibbonAction::ToggleNegativeRed => {
@@ -1261,6 +1273,25 @@ impl TescellateApp {
         let all_on = cells.iter().all(|&c| self.widgets.is_button(c));
         for cell in cells {
             self.widgets.set_button(cell, !all_on);
+        }
+    }
+
+    /// Convert the selected square cells into progress-bar widgets
+    /// (default 0–100 max) — or back into ordinary cells if they all
+    /// already are.
+    fn toggle_progress_bar_cells(&mut self) {
+        if self.active != ActiveSheet::Square {
+            return;
+        }
+        let cells = self.square.selection.cells();
+        let all_on = cells.iter().all(|&c| self.widgets.is_progress_bar(c));
+        for cell in cells {
+            if all_on {
+                self.widgets.set(cell, None);
+            } else {
+                self.widgets
+                    .set_progress_bar(cell, widget::Widgets::DEFAULT_PROGRESS_MAX);
+            }
         }
     }
 
@@ -3538,6 +3569,16 @@ impl TescellateApp {
                                 // round-trips to itself.
                                 edits.push((grid::cell_address(c, r), Some(label)));
                             }
+                        }
+                        widget::WidgetKind::ProgressBar { max } => {
+                            // Read-only display — the engine drives
+                            // the cell's value, the bar shows
+                            // progress, no write-back ever happens.
+                            let fraction = widget::progress_fraction(&self.cell_value(c, r), max);
+                            ui.put(
+                                rect.shrink(2.0),
+                                egui::ProgressBar::new(fraction).show_percentage(),
+                            );
                         }
                     }
                 }
