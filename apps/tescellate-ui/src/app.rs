@@ -12,6 +12,7 @@ use tescellate_core::{CellError, CellValue, EngineKind, SheetId};
 use tescellate_formula::WorkbookEngine;
 use tescellate_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
 use tescellate_tess::triangle::{TriCoord, TriangleLattice};
+use tescellate_tess::voronoi::{VoronoiCoord, VoronoiLattice};
 use tescellate_tess::{Lattice, LatticeKind, Point2};
 
 use crate::clipboard::{Clipboard, CopiedCell, PasteMode, SourceLattice};
@@ -130,6 +131,7 @@ enum ActiveSheet {
     Square,
     Hex,
     Triangle,
+    Voronoi,
 }
 
 /// A cell on any sheet — Find tracks matches across every lattice.
@@ -138,6 +140,7 @@ enum CellId {
     Square((u32, u32)),
     Hex(HexCoord),
     Triangle(TriCoord),
+    Voronoi(VoronoiCoord),
 }
 
 /// An in-progress cell edit.
@@ -435,10 +438,15 @@ pub struct TescellateApp {
     hex: Sheet<HexCoord>,
     /// The triangle-lattice sheet — analogue of [`Self::square`].
     triangle: Sheet<TriCoord>,
+    /// The Voronoi-lattice sheet — analogue of [`Self::square`].
+    /// Sprint 6 ships single-cell selection only (no range / fill drag).
+    voronoi: Sheet<VoronoiCoord>,
     /// Geometry for the hex sheet — owned by `tescellate-tess`.
     hex_lattice: HexLattice,
     /// Geometry for the triangle sheet — owned by `tescellate-tess`.
     triangle_lattice: TriangleLattice,
+    /// Geometry for the Voronoi sheet — carries seeds + bounding rect.
+    voronoi_lattice: VoronoiLattice,
     /// Which sheet is on screen.
     active: ActiveSheet,
     /// The square cursor as of the last frame — drives scroll-to-cursor.
@@ -688,13 +696,39 @@ impl TescellateApp {
             formats: triangle_formats,
         };
 
+        // Voronoi sheet — Demo C. Uses the default 8-seed config from
+        // `tescellate-tess`. Seed cells populate `V(0)..V(7)` with
+        // simple labels and one formula example.
+        let voronoi_sheet = engine.add_sheet("Voronoi", LatticeKind::Voronoi);
+        for (addr, src) in [
+            ("V(0)", "Plains"),
+            ("V(1)", "Forest"),
+            ("V(2)", "=42"),
+            ("V(3)", "Tundra"),
+            ("V(4)", "=V(2) + 8"),
+            ("V(5)", "Desert"),
+            ("V(6)", "Coast"),
+            ("V(7)", "Highlands"),
+        ] {
+            let _ = engine.set_cell(voronoi_sheet, addr, Some(src));
+        }
+        let voronoi = Sheet {
+            sheet_id: voronoi_sheet,
+            selection: Selection::single(VoronoiCoord(0)),
+            formula_drag: None,
+            formula_highlight: None,
+            formats: FormatMap::new(),
+        };
+
         let mut this = Self {
             engine,
             square,
             hex,
             triangle,
+            voronoi,
             hex_lattice: HexLattice::pointy(HEX_SIZE),
             triangle_lattice: TriangleLattice::new(TRIANGLE_SIDE),
+            voronoi_lattice: VoronoiLattice::default(),
             active: ActiveSheet::Square,
             prev_cursor: (0, 0),
             edit: None,
@@ -927,6 +961,22 @@ impl TescellateApp {
             .unwrap_or_default()
     }
 
+    /// The raw source of a Voronoi-sheet cell.
+    fn voronoi_cell_source(&self, coord: VoronoiCoord) -> String {
+        self.engine
+            .get_cell(self.voronoi.sheet_id, &voronoi_address(coord))
+            .and_then(|snapshot| snapshot.source)
+            .unwrap_or_default()
+    }
+
+    /// The display text for a Voronoi-sheet cell.
+    fn voronoi_cell_text(&self, coord: VoronoiCoord) -> String {
+        self.engine
+            .get_cell(self.voronoi.sheet_id, &voronoi_address(coord))
+            .map(|snapshot| natural_text(snapshot.value))
+            .unwrap_or_default()
+    }
+
     /// The triangle-sheet cell value used by conditional formatting.
     fn triangle_cell_value(&self, coord: TriCoord) -> CellValue {
         self.engine
@@ -973,6 +1023,14 @@ impl TescellateApp {
                 )
                 .and_then(|s| s.source)
                 .unwrap_or_default(),
+            ActiveSheet::Voronoi => self
+                .engine
+                .get_cell(
+                    self.voronoi.sheet_id,
+                    &voronoi_address(self.voronoi.selection.cursor),
+                )
+                .and_then(|s| s.source)
+                .unwrap_or_default(),
         }
     }
 
@@ -988,6 +1046,10 @@ impl TescellateApp {
                 self.triangle.sheet_id,
                 triangle_address(self.triangle.selection.cursor),
             ),
+            ActiveSheet::Voronoi => (
+                self.voronoi.sheet_id,
+                voronoi_address(self.voronoi.selection.cursor),
+            ),
         }
     }
 
@@ -1001,6 +1063,7 @@ impl TescellateApp {
             }
             ActiveSheet::Hex => hex_address(self.hex.selection.cursor),
             ActiveSheet::Triangle => triangle_address(self.triangle.selection.cursor),
+            ActiveSheet::Voronoi => voronoi_address(self.voronoi.selection.cursor),
         };
         let source = match &self.edit {
             Some(edit) => edit.buffer.clone(),
@@ -1045,6 +1108,18 @@ impl TescellateApp {
                 .map(|c| {
                     self.engine
                         .get_cell(self.triangle.sheet_id, &triangle_address(c))
+                        .map(|s| s.value)
+                        .unwrap_or(CellValue::Empty)
+                })
+                .collect(),
+            ActiveSheet::Voronoi => self
+                .voronoi
+                .selection
+                .cells()
+                .into_iter()
+                .map(|c| {
+                    self.engine
+                        .get_cell(self.voronoi.sheet_id, &voronoi_address(c))
                         .map(|s| s.value)
                         .unwrap_or(CellValue::Empty)
                 })
@@ -1116,11 +1191,13 @@ impl TescellateApp {
                     let row = self.triangle.selection.cursor.row;
                     self.triangle.selection.collapse_to(TriCoord::new(0, row));
                 }
+                ActiveSheet::Voronoi => {}
             },
             Command::MoveToOrigin => match self.active {
                 ActiveSheet::Square => self.square.selection.collapse_to((0, 0)),
                 ActiveSheet::Hex => self.hex.selection.collapse_to(HexCoord::new(0, 0)),
                 ActiveSheet::Triangle => self.triangle.selection.collapse_to(TriCoord::new(0, 0)),
+                ActiveSheet::Voronoi => {}
             },
             Command::MoveToRowEnd => match self.active {
                 ActiveSheet::Square => {
@@ -1134,6 +1211,7 @@ impl TescellateApp {
                         .selection
                         .collapse_to(TriCoord::new(TRIANGLE_RADIUS, row));
                 }
+                ActiveSheet::Voronoi => {}
             },
             Command::MoveToSheetEnd => match self.active {
                 ActiveSheet::Square => self.square.selection.collapse_to((COLS - 1, ROWS - 1)),
@@ -1142,6 +1220,7 @@ impl TescellateApp {
                     .triangle
                     .selection
                     .collapse_to(TriCoord::new(TRIANGLE_RADIUS, TRIANGLE_RADIUS)),
+                ActiveSheet::Voronoi => {}
             },
             Command::PageUp => self.page(true),
             Command::PageDown => self.page(false),
@@ -1230,6 +1309,7 @@ impl TescellateApp {
                     cursor: TriCoord::new(r, r),
                 };
             }
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -1265,6 +1345,7 @@ impl TescellateApp {
                 // pass; for now expanding from the cursor just keeps
                 // the cursor put.
             }
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -1459,6 +1540,7 @@ impl TescellateApp {
                 );
                 self.triangle.selection.collapse_to(target);
             }
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -1524,6 +1606,7 @@ impl TescellateApp {
             ActiveSheet::Triangle => {
                 // Triangle series-fill lands in a follow-up.
             }
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -1601,6 +1684,7 @@ impl TescellateApp {
                 self.commit_edit();
                 self.apply_edits(self.triangle.sheet_id, targets);
             }
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -1616,6 +1700,7 @@ impl TescellateApp {
                 // have three edges, not four, and need their own
                 // border-mode resolution.
             }
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -1901,6 +1986,11 @@ impl TescellateApp {
                 triangle_address(t),
                 self.triangle_cell_source(t),
             ),
+            CellId::Voronoi(v) => (
+                self.voronoi.sheet_id,
+                voronoi_address(v),
+                self.voronoi_cell_source(v),
+            ),
         }
     }
 
@@ -1910,6 +2000,7 @@ impl TescellateApp {
             CellId::Square(cell) => self.square.selection.collapse_to(cell),
             CellId::Hex(coord) => self.hex.selection.collapse_to(coord),
             CellId::Triangle(coord) => self.triangle.selection.collapse_to(coord),
+            CellId::Voronoi(coord) => self.voronoi.selection.collapse_to(coord),
         }
     }
 
@@ -1936,6 +2027,11 @@ impl TescellateApp {
                     .map(|coord| (CellId::Triangle(coord), self.triangle_cell_source(coord)))
                     .collect()
             }
+            ActiveSheet::Voronoi => (0..self.voronoi_lattice.len() as u32)
+                .map(VoronoiCoord)
+                .filter(|&coord| !in_selection || self.voronoi.selection.contains(coord))
+                .map(|coord| (CellId::Voronoi(coord), self.voronoi_cell_source(coord)))
+                .collect(),
         };
         self.find.refresh(cells.into_iter());
         if let Some(id) = self.find.current_match() {
@@ -2027,6 +2123,7 @@ impl TescellateApp {
             CellId::Square((c, r)) => grid::cell_address(c, r),
             CellId::Hex(h) => hex_address(h),
             CellId::Triangle(t) => triangle_address(t),
+            CellId::Voronoi(v) => voronoi_address(v),
         };
         egui::Window::new("Cell note")
             .open(&mut open)
@@ -2061,6 +2158,10 @@ impl TescellateApp {
             CellId::Square(c) => self.notes.set(c, text),
             CellId::Hex(h) => self.hex_notes.set(h, text),
             CellId::Triangle(t) => self.triangle_notes.set(t, text),
+            // Voronoi notes deferred to v151 — set_note on a Voronoi
+            // cell is a no-op for now. The note window's address path
+            // already handles CellId::Voronoi.
+            CellId::Voronoi(_) => {}
         }
     }
 
@@ -2125,6 +2226,7 @@ impl TescellateApp {
                     self.triangle.formats.update(cell, |f| edit(f));
                 }
             }
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -2242,6 +2344,9 @@ impl TescellateApp {
                 let cells = self.triangle.selection.cells();
                 toggle_target(cells.iter().map(|&c| get(&self.triangle.formats.get(c))))
             }
+            // Voronoi sheet has no format pipeline in v150 — leave the
+            // existing toggle target unchanged (defaults to false).
+            ActiveSheet::Voronoi => false,
         };
         self.format_range(|f| set(f, target));
     }
@@ -2256,6 +2361,7 @@ impl TescellateApp {
             }
             ActiveSheet::Hex => self.move_hex_selection(dir),
             ActiveSheet::Triangle => self.move_triangle_selection(dir),
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -2285,6 +2391,7 @@ impl TescellateApp {
                     .selection
                     .collapse_to(TriCoord::new(cursor.col, row));
             }
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -2331,6 +2438,7 @@ impl TescellateApp {
                 // single step like a plain arrow.
                 self.move_triangle_selection(dir);
             }
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -2349,6 +2457,7 @@ impl TescellateApp {
                 self.hex.selection.extend_to(next);
             }
             ActiveSheet::Triangle => self.extend_triangle_selection(dir),
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -2373,6 +2482,7 @@ impl TescellateApp {
             }
             ActiveSheet::Hex => self.extend_hex_selection(dir),
             ActiveSheet::Triangle => self.extend_triangle_selection(dir),
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -2432,6 +2542,7 @@ impl TescellateApp {
                 let cursor = self.triangle.selection.cursor;
                 self.triangle.selection.collapse_to(cursor);
             }
+            ActiveSheet::Voronoi => {}
         }
         let buffer = match replace_with {
             Some(ch) => ch.to_string(),
@@ -2514,6 +2625,10 @@ impl TescellateApp {
                     .map(|c| (triangle_address(c), None))
                     .collect();
                 (self.triangle.sheet_id, targets)
+            }
+            ActiveSheet::Voronoi => {
+                let cursor = self.voronoi.selection.cursor;
+                (self.voronoi.sheet_id, vec![(voronoi_address(cursor), None)])
             }
         };
         self.apply_edits(sheet, targets);
@@ -2601,6 +2716,7 @@ impl TescellateApp {
                 self.clipboard = Clipboard::capture(width, height, cells, SourceLattice::Triangle);
                 ctx.copy_text(tsv);
             }
+            ActiveSheet::Voronoi => {}
         }
     }
 
@@ -2623,6 +2739,10 @@ impl TescellateApp {
                 let (min, _) = self.triangle.selection.bounds();
                 (min.col, min.row)
             }
+            // Voronoi has no grid origin — pick (0, 0) so the math
+            // downstream keeps a sensible default; copy/cut on the
+            // Voronoi sheet is a v151 follow-up anyway.
+            ActiveSheet::Voronoi => (0, 0),
         };
         self.clipboard.mark_as_cut(origin);
     }
@@ -2735,6 +2855,7 @@ impl TescellateApp {
                     cursor,
                 };
             }
+            ActiveSheet::Voronoi => {}
         }
         // A paste consumes the cut — the clipboard reverts to a copy.
         self.clipboard.consume_cut();
@@ -2854,6 +2975,9 @@ impl TescellateApp {
                     .collect();
                 (self.triangle.sheet_id, targets)
             }
+            // Voronoi has no fill-drag geometry — return an empty edit
+            // set so the caller's `apply_edits` is a no-op.
+            ActiveSheet::Voronoi => (self.voronoi.sheet_id, Vec::new()),
         };
         self.apply_edits(sheet, targets);
     }
@@ -4585,6 +4709,127 @@ impl TescellateApp {
         }
     }
 
+    /// Render the Voronoi sheet — Demo C from the launch brief. Eight
+    /// (or however many seeds the lattice carries) cell polygons fill
+    /// the central panel; each cell displays its evaluated value. Click
+    /// to select; F2 or double-click to edit. v150 ships read-only-ish
+    /// interaction (single-cell selection + formula-bar edit); widgets,
+    /// formatting, range selection, fill drag, and copy/paste on
+    /// Voronoi all wait for v151.
+    fn draw_voronoi_grid(&mut self, ui: &mut egui::Ui) {
+        let size = ui.available_size();
+        let (response, painter) = ui.allocate_painter(size, egui::Sense::click_and_drag());
+        let origin = response.rect.center();
+
+        // Resolve the cell under each interaction's pointer up front so the
+        // handler bodies can call `&mut self` methods without aliasing.
+        let clicked_coord = if response.clicked() {
+            response.interact_pointer_pos().and_then(|p| {
+                let local = Point2::new(p.x - origin.x, p.y - origin.y);
+                self.voronoi_lattice.cell_at(local)
+            })
+        } else {
+            None
+        };
+        let doubled = response.double_clicked();
+
+        if let Some(coord) = clicked_coord {
+            self.commit_edit();
+            self.voronoi.selection.collapse_to(coord);
+            if doubled {
+                let buffer = self.voronoi_cell_source(coord);
+                self.edit = Some(EditState {
+                    buffer,
+                    fresh: true,
+                });
+            }
+        }
+
+        // First pass — fill + outline every Voronoi cell.
+        let stroke = egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
+        let palette: [egui::Color32; 8] = [
+            egui::Color32::from_rgb(232, 213, 196),
+            egui::Color32::from_rgb(196, 222, 232),
+            egui::Color32::from_rgb(207, 232, 196),
+            egui::Color32::from_rgb(232, 196, 213),
+            egui::Color32::from_rgb(213, 196, 232),
+            egui::Color32::from_rgb(232, 230, 196),
+            egui::Color32::from_rgb(196, 232, 222),
+            egui::Color32::from_rgb(220, 220, 230),
+        ];
+        for i in 0..self.voronoi_lattice.len() as u32 {
+            let coord = VoronoiCoord(i);
+            let verts = self.voronoi_lattice.vertices(coord);
+            if verts.is_empty() {
+                continue;
+            }
+            let pts: Vec<egui::Pos2> = verts
+                .iter()
+                .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
+                .collect();
+            let fill = palette[(i as usize) % palette.len()];
+            painter.add(egui::Shape::convex_polygon(pts, fill, stroke));
+        }
+
+        // Second pass — cell value text at each centroid.
+        let fg = ui.visuals().text_color();
+        for i in 0..self.voronoi_lattice.len() as u32 {
+            let coord = VoronoiCoord(i);
+            let centroid = self.voronoi_lattice.centroid(coord);
+            let pos = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+            let text = self.voronoi_cell_text(coord);
+            if text.is_empty() {
+                continue;
+            }
+            painter.text(
+                pos,
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::proportional(14.0),
+                fg,
+            );
+        }
+
+        // Third pass — selection stroke around the selected cell.
+        let sel_stroke = egui::Stroke::new(2.5, egui::Color32::from_rgb(70, 120, 220));
+        let selected = self.voronoi.selection.cursor;
+        let verts = self.voronoi_lattice.vertices(selected);
+        if !verts.is_empty() {
+            let mut pts: Vec<egui::Pos2> = verts
+                .iter()
+                .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
+                .collect();
+            if let Some(&first) = pts.first() {
+                pts.push(first);
+            }
+            painter.add(egui::Shape::line(pts, sel_stroke));
+        }
+
+        // In-cell edit overlay — a small text field centred on the
+        // selected cell's centroid.
+        if let Some(edit) = &mut self.edit {
+            let centroid = self.voronoi_lattice.centroid(self.voronoi.selection.cursor);
+            let center = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+            let rect = egui::Rect::from_center_size(center, egui::vec2(160.0, 24.0));
+            let response = ui.put(
+                rect,
+                egui::TextEdit::singleline(&mut edit.buffer)
+                    .frame(true)
+                    .font(egui::TextStyle::Monospace),
+            );
+            if std::mem::take(&mut edit.fresh) {
+                response.request_focus();
+                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), response.id) {
+                    let end = egui::text::CCursor::new(edit.buffer.chars().count());
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                    egui::TextEdit::store_state(ui.ctx(), response.id, state);
+                }
+            }
+        }
+    }
+
     /// Persist the workbook + UI state to a `.tscl`. On native, opens a
     /// blocking save dialog; on wasm, spawns an async dialog that hands
     /// the bytes to the browser via a download blob. Errors are logged
@@ -4731,6 +4976,9 @@ impl TescellateApp {
                     LatticeKind::Triangle => {
                         self.triangle.sheet_id = *sid;
                     }
+                    LatticeKind::Voronoi => {
+                        self.voronoi.sheet_id = *sid;
+                    }
                     _ => {}
                 }
             }
@@ -4745,6 +4993,7 @@ impl TescellateApp {
             ActiveSheet::Square => ActiveSheetTag::Square,
             ActiveSheet::Hex => ActiveSheetTag::Hex,
             ActiveSheet::Triangle => ActiveSheetTag::Triangle,
+            ActiveSheet::Voronoi => ActiveSheetTag::Voronoi,
         };
         let mut sq_formats = FormatMap::new();
         sq_formats.replace_with(self.square.formats.iter().map(|(k, v)| (*k, v.clone())));
@@ -4803,6 +5052,7 @@ impl TescellateApp {
             ActiveSheetTag::Square => ActiveSheet::Square,
             ActiveSheetTag::Hex => ActiveSheet::Hex,
             ActiveSheetTag::Triangle => ActiveSheet::Triangle,
+            ActiveSheetTag::Voronoi => ActiveSheet::Voronoi,
         };
         self.stage_mode = s.stage_mode;
         self.dark_mode = s.dark_mode;
@@ -4927,6 +5177,7 @@ impl eframe::App for TescellateApp {
                         self.apply_ribbon(action, ctx);
                     }
                 }
+                ActiveSheet::Voronoi => {}
             });
         }
 
@@ -4963,6 +5214,7 @@ impl eframe::App for TescellateApp {
                             ActiveSheet::Triangle => {
                                 ui.monospace(addr.clone());
                             }
+                            ActiveSheet::Voronoi => {}
                         }
                         match self.active {
                             ActiveSheet::Square if self.square.selection.is_range() => {
@@ -5077,6 +5329,16 @@ impl eframe::App for TescellateApp {
                             self.refresh_find();
                         }
                     }
+                    if ui
+                        .selectable_label(self.active == ActiveSheet::Voronoi, "Voronoi")
+                        .clicked()
+                    {
+                        self.commit_edit();
+                        self.active = ActiveSheet::Voronoi;
+                        if self.find_open {
+                            self.refresh_find();
+                        }
+                    }
                     // Selection statistics, pushed to the right edge.
                     let stats = stats::selection_stats(&self.selection_values());
                     if stats.nonempty > 0 {
@@ -5128,6 +5390,7 @@ impl eframe::App for TescellateApp {
             }
             ActiveSheet::Hex => self.draw_hex_grid(ui),
             ActiveSheet::Triangle => self.draw_triangle_grid(ui),
+            ActiveSheet::Voronoi => self.draw_voronoi_grid(ui),
         });
 
         self.conditional_window(ctx);
@@ -5501,6 +5764,12 @@ fn hex_address(c: HexCoord) -> String {
 /// engine's triangle lattice canonicalizes to.
 fn triangle_address(c: TriCoord) -> String {
     format!("T({},{})", c.col, c.row)
+}
+
+/// The `V(N)` address string for a Voronoi coord — matches the
+/// canonical form `tescellate-tess`'s voronoi lattice emits.
+fn voronoi_address(c: VoronoiCoord) -> String {
+    format!("V({})", c.0)
 }
 
 /// Whether `coord` is inside the currently-drawn triangle window.
