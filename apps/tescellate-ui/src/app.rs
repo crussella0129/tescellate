@@ -8,7 +8,7 @@
 //! interactive too — both sheets share the pure `keymap` command layer.
 
 use eframe::egui;
-use tescellate_core::{CellError, CellValue, SheetId};
+use tescellate_core::{CellError, CellValue, EngineKind, SheetId};
 use tescellate_formula::WorkbookEngine;
 use tescellate_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
 use tescellate_tess::{Lattice, LatticeKind, Point2};
@@ -3626,6 +3626,38 @@ impl eframe::App for TescellateApp {
                         }
                         _ => {}
                     }
+                    // Per-cell language picker. Shows the active cell's
+                    // effective engine (its override, or the workbook
+                    // default if not overridden); selecting a value
+                    // records an override on the active cell.
+                    let (sheet, picker_addr) = self.active_target();
+                    let snapshot = self.engine.get_cell(sheet, &picker_addr);
+                    let cell_override = snapshot.as_ref().and_then(|s| s.engine);
+                    let default_engine = self.engine.default_engine();
+                    let effective = cell_override.unwrap_or(default_engine);
+                    let mut new_engine = effective;
+                    egui::ComboBox::from_id_salt("language_picker")
+                        .selected_text(engine_label(effective, cell_override.is_some()))
+                        .width(110.0)
+                        .show_ui(ui, |ui| {
+                            for kind in [
+                                EngineKind::ExcelLite,
+                                EngineKind::Python,
+                                EngineKind::Rhai,
+                                EngineKind::RustNative,
+                            ] {
+                                ui.selectable_value(
+                                    &mut new_engine,
+                                    kind,
+                                    engine_label(kind, false),
+                                );
+                            }
+                        });
+                    if new_engine != effective {
+                        let _ = self
+                            .engine
+                            .set_cell_engine(sheet, &picker_addr, Some(new_engine));
+                    }
                     ui.separator();
                     let width = ui.available_width();
                     let height = ui.available_height();
@@ -4036,6 +4068,25 @@ fn format_number(n: f64) -> String {
 /// hex lattice canonicalizes to.
 fn hex_address(c: HexCoord) -> String {
     format!("H({},{})", c.q, c.r)
+}
+
+/// Human label for an [`EngineKind`] in the formula-bar language
+/// picker. When `is_override` is true (i.e. the cell has an explicit
+/// engine override rather than inheriting the workbook default), the
+/// label is shown verbatim; otherwise a trailing `(default)` hint
+/// signals that the choice was inherited.
+fn engine_label(kind: EngineKind, is_override: bool) -> String {
+    let base = match kind {
+        EngineKind::ExcelLite => "Excelite",
+        EngineKind::Python => "Python",
+        EngineKind::Rhai => "Rhai",
+        EngineKind::RustNative => "Rust",
+    };
+    if is_override {
+        base.to_string()
+    } else {
+        format!("{base} (default)")
+    }
 }
 
 /// Collapse duplicate addresses in an edit batch so one undo step never
