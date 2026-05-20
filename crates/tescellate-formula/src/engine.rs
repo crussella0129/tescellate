@@ -39,6 +39,11 @@ pub struct CellSnapshot {
     /// formula bar shows the source cell's formula. PLAN.md §6.2.2.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub spilled_from: Option<String>,
+    /// The cell's formula-engine override, if any. `None` means the
+    /// cell inherits the sheet / workbook default. The UI uses this
+    /// to show a per-cell language picker.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub engine: Option<EngineKind>,
 }
 
 impl Default for WorkbookEngine {
@@ -379,6 +384,7 @@ impl WorkbookEngine {
                 source: cell.source.clone(),
                 value,
                 spilled_from: None,
+                engine: cell.engine,
             });
         }
         // Virtual spill cell?
@@ -388,9 +394,65 @@ impl WorkbookEngine {
                 source: None,
                 value: virt.value.clone(),
                 spilled_from: Some(virt.source.clone()),
+                engine: None,
             });
         }
         None
+    }
+
+    /// The workbook-wide default engine — used by any cell that doesn't
+    /// override it via [`Self::set_cell_engine`].
+    pub fn default_engine(&self) -> EngineKind {
+        self.workbook.default_engine
+    }
+
+    /// Change the workbook-wide default engine. Existing cells keep
+    /// their explicit per-cell overrides; cells that inherit the
+    /// default now compile through the new engine on next edit.
+    pub fn set_default_engine(&mut self, engine: EngineKind) {
+        self.workbook.default_engine = engine;
+    }
+
+    /// Set (or clear, with `engine = None`) the formula-engine override
+    /// for a single cell. If the cell holds a formula source, it is
+    /// re-parsed through the new engine and dependent cells are
+    /// re-evaluated — same propagation as [`Self::set_cell`]. Cells
+    /// without a source just store the engine choice for the next edit.
+    ///
+    /// Returns the list of cells whose values changed (empty if the
+    /// cell had no formula source).
+    pub fn set_cell_engine(
+        &mut self,
+        sheet: SheetId,
+        addr: &str,
+        engine: Option<EngineKind>,
+    ) -> Result<Vec<CellRef>, SetCellError> {
+        let lattice = self.lattice_for(sheet)?;
+        let coord = lattice
+            .parse_coord(addr)
+            .map_err(|e| SetCellError::BadAddress(format!("{e}")))?;
+        let canonical = lattice.format_coord(coord);
+
+        let sheet_ref = self
+            .workbook
+            .sheets
+            .get_mut(&sheet)
+            .ok_or(SetCellError::NoSheet(sheet))?;
+        let cell = sheet_ref
+            .cells
+            .entry(canonical.clone())
+            .or_insert_with(Cell::blank);
+        cell.engine = engine;
+        // Capture the source so we can hand it back to `set_cell` for a
+        // full re-parse + propagate without holding a borrow.
+        let source = cell.source.clone();
+
+        match source {
+            Some(ref src) if !src.trim().is_empty() => {
+                self.set_cell(sheet, &canonical, Some(src.as_str()))
+            }
+            _ => Ok(Vec::new()),
+        }
     }
 
     /// Bulk snapshot the requested range. Emits stored cells, the source
@@ -425,6 +487,7 @@ impl WorkbookEngine {
                     source: cell.source.clone(),
                     value,
                     spilled_from: None,
+                    engine: cell.engine,
                 });
             } else if let Some(virt) = spill.virtual_cells.get(&addr) {
                 out.push(CellSnapshot {
@@ -432,6 +495,7 @@ impl WorkbookEngine {
                     source: None,
                     value: virt.value.clone(),
                     spilled_from: Some(virt.source.clone()),
+                    engine: None,
                 });
             }
         }
@@ -1527,6 +1591,43 @@ mod tests {
             eng.get_cell(sid, "A1").unwrap().value,
             CellValue::Number(42.0)
         );
+    }
+
+    #[test]
+    fn set_cell_engine_stores_the_override_and_reports_no_value_change_for_blank() {
+        let (mut eng, sid) = new_sheet();
+        // A cell with no source — setting an engine just stores the
+        // choice. No values change, so the returned dirty-cell list is
+        // empty.
+        let dirty = eng
+            .set_cell_engine(sid, "A1", Some(EngineKind::Python))
+            .unwrap();
+        assert!(dirty.is_empty());
+        assert_eq!(
+            eng.get_cell(sid, "A1").map(|s| s.engine),
+            Some(Some(EngineKind::Python)),
+        );
+    }
+
+    #[test]
+    fn set_cell_engine_clears_back_to_inheriting_the_default() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell_engine(sid, "A1", Some(EngineKind::Python))
+            .unwrap();
+        // Clearing the override (None) returns the cell to inheriting
+        // the workbook default.
+        eng.set_cell_engine(sid, "A1", None).unwrap();
+        assert_eq!(eng.get_cell(sid, "A1").and_then(|s| s.engine), None);
+    }
+
+    #[test]
+    fn default_engine_round_trips_through_the_workbook_setter() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        assert_eq!(eng.default_engine(), EngineKind::ExcelLite);
+        // Changing the default doesn't disturb the per-cell overrides.
+        eng.set_default_engine(EngineKind::Python);
+        assert_eq!(eng.default_engine(), EngineKind::Python);
     }
 
     #[cfg(feature = "python")]
