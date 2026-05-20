@@ -1,6 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-101b (sprint 1): Save/SaveAs/Open commands + Ctrl+S/Ctrl+Shift+S/Ctrl+O keymap + NAV_KEYS + SHORTCUTS — touches: apps/tescellate-ui/src/keymap.rs, apps/tescellate-ui/src/app.rs
 - [ ] T-101c (sprint 1): Ribbon File group (Save + Open buttons) — touches: apps/tescellate-ui/src/ribbon.rs
 - [ ] T-101d (sprint 1): pending_open_bytes plumbing in TescellateApp — touches: apps/tescellate-ui/src/app.rs
 - [ ] T-101e (sprint 1): Save handler (rfd save_file + write) — touches: apps/tescellate-ui/src/app.rs

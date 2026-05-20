@@ -1092,6 +1092,10 @@ impl TescellateApp {
                 self.commit_edit();
                 self.stage_mode = false;
             }
+            // File operations — handlers land in T-101e / T-101f.
+            Command::Save => self.handle_save(false),
+            Command::SaveAs => self.handle_save(true),
+            Command::Open => self.handle_open(),
         }
     }
 
@@ -4336,6 +4340,18 @@ impl TescellateApp {
                 }
             }
         }
+    }
+
+    /// Stub for the Save command. Real implementation lands in T-101e.
+    #[allow(dead_code)]
+    fn handle_save(&mut self, _force_dialog: bool) {
+        // T-101e will wire rfd here.
+    }
+
+    /// Stub for the Open command. Real implementation lands in T-101f.
+    #[allow(dead_code)]
+    fn handle_open(&mut self) {
+        // T-101f will wire rfd here.
     }
 
     /// Snapshot the persistent slice of the app state for serialization

@@ -53,3 +53,9 @@
 - **Completed:** 2026-05-20T19:15:00Z
 - **Files modified:** apps/tescellate-ui/Cargo.toml
 - **Commit:** `291a5bb`
+
+## T-101b (sprint 1)
+- **Description:** `Command::{Save,SaveAs,Open}` variants + Ctrl+S/Ctrl+Shift+S/Ctrl+O bindings in `keymap::navigating`; NAV_KEYS list extended; SHORTCUTS table gains three rows. Match arms added to `apply_command` dispatching to stub `handle_save`/`handle_open` (real bodies land in T-101e/T-101f). Unit test `save_open_keymap_bindings` passes.
+- **Completed:** 2026-05-20T19:25:00Z
+- **Files modified:** apps/tescellate-ui/src/keymap.rs, apps/tescellate-ui/src/app.rs
+- **Commit:** `07aa911`
