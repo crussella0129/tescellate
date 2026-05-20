@@ -11,7 +11,11 @@
 //! No egui and no engine here, so every method is exercised by
 //! ordinary `cargo test`.
 
+use tescellate_core::SheetId;
 use tescellate_tess::hex::HexCoord;
+
+use crate::format::FormatMap;
+use crate::formula_mode;
 
 /// A zero-indexed `(column, row)` cell on the square grid.
 pub type Cell = (u32, u32);
@@ -31,7 +35,7 @@ pub enum FillDir {
 /// The methods are deliberately framed in terms of *normalised*
 /// `(min, max)` rectangles — selection takes care of normalising the
 /// anchor/cursor pair via [`Coord::min_max`] before calling the rest.
-pub trait Coord: Copy + PartialEq + Eq {
+pub trait Coord: Copy + PartialEq + Eq + std::hash::Hash {
     /// Normalised `(min, max)` corners of the rectangle spanning `self`
     /// and `other`. Order-independent: callers can pass anchor and
     /// cursor in either order and get the same answer.
@@ -304,6 +308,49 @@ pub type SquareSelection = Selection<Cell>;
 /// `r` lie within the corners), the same shape the engine's
 /// `H(a,b):H(c,d)` range describes.
 pub type HexSelection = Selection<HexCoord>;
+
+/// The per-lattice state bundle every sheet kind shares — engine
+/// handle, selection, in-progress formula reference, and per-cell
+/// visual formatting. Stage C of the unified-lattice refactor: where
+/// v117 unified the selection model, this unifies *the state every
+/// sheet carries with it*, so adding a triangle sheet later means
+/// instantiating `Sheet<TriangleCoord>` rather than spreading another
+/// dozen parallel fields across `TescellateApp`.
+///
+/// Notes, format-edit coalescing timestamps, and rendering-only state
+/// (column widths, scroll position) intentionally stay outside the
+/// bundle for now — they collapse cleanly in a later pass once this
+/// shape settles.
+pub struct Sheet<C: Coord> {
+    /// The engine sheet handle this UI sheet wraps.
+    pub sheet_id: SheetId,
+    /// The selected cell range.
+    pub selection: Selection<C>,
+    /// `Some` while a formula-mode pointer drag is building a range
+    /// reference into the edit buffer.
+    pub formula_drag: Option<formula_mode::DragState<C>>,
+    /// The formula reference the user is currently pointing at — drawn
+    /// as a dashed marquee on the grid until the edit is committed
+    /// or cancelled.
+    pub formula_highlight: Option<formula_mode::Highlight<C>>,
+    /// Per-cell visual formatting (font, colours, alignment, number
+    /// format, borders, etc.).
+    pub formats: FormatMap<C>,
+}
+
+impl<C: Coord> Sheet<C> {
+    /// A fresh sheet wrapping `sheet_id`, with the cursor at `origin`
+    /// and no formula reference or formatting yet.
+    pub fn new(sheet_id: SheetId, origin: C) -> Self {
+        Self {
+            sheet_id,
+            selection: Selection::single(origin),
+            formula_drag: None,
+            formula_highlight: None,
+            formats: FormatMap::default(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
