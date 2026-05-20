@@ -57,6 +57,13 @@ impl<E: Clone> History<E> {
     }
 
     /// Whether there is anything to redo.
+    /// Drop both stacks. Used after loading a workbook so undo doesn't
+    /// reach back into actions from the prior workbook.
+    pub fn clear(&mut self) {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+    }
+
     pub fn can_redo(&self) -> bool {
         !self.redo_stack.is_empty()
     }

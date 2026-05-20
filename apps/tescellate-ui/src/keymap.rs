@@ -106,6 +106,13 @@ pub enum Command {
     ToggleStageMode,
     /// Exit Stage Mode (Escape while in Stage Mode).
     ExitStageMode,
+    /// Save the workbook to a `.tscl` (Ctrl+S). Re-uses the last save
+    /// path on native; on wasm always prompts for a download location.
+    Save,
+    /// Force a save dialog even when a path is known (Ctrl+Shift+S).
+    SaveAs,
+    /// Open a `.tscl` (Ctrl+O). Replaces the current workbook + UI state.
+    Open,
 }
 
 /// The keyboard shortcuts, as `(keys, description)` — the data behind
@@ -138,6 +145,9 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ("F3 / Shift+F3", "Find next / previous match"),
     ("F1", "This shortcuts list"),
     ("Ctrl+Shift+P", "Toggle Stage Mode (present)"),
+    ("Ctrl+S", "Save the workbook"),
+    ("Ctrl+Shift+S", "Save the workbook as…"),
+    ("Ctrl+O", "Open a workbook"),
 ];
 
 /// The mouse gestures, as `(gesture, description)` — the data behind the
@@ -208,6 +218,10 @@ fn navigating(key: Key, shift: bool, ctrl: bool) -> Option<Command> {
         // Ctrl+Shift+P — Stage Mode toggle. P for Present/Play; mirrors
         // PowerPoint muscle memory.
         Key::P if ctrl && shift => Command::ToggleStageMode,
+        // File operations. Ctrl+Shift+S must precede plain Ctrl+S.
+        Key::S if ctrl && shift => Command::SaveAs,
+        Key::S if ctrl => Command::Save,
+        Key::O if ctrl => Command::Open,
         Key::Escape => Command::ClearMarquee,
         _ => return None,
     })
@@ -261,6 +275,16 @@ mod tests {
 
     fn edit(key: Key, shift: bool) -> Option<Command> {
         command_for_key(key, shift, false, Mode::Editing)
+    }
+
+    #[test]
+    fn save_open_keymap_bindings() {
+        assert_eq!(nav(Key::S, false, true), Some(Command::Save));
+        assert_eq!(nav(Key::S, true, true), Some(Command::SaveAs));
+        assert_eq!(nav(Key::O, false, true), Some(Command::Open));
+        // Plain letters without Ctrl don't fire file commands.
+        assert_eq!(nav(Key::S, false, false), None);
+        assert_eq!(nav(Key::O, false, false), None);
     }
 
     #[test]

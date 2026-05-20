@@ -100,6 +100,10 @@ pub enum RibbonAction {
     ResetZoom,
     /// Open the About / app-info window.
     OpenAbout,
+    /// Save the workbook (Ctrl+S).
+    Save,
+    /// Open a workbook (Ctrl+O).
+    Open,
 }
 
 /// The number formats the ribbon's combo offers, with display labels. The
@@ -168,6 +172,7 @@ fn ribbon_group(
 /// numbers were still leaving roughly a quarter-group of empty space
 /// to the right of the last inline group at most window widths.
 const GROUP_WIDTHS: &[f32] = &[
+    108.0, // File (Save, Open)
     108.0, // History (Undo, Redo)
     244.0, // Clipboard (Copy, Cut, Paste, Paste values, Painter)
     410.0, // Font (B, I, S, U, Wrap, Size combo, Text colour, Fill colour)
@@ -190,6 +195,20 @@ const MORE_WIDTH: f32 = 26.0;
 /// the inline frames a visual gap, so RIGHT_MARGIN can be zero — the
 /// buffer was just absorbing slop from the old estimates.
 const RIGHT_MARGIN: f32 = 0.0;
+
+/// Inner buttons of the File group — save / open. Sits leftmost on the
+/// ribbon to match the document-toolbar convention users carry over
+/// from every other spreadsheet / word processor they've used.
+fn group_file(ui: &mut egui::Ui) -> Option<RibbonAction> {
+    let mut action = None;
+    if ui.button("Save").on_hover_text("Save (Ctrl+S)").clicked() {
+        action = Some(RibbonAction::Save);
+    }
+    if ui.button("Open").on_hover_text("Open (Ctrl+O)").clicked() {
+        action = Some(RibbonAction::Open);
+    }
+    action
+}
 
 /// Inner buttons of the History group — undo/redo.
 fn group_history(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<RibbonAction> {
@@ -553,21 +572,22 @@ pub fn ribbon(
         };
         for i in 0..visible {
             match i {
-                0 => emit(ribbon_group(ui, "History", |ui| {
+                0 => emit(ribbon_group(ui, "File", group_file)),
+                1 => emit(ribbon_group(ui, "History", |ui| {
                     group_history(ui, can_undo, can_redo)
                 })),
-                1 => emit(ribbon_group(ui, "Clipboard", |ui| {
+                2 => emit(ribbon_group(ui, "Clipboard", |ui| {
                     group_clipboard(ui, painter_armed)
                 })),
-                2 => emit(ribbon_group(ui, "Font", |ui| group_font(ui, current))),
-                3 => emit(ribbon_group(ui, "Alignment", |ui| {
+                3 => emit(ribbon_group(ui, "Font", |ui| group_font(ui, current))),
+                4 => emit(ribbon_group(ui, "Alignment", |ui| {
                     group_alignment(ui, current)
                 })),
-                4 => emit(ribbon_group(ui, "Number", |ui| group_number(ui, current))),
-                5 => emit(ribbon_group(ui, "Borders", group_borders)),
-                6 => emit(ribbon_group(ui, "Cells", group_cells)),
-                7 => emit(ribbon_group(ui, "Data", group_data)),
-                8 => emit(ribbon_group(ui, "View", group_view)),
+                5 => emit(ribbon_group(ui, "Number", |ui| group_number(ui, current))),
+                6 => emit(ribbon_group(ui, "Borders", group_borders)),
+                7 => emit(ribbon_group(ui, "Cells", group_cells)),
+                8 => emit(ribbon_group(ui, "Data", group_data)),
+                9 => emit(ribbon_group(ui, "View", group_view)),
                 _ => {}
             }
         }
@@ -576,29 +596,31 @@ pub fn ribbon(
                 ui.set_min_width(220.0);
                 for i in visible..GROUP_WIDTHS.len() {
                     let title = match i {
-                        0 => "History",
-                        1 => "Clipboard",
-                        2 => "Font",
-                        3 => "Alignment",
-                        4 => "Number",
-                        5 => "Borders",
-                        6 => "Cells",
-                        7 => "Data",
-                        8 => "View",
+                        0 => "File",
+                        1 => "History",
+                        2 => "Clipboard",
+                        3 => "Font",
+                        4 => "Alignment",
+                        5 => "Number",
+                        6 => "Borders",
+                        7 => "Cells",
+                        8 => "Data",
+                        9 => "View",
                         _ => "",
                     };
                     ui.label(egui::RichText::new(title).strong());
                     ui.horizontal_wrapped(|ui| {
                         let a = match i {
-                            0 => group_history(ui, can_undo, can_redo),
-                            1 => group_clipboard(ui, painter_armed),
-                            2 => group_font(ui, current),
-                            3 => group_alignment(ui, current),
-                            4 => group_number(ui, current),
-                            5 => group_borders(ui),
-                            6 => group_cells(ui),
-                            7 => group_data(ui),
-                            8 => group_view(ui),
+                            0 => group_file(ui),
+                            1 => group_history(ui, can_undo, can_redo),
+                            2 => group_clipboard(ui, painter_armed),
+                            3 => group_font(ui, current),
+                            4 => group_alignment(ui, current),
+                            5 => group_number(ui, current),
+                            6 => group_borders(ui),
+                            7 => group_cells(ui),
+                            8 => group_data(ui),
+                            9 => group_view(ui),
                             _ => None,
                         };
                         if let Some(a) = a {

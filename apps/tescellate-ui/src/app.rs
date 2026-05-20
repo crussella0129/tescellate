@@ -525,6 +525,22 @@ pub struct TescellateApp {
     /// and column headers, sheet tabs) and locks cells against direct
     /// editing — widgets stay interactive. Toggled with Ctrl+Shift+P.
     stage_mode: bool,
+    /// Bytes from an Open dialog that resolved asynchronously, waiting to
+    /// be applied to the engine on the next frame. egui's `update` can't
+    /// `await`, so the file-picker future writes here and the next frame's
+    /// `update` drains the slot.
+    pending_open_bytes: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
+    /// `true` when an autosave would persist new content. Flipped by
+    /// `mark_dirty()` at every user-driven mutation; cleared on autosave
+    /// fire and on Open. Seed demos do not flip it (they run before `new`
+    /// returns).
+    dirty: bool,
+    /// `ctx.input(|i| i.time)` of the most recent autosave fire — used by
+    /// `maybe_autosave` to enforce the 2 s debounce.
+    last_autosave: f64,
+    /// Window during which autosave is held off — bumped after an Open to
+    /// avoid clobbering the just-loaded state with stale dirty.
+    suppress_autosave_until: f64,
 }
 
 impl TescellateApp {
@@ -650,7 +666,7 @@ impl TescellateApp {
             formats: triangle_formats,
         };
 
-        Self {
+        let mut this = Self {
             engine,
             square,
             hex,
@@ -714,6 +730,58 @@ impl TescellateApp {
             name_box: String::new(),
             dark_mode: true,
             stage_mode: false,
+            pending_open_bytes: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            dirty: false,
+            last_autosave: 0.0,
+            suppress_autosave_until: 0.0,
+        };
+
+        // Boot rehydrate: if an autosave is present, swap the seed-demo
+        // workbook for the saved one. Failure here is silent — the seed
+        // demos remain. Skips entirely on native (localStorage is wasm-only).
+        if let Some(bytes) = crate::state_io::load_from_local_storage() {
+            match this.engine.open_bytes(&bytes) {
+                Ok(ui) => {
+                    this.rebind_sheet_ids();
+                    let snap = crate::state_io::ui_state_to_snapshot(&ui);
+                    this.restore_state(snap);
+                    this.history.clear();
+                }
+                Err(e) => eprintln!("boot: autosave rehydrate failed: {e:?}"),
+            }
+        }
+
+        this
+    }
+
+    /// Flip the dirty flag. Called from every entry point that mutates
+    /// engine or UI state — keeps the autosave wiring out of each call
+    /// site and lets future mutation paths opt in with one line.
+    fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    /// If the dirty-debounce has elapsed, persist the workbook + snapshot
+    /// to localStorage and clear the flag. Called once per frame.
+    fn maybe_autosave(&mut self, now: f64) {
+        if !self.dirty {
+            return;
+        }
+        if now < self.suppress_autosave_until {
+            return;
+        }
+        if now - self.last_autosave < 2.0 {
+            return;
+        }
+        let snap = self.capture_state();
+        let ui = crate::state_io::snapshot_to_ui_state(&snap);
+        match self.engine.save_bytes(&ui) {
+            Ok(bytes) => {
+                crate::state_io::autosave_to_local_storage(&bytes);
+                self.dirty = false;
+                self.last_autosave = now;
+            }
+            Err(e) => eprintln!("autosave: save_bytes failed: {e:?}"),
         }
     }
 
@@ -1092,6 +1160,10 @@ impl TescellateApp {
                 self.commit_edit();
                 self.stage_mode = false;
             }
+            // File operations — handlers land in T-101e / T-101f.
+            Command::Save => self.handle_save(false),
+            Command::SaveAs => self.handle_save(true),
+            Command::Open => self.handle_open(),
         }
     }
 
@@ -1155,6 +1227,10 @@ impl TescellateApp {
 
     /// Apply a formatting action from the ribbon across the selection.
     fn apply_ribbon(&mut self, action: RibbonAction, ctx: &egui::Context) {
+        // Same approach as in `update()` — every dispatched ribbon action
+        // is a potential mutation; the central mark_dirty keeps the call
+        // sites small. Save/Open re-clear the bit on success.
+        self.mark_dirty();
         match action {
             RibbonAction::ToggleBold => self.toggle_range(|f| f.bold, |f, v| f.bold = v),
             RibbonAction::ToggleItalic => self.toggle_range(|f| f.italic, |f, v| f.italic = v),
@@ -1232,6 +1308,8 @@ impl TescellateApp {
             }
             RibbonAction::ResetZoom => ctx.set_zoom_factor(1.0),
             RibbonAction::OpenAbout => self.about_open = true,
+            RibbonAction::Save => self.handle_save(false),
+            RibbonAction::Open => self.handle_open(),
         }
     }
 
@@ -4338,12 +4416,160 @@ impl TescellateApp {
         }
     }
 
+    /// Persist the workbook + UI state to a `.tscl`. On native, opens a
+    /// blocking save dialog; on wasm, spawns an async dialog that hands
+    /// the bytes to the browser via a download blob. Errors are logged
+    /// rather than panicked so a cancelled dialog or write failure
+    /// doesn't take the app down. `_force_dialog` is unused today but
+    /// is preserved for a future "remember last path" tweak.
+    fn handle_save(&mut self, _force_dialog: bool) {
+        let snap = self.capture_state();
+        let ui = crate::state_io::snapshot_to_ui_state(&snap);
+        let bytes = match self.engine.save_bytes(&ui) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("save: engine.save_bytes failed: {e:?}");
+                return;
+            }
+        };
+        // We've serialized the current state — the autosave path can
+        // skip a redundant write until the next mutation.
+        self.dirty = false;
+        self.last_autosave = self.frame_time;
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name("workbook.tscl")
+                .add_filter("Tescellate", &["tscl"])
+                .save_file()
+            {
+                if let Err(e) = std::fs::write(&path, &bytes) {
+                    eprintln!("save: write to {} failed: {e:?}", path.display());
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Some(handle) = rfd::AsyncFileDialog::new()
+                    .set_file_name("workbook.tscl")
+                    .add_filter("Tescellate", &["tscl"])
+                    .save_file()
+                    .await
+                {
+                    let _ = handle.write(&bytes).await;
+                }
+            });
+        }
+    }
+
+    /// Load a workbook + UI state from a `.tscl`. On native, opens a
+    /// blocking pick dialog and reads synchronously; on wasm, spawns the
+    /// async picker and writes the resulting bytes into
+    /// [`Self::pending_open_bytes`] for `update()` to drain on the next
+    /// frame. Native could also use the slot for symmetry, but the
+    /// synchronous path is simpler when it's available.
+    fn handle_open(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Tescellate", &["tscl"])
+                .pick_file()
+            {
+                match std::fs::read(&path) {
+                    Ok(bytes) => {
+                        if let Ok(mut slot) = self.pending_open_bytes.lock() {
+                            *slot = Some(bytes);
+                        }
+                    }
+                    Err(e) => eprintln!("open: read of {} failed: {e:?}", path.display()),
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let slot = self.pending_open_bytes.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Some(handle) = rfd::AsyncFileDialog::new()
+                    .add_filter("Tescellate", &["tscl"])
+                    .pick_file()
+                    .await
+                {
+                    let bytes = handle.read().await;
+                    if let Ok(mut slot) = slot.lock() {
+                        *slot = Some(bytes);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Drain a pending Open: if `pending_open_bytes` carries bytes, load
+    /// them into the engine and restore the snapshot. Errors are logged
+    /// and non-fatal — a corrupt file leaves the current workbook in
+    /// place rather than dropping the user into an empty workbook.
+    fn drain_pending_open(&mut self) {
+        let bytes = self
+            .pending_open_bytes
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        let Some(bytes) = bytes else {
+            return;
+        };
+        match self.engine.open_bytes(&bytes) {
+            Ok(ui) => {
+                // The engine just swapped in a fresh workbook with its own
+                // SheetIds — re-bind our per-sheet UI bundles to whichever
+                // saved sheet matches each lattice. Using sheet_order
+                // gives stable per-lattice picking even when a workbook
+                // carries multiple sheets of the same lattice.
+                self.rebind_sheet_ids();
+                let snap = crate::state_io::ui_state_to_snapshot(&ui);
+                self.restore_state(snap);
+                // Also reset transient state that pointed into the old
+                // workbook — selection cursors stay at A1, edit/clipboard
+                // start fresh.
+                self.edit = None;
+                self.history.clear();
+                // Don't immediately autosave the just-loaded state.
+                self.dirty = false;
+                self.last_autosave = self.frame_time;
+                self.suppress_autosave_until = self.frame_time + 2.0;
+            }
+            Err(e) => eprintln!("open: engine.open_bytes failed: {e:?}"),
+        }
+    }
+
+    /// After an engine swap, re-bind the UI sheet bundles to whichever
+    /// sheet in the new workbook matches each lattice. Picks the first
+    /// matching sheet in `workbook.sheet_order` per lattice. Sheets the
+    /// new workbook lacks keep their old IDs (stale; harmless since the
+    /// user can't reach them through the tab bar).
+    fn rebind_sheet_ids(&mut self) {
+        for sid in &self.engine.workbook.sheet_order {
+            if let Some(sheet) = self.engine.workbook.sheets.get(sid) {
+                match sheet.lattice {
+                    LatticeKind::Square if self.square.sheet_id != *sid => {
+                        // Only rebind the first Square encountered; respect
+                        // existing binding if we've already updated.
+                        self.square.sheet_id = *sid;
+                    }
+                    LatticeKind::HexPointy | LatticeKind::HexFlat => {
+                        self.hex.sheet_id = *sid;
+                    }
+                    LatticeKind::Triangle => {
+                        self.triangle.sheet_id = *sid;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     /// Snapshot the persistent slice of the app state for serialization
-    /// alongside the workbook. See [`crate::state_io::UiSnapshot`]. The
-    /// `#[allow(dead_code)]` is because the dialog/autosave wiring that
-    /// calls this lands in a follow-up PR; the method is here so the
-    /// snapshot contract is reviewable as a self-contained unit.
-    #[allow(dead_code)]
+    /// alongside the workbook. See [`crate::state_io::UiSnapshot`].
     pub(crate) fn capture_state(&self) -> crate::state_io::UiSnapshot {
         use crate::state_io::{ActiveSheetTag, UiSnapshot};
         let active = match self.active {
@@ -4396,7 +4622,6 @@ impl TescellateApp {
     /// separately via [`WorkbookEngine::open_bytes`]. Ephemeral state
     /// (history, drag flags, dialogs) is reset to defaults by the caller
     /// when it constructs a fresh app before calling this.
-    #[allow(dead_code)]
     pub(crate) fn restore_state(&mut self, s: crate::state_io::UiSnapshot) {
         use crate::state_io::ActiveSheetTag;
         self.active = match s.active_sheet {
@@ -4427,6 +4652,10 @@ impl TescellateApp {
 
 impl eframe::App for TescellateApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Drain any bytes left by an async Open dialog BEFORE handling
+        // this frame's input — the restored state then drives the rest
+        // of the update.
+        self.drain_pending_open();
         ctx.set_visuals(if self.dark_mode {
             egui::Visuals::dark()
         } else {
@@ -4434,6 +4663,13 @@ impl eframe::App for TescellateApp {
         });
         self.frame_time = ctx.input(|i| i.time);
         for command in self.collect_commands(ctx) {
+            // Every dispatched command is a potential mutation; the
+            // central mark_dirty here means we don't have to thread
+            // mark_dirty through each command's body. Save/Open/Find/
+            // help/etc. flip the bit too but the maybe_autosave debounce
+            // makes that a wash — at worst a redundant write 2s later.
+            // Save and Open clear the bit themselves on success.
+            self.mark_dirty();
             self.apply(command, ctx);
         }
 
@@ -4720,6 +4956,11 @@ impl eframe::App for TescellateApp {
         self.help_window(ctx);
         self.about_window(ctx);
         self.note_window(ctx);
+
+        // End of frame — try a debounced autosave. The debounce in
+        // `maybe_autosave` means a flurry of edits still results in at
+        // most one write every 2 s.
+        self.maybe_autosave(self.frame_time);
     }
 }
 
