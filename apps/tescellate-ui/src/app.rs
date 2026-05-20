@@ -14,7 +14,7 @@ use tescellate_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
 use tescellate_tess::triangle::{TriCoord, TriangleLattice};
 use tescellate_tess::{Lattice, LatticeKind, Point2};
 
-use crate::clipboard::{Clipboard, CopiedCell, PasteMode};
+use crate::clipboard::{Clipboard, CopiedCell, PasteMode, SourceLattice};
 use crate::conditional::{self, Condition, Rule};
 use crate::find::{self, FindState};
 use crate::format::{self, BorderMode, Borders, CellFormat, FormatMap, HAlign, HexBorders, VAlign};
@@ -2286,7 +2286,7 @@ impl TescellateApp {
                     }
                     tsv.push('\n');
                 }
-                self.clipboard = Clipboard::capture(width, height, cells, false);
+                self.clipboard = Clipboard::capture(width, height, cells, SourceLattice::Square);
                 ctx.copy_text(tsv);
             }
             ActiveSheet::Hex => {
@@ -2306,11 +2306,29 @@ impl TescellateApp {
                     }
                     tsv.push('\n');
                 }
-                self.clipboard = Clipboard::capture(width, height, cells, true);
+                self.clipboard = Clipboard::capture(width, height, cells, SourceLattice::Hex);
                 ctx.copy_text(tsv);
             }
             ActiveSheet::Triangle => {
-                // Triangle copy/paste lands in a follow-up.
+                let (min, max) = self.triangle.selection.bounds();
+                let (width, height) = self.triangle.selection.dimensions();
+                let mut cells = Vec::with_capacity((width * height) as usize);
+                let mut tsv = String::new();
+                for row in min.row..=max.row {
+                    for col in min.col..=max.col {
+                        if col > min.col {
+                            tsv.push('\t');
+                        }
+                        let coord = TriCoord::new(col, row);
+                        tsv.push_str(&self.triangle_cell_text(coord));
+                        cells.push(
+                            self.copied_cell(self.triangle.sheet_id, &triangle_address(coord)),
+                        );
+                    }
+                    tsv.push('\n');
+                }
+                self.clipboard = Clipboard::capture(width, height, cells, SourceLattice::Triangle);
+                ctx.copy_text(tsv);
             }
         }
     }
@@ -2354,7 +2372,7 @@ impl TescellateApp {
                 // A cut from this sheet clears its origin cells — queued
                 // first, so a paste on the same cell overrides the clear.
                 if let Some((oc, or)) = self.clipboard.cut_origin() {
-                    if !self.clipboard.from_hex() {
+                    if matches!(self.clipboard.source(), SourceLattice::Square) {
                         for j in 0..height {
                             for i in 0..width {
                                 let addr = grid::cell_address(oc as u32 + i, or as u32 + j);
@@ -2369,7 +2387,7 @@ impl TescellateApp {
                     if c >= COLS || r >= ROWS {
                         continue;
                     }
-                    let source = self.clipboard.paste_text(cell, false, mode);
+                    let source = self.clipboard.paste_text(cell, SourceLattice::Square, mode);
                     targets.push((grid::cell_address(c, r), source));
                 }
                 self.apply_edits(self.square.sheet_id, targets);
@@ -2387,7 +2405,7 @@ impl TescellateApp {
                 // A cut from this sheet clears its origin cells — queued
                 // first, so a paste on the same cell overrides the clear.
                 if let Some((oq, or)) = self.clipboard.cut_origin() {
-                    if self.clipboard.from_hex() {
+                    if matches!(self.clipboard.source(), SourceLattice::Hex) {
                         for j in 0..height {
                             for i in 0..width {
                                 let coord = HexCoord::new(oq + i as i32, or + j as i32);
@@ -2401,7 +2419,7 @@ impl TescellateApp {
                     if !hex_in_view(coord) {
                         continue;
                     }
-                    let source = self.clipboard.paste_text(cell, true, mode);
+                    let source = self.clipboard.paste_text(cell, SourceLattice::Hex, mode);
                     targets.push((hex_address(coord), source));
                 }
                 self.apply_edits(self.hex.sheet_id, targets);
@@ -2413,7 +2431,38 @@ impl TescellateApp {
                 };
             }
             ActiveSheet::Triangle => {
-                // Triangle paste lands in a follow-up.
+                let cursor = self.triangle.selection.cursor;
+                let mut targets = Vec::new();
+                // A cut from this sheet clears its origin cells.
+                if let Some((oc, or)) = self.clipboard.cut_origin() {
+                    if matches!(self.clipboard.source(), SourceLattice::Triangle) {
+                        for j in 0..height {
+                            for i in 0..width {
+                                let coord = TriCoord::new(oc + i as i32, or + j as i32);
+                                targets.push((triangle_address(coord), None));
+                            }
+                        }
+                    }
+                }
+                for (rel_c, rel_r, cell) in self.clipboard.entries() {
+                    let coord = TriCoord::new(cursor.col + rel_c as i32, cursor.row + rel_r as i32);
+                    if !triangle_in_view(coord) {
+                        continue;
+                    }
+                    let source = self
+                        .clipboard
+                        .paste_text(cell, SourceLattice::Triangle, mode);
+                    targets.push((triangle_address(coord), source));
+                }
+                self.apply_edits(self.triangle.sheet_id, targets);
+                let far = TriCoord::new(
+                    cursor.col + width as i32 - 1,
+                    cursor.row + height as i32 - 1,
+                );
+                self.triangle.selection = TriangleSelection {
+                    anchor: far,
+                    cursor,
+                };
             }
         }
         // A paste consumes the cut — the clipboard reverts to a copy.
@@ -3252,7 +3301,7 @@ impl TescellateApp {
         // The cut marquee — a dashed border around the armed range, when
         // the clipboard's cut belongs to this (square) sheet.
         if let Some((oc, or)) = self.clipboard.cut_origin() {
-            if !self.clipboard.from_hex() {
+            if matches!(self.clipboard.source(), SourceLattice::Square) {
                 let (cw, ch) = self.clipboard.dimensions();
                 let tl = self.metrics.cell_rect(origin, oc as u32, or as u32);
                 let br = self
@@ -3706,7 +3755,7 @@ impl TescellateApp {
         // The cut marquee — a dashed outline around each armed hex, when
         // the clipboard's cut belongs to this (hex) sheet.
         if let Some((oq, or)) = self.clipboard.cut_origin() {
-            if self.clipboard.from_hex() {
+            if matches!(self.clipboard.source(), SourceLattice::Hex) {
                 let (cw, ch) = self.clipboard.dimensions();
                 let dash = egui::Stroke::new(1.5, sel_stroke.color);
                 for j in 0..ch {

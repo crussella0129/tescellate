@@ -37,6 +37,17 @@ pub enum PasteMode {
     ValuesOnly,
 }
 
+/// Which lattice a captured block came from. A paste compares this
+/// against the destination lattice to choose source vs. value — same
+/// kind keeps the formula, different kind degrades to the literal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SourceLattice {
+    #[default]
+    Square,
+    Hex,
+    Triangle,
+}
+
 /// A rectangular block of captured cells, stored row-major — and, when
 /// the block was cut rather than copied, the origin to clear on paste.
 #[derive(Debug, Clone, Default)]
@@ -44,27 +55,27 @@ pub struct Clipboard {
     width: u32,
     height: u32,
     cells: Vec<CopiedCell>,
-    /// Whether the block was captured from the hex sheet — paste compares
-    /// this against the destination to choose source vs. value.
-    from_hex: bool,
+    /// Which lattice the block was captured from. The paste compares
+    /// this against the destination to decide source-vs-value.
+    source: SourceLattice,
     /// `Some(leading_corner)` when this block was **cut** — the smallest
     /// `(col,row)` / `(q,r)` of the origin region, in the source
-    /// lattice's own integer coords. With `dimensions()` and `from_hex`
-    /// it fully describes the region the next paste clears. `None` for a
+    /// lattice's own integer coords. With `dimensions()` and `source` it
+    /// fully describes the region the next paste clears. `None` for a
     /// plain copy.
     cut_origin: Option<(i32, i32)>,
 }
 
 impl Clipboard {
     /// Capture a `width × height` block, row-major, as a **copy**.
-    /// `from_hex` records which kind of sheet it came from.
-    pub fn capture(width: u32, height: u32, cells: Vec<CopiedCell>, from_hex: bool) -> Self {
+    /// `source` records which lattice the block came from.
+    pub fn capture(width: u32, height: u32, cells: Vec<CopiedCell>, source: SourceLattice) -> Self {
         debug_assert_eq!(cells.len(), (width * height) as usize);
         Self {
             width,
             height,
             cells,
-            from_hex,
+            source,
             cut_origin: None,
         }
     }
@@ -85,9 +96,19 @@ impl Clipboard {
         (self.width, self.height)
     }
 
-    /// Whether the block was captured from the hex sheet.
+    /// Which lattice the block was captured from.
+    pub fn source(&self) -> SourceLattice {
+        self.source
+    }
+
+    /// Convenience: whether the block was captured from the hex sheet.
     pub fn from_hex(&self) -> bool {
-        self.from_hex
+        matches!(self.source, SourceLattice::Hex)
+    }
+
+    /// Convenience: whether the block was captured from the triangle sheet.
+    pub fn from_triangle(&self) -> bool {
+        matches!(self.source, SourceLattice::Triangle)
     }
 
     /// The leading corner of the cut origin region — `Some` only when
@@ -111,12 +132,11 @@ impl Clipboard {
         })
     }
 
-    /// What to write when pasting `cell` onto a sheet that is (or isn't)
-    /// the hex sheet. Same kind as the capture → the source, so formulas
-    /// carry; different kind → the value, since the source can't
-    /// translate across lattices.
-    pub fn source_for(&self, cell: &CopiedCell, target_is_hex: bool) -> Option<String> {
-        if self.from_hex == target_is_hex {
+    /// What to write when pasting `cell` onto `target`. Same lattice as
+    /// the capture → the source, so formulas carry; different lattice →
+    /// the value, since the source can't translate across lattices.
+    pub fn source_for(&self, cell: &CopiedCell, target: SourceLattice) -> Option<String> {
+        if self.source == target {
             cell.source.clone()
         } else {
             cell.value.clone()
@@ -129,11 +149,11 @@ impl Clipboard {
     pub fn paste_text(
         &self,
         cell: &CopiedCell,
-        target_is_hex: bool,
+        target: SourceLattice,
         mode: PasteMode,
     ) -> Option<String> {
         match mode {
-            PasteMode::Normal => self.source_for(cell, target_is_hex),
+            PasteMode::Normal => self.source_for(cell, target),
             PasteMode::ValuesOnly => cell.value.clone(),
         }
     }
@@ -168,7 +188,7 @@ mod tests {
             formula("=2", "2"),
             formula("=3", "3"),
         ];
-        let c = Clipboard::capture(2, 2, cells, false);
+        let c = Clipboard::capture(2, 2, cells, SourceLattice::Square);
         assert!(!c.is_empty());
         assert_eq!(c.dimensions(), (2, 2));
         let got: Vec<_> = c.entries().collect();
@@ -179,13 +199,13 @@ mod tests {
 
     #[test]
     fn a_plain_capture_is_a_copy_not_a_cut() {
-        let c = Clipboard::capture(1, 1, vec![formula("=1", "1")], false);
+        let c = Clipboard::capture(1, 1, vec![formula("=1", "1")], SourceLattice::Square);
         assert_eq!(c.cut_origin(), None);
     }
 
     #[test]
     fn mark_as_cut_then_consume() {
-        let mut c = Clipboard::capture(1, 1, vec![formula("=1", "1")], true);
+        let mut c = Clipboard::capture(1, 1, vec![formula("=1", "1")], SourceLattice::Hex);
         c.mark_as_cut((2, -3));
         assert_eq!(c.cut_origin(), Some((2, -3)));
         assert!(c.from_hex());
@@ -195,45 +215,98 @@ mod tests {
     }
 
     #[test]
+    fn source_records_the_capture_lattice() {
+        let c = Clipboard::capture(1, 1, vec![formula("=1", "1")], SourceLattice::Triangle);
+        assert!(c.from_triangle());
+        assert!(!c.from_hex());
+        assert_eq!(c.source(), SourceLattice::Triangle);
+    }
+
+    #[test]
     fn same_lattice_paste_keeps_the_source() {
-        let c = Clipboard::capture(1, 1, vec![formula("=SUM(B2:B4)", "60")], false);
+        let c = Clipboard::capture(
+            1,
+            1,
+            vec![formula("=SUM(B2:B4)", "60")],
+            SourceLattice::Square,
+        );
         let (.., cell) = c.entries().next().unwrap();
-        assert_eq!(c.source_for(cell, false), Some("=SUM(B2:B4)".to_string()));
+        assert_eq!(
+            c.source_for(cell, SourceLattice::Square),
+            Some("=SUM(B2:B4)".to_string()),
+        );
     }
 
     #[test]
     fn cross_lattice_paste_degrades_to_the_value() {
         // Copied from the square sheet, pasted onto the hex sheet — the
         // formula's references can't translate, so the value is written.
-        let c = Clipboard::capture(1, 1, vec![formula("=SUM(B2:B4)", "60")], false);
+        let c = Clipboard::capture(
+            1,
+            1,
+            vec![formula("=SUM(B2:B4)", "60")],
+            SourceLattice::Square,
+        );
         let (.., cell) = c.entries().next().unwrap();
-        assert_eq!(c.source_for(cell, true), Some("60".to_string()));
+        assert_eq!(
+            c.source_for(cell, SourceLattice::Hex),
+            Some("60".to_string()),
+        );
 
         // And the other direction: hex capture pasted onto the square sheet.
-        let h = Clipboard::capture(1, 1, vec![formula("=H(1,0)", "12")], true);
+        let h = Clipboard::capture(1, 1, vec![formula("=H(1,0)", "12")], SourceLattice::Hex);
         let (.., hcell) = h.entries().next().unwrap();
-        assert_eq!(h.source_for(hcell, false), Some("12".to_string()));
-        assert_eq!(h.source_for(hcell, true), Some("=H(1,0)".to_string()));
+        assert_eq!(
+            h.source_for(hcell, SourceLattice::Square),
+            Some("12".to_string()),
+        );
+        assert_eq!(
+            h.source_for(hcell, SourceLattice::Hex),
+            Some("=H(1,0)".to_string()),
+        );
+
+        // Triangle is symmetric — same lattice keeps the source, others
+        // degrade to the value.
+        let t = Clipboard::capture(
+            1,
+            1,
+            vec![formula("=T(0,0)+1", "5")],
+            SourceLattice::Triangle,
+        );
+        let (.., tcell) = t.entries().next().unwrap();
+        assert_eq!(
+            t.source_for(tcell, SourceLattice::Triangle),
+            Some("=T(0,0)+1".to_string()),
+        );
+        assert_eq!(
+            t.source_for(tcell, SourceLattice::Square),
+            Some("5".to_string()),
+        );
     }
 
     #[test]
     fn values_only_paste_drops_the_formula_on_the_same_lattice() {
-        let c = Clipboard::capture(1, 1, vec![formula("=SUM(B2:B4)", "60")], false);
+        let c = Clipboard::capture(
+            1,
+            1,
+            vec![formula("=SUM(B2:B4)", "60")],
+            SourceLattice::Square,
+        );
         let (.., cell) = c.entries().next().unwrap();
         // Normal: a same-lattice paste keeps the source.
         assert_eq!(
-            c.paste_text(cell, false, PasteMode::Normal),
+            c.paste_text(cell, SourceLattice::Square, PasteMode::Normal),
             Some("=SUM(B2:B4)".to_string()),
         );
         // ValuesOnly: the evaluated value, even on the same lattice.
         assert_eq!(
-            c.paste_text(cell, false, PasteMode::ValuesOnly),
+            c.paste_text(cell, SourceLattice::Square, PasteMode::ValuesOnly),
             Some("60".to_string()),
         );
         // Across a lattice the two modes agree — a source can't carry.
         assert_eq!(
-            c.paste_text(cell, true, PasteMode::Normal),
-            c.paste_text(cell, true, PasteMode::ValuesOnly),
+            c.paste_text(cell, SourceLattice::Hex, PasteMode::Normal),
+            c.paste_text(cell, SourceLattice::Hex, PasteMode::ValuesOnly),
         );
     }
 }
