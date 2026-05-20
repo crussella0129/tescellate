@@ -525,6 +525,11 @@ pub struct TescellateApp {
     /// and column headers, sheet tabs) and locks cells against direct
     /// editing — widgets stay interactive. Toggled with Ctrl+Shift+P.
     stage_mode: bool,
+    /// Bytes from an Open dialog that resolved asynchronously, waiting to
+    /// be applied to the engine on the next frame. egui's `update` can't
+    /// `await`, so the file-picker future writes here and the next frame's
+    /// `update` drains the slot.
+    pending_open_bytes: std::sync::Arc<std::sync::Mutex<Option<Vec<u8>>>>,
 }
 
 impl TescellateApp {
@@ -714,6 +719,7 @@ impl TescellateApp {
             name_box: String::new(),
             dark_mode: true,
             stage_mode: false,
+            pending_open_bytes: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -4344,24 +4350,115 @@ impl TescellateApp {
         }
     }
 
-    /// Stub for the Save command. Real implementation lands in T-101e.
-    #[allow(dead_code)]
+    /// Persist the workbook + UI state to a `.tscl`. On native, opens a
+    /// blocking save dialog; on wasm, spawns an async dialog that hands
+    /// the bytes to the browser via a download blob. Errors are logged
+    /// rather than panicked so a cancelled dialog or write failure
+    /// doesn't take the app down. `_force_dialog` is unused today but
+    /// is preserved for a future "remember last path" tweak.
     fn handle_save(&mut self, _force_dialog: bool) {
-        // T-101e will wire rfd here.
+        let snap = self.capture_state();
+        let ui = crate::state_io::snapshot_to_ui_state(&snap);
+        let bytes = match self.engine.save_bytes(&ui) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("save: engine.save_bytes failed: {e:?}");
+                return;
+            }
+        };
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name("workbook.tscl")
+                .add_filter("Tescellate", &["tscl"])
+                .save_file()
+            {
+                if let Err(e) = std::fs::write(&path, &bytes) {
+                    eprintln!("save: write to {} failed: {e:?}", path.display());
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Some(handle) = rfd::AsyncFileDialog::new()
+                    .set_file_name("workbook.tscl")
+                    .add_filter("Tescellate", &["tscl"])
+                    .save_file()
+                    .await
+                {
+                    let _ = handle.write(&bytes).await;
+                }
+            });
+        }
     }
 
-    /// Stub for the Open command. Real implementation lands in T-101f.
-    #[allow(dead_code)]
+    /// Load a workbook + UI state from a `.tscl`. On native, opens a
+    /// blocking pick dialog and reads synchronously; on wasm, spawns the
+    /// async picker and writes the resulting bytes into
+    /// [`Self::pending_open_bytes`] for `update()` to drain on the next
+    /// frame. Native could also use the slot for symmetry, but the
+    /// synchronous path is simpler when it's available.
     fn handle_open(&mut self) {
-        // T-101f will wire rfd here.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Tescellate", &["tscl"])
+                .pick_file()
+            {
+                match std::fs::read(&path) {
+                    Ok(bytes) => {
+                        if let Ok(mut slot) = self.pending_open_bytes.lock() {
+                            *slot = Some(bytes);
+                        }
+                    }
+                    Err(e) => eprintln!("open: read of {} failed: {e:?}", path.display()),
+                }
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let slot = self.pending_open_bytes.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if let Some(handle) = rfd::AsyncFileDialog::new()
+                    .add_filter("Tescellate", &["tscl"])
+                    .pick_file()
+                    .await
+                {
+                    let bytes = handle.read().await;
+                    if let Ok(mut slot) = slot.lock() {
+                        *slot = Some(bytes);
+                    }
+                }
+            });
+        }
+    }
+
+    /// Drain a pending Open: if `pending_open_bytes` carries bytes, load
+    /// them into the engine and restore the snapshot. Errors are logged
+    /// and non-fatal — a corrupt file leaves the current workbook in
+    /// place rather than dropping the user into an empty workbook.
+    fn drain_pending_open(&mut self) {
+        let bytes = self
+            .pending_open_bytes
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        let Some(bytes) = bytes else {
+            return;
+        };
+        match self.engine.open_bytes(&bytes) {
+            Ok(ui) => {
+                let snap = crate::state_io::ui_state_to_snapshot(&ui);
+                self.restore_state(snap);
+            }
+            Err(e) => eprintln!("open: engine.open_bytes failed: {e:?}"),
+        }
     }
 
     /// Snapshot the persistent slice of the app state for serialization
-    /// alongside the workbook. See [`crate::state_io::UiSnapshot`]. The
-    /// `#[allow(dead_code)]` is because the dialog/autosave wiring that
-    /// calls this lands in a follow-up PR; the method is here so the
-    /// snapshot contract is reviewable as a self-contained unit.
-    #[allow(dead_code)]
+    /// alongside the workbook. See [`crate::state_io::UiSnapshot`].
     pub(crate) fn capture_state(&self) -> crate::state_io::UiSnapshot {
         use crate::state_io::{ActiveSheetTag, UiSnapshot};
         let active = match self.active {
@@ -4414,7 +4511,6 @@ impl TescellateApp {
     /// separately via [`WorkbookEngine::open_bytes`]. Ephemeral state
     /// (history, drag flags, dialogs) is reset to defaults by the caller
     /// when it constructs a fresh app before calling this.
-    #[allow(dead_code)]
     pub(crate) fn restore_state(&mut self, s: crate::state_io::UiSnapshot) {
         use crate::state_io::ActiveSheetTag;
         self.active = match s.active_sheet {
@@ -4445,6 +4541,10 @@ impl TescellateApp {
 
 impl eframe::App for TescellateApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Drain any bytes left by an async Open dialog BEFORE handling
+        // this frame's input — the restored state then drives the rest
+        // of the update.
+        self.drain_pending_open();
         ctx.set_visuals(if self.dark_mode {
             egui::Visuals::dark()
         } else {

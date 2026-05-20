@@ -1,9 +1,5 @@
 # Agent Tasks (Persistent Backlog)
 
-- [ ] T-101d (sprint 1): pending_open_bytes plumbing in TescellateApp — touches: apps/tescellate-ui/src/app.rs
-- [ ] T-101e (sprint 1): Save handler (rfd save_file + write) — touches: apps/tescellate-ui/src/app.rs
-- [ ] T-101f (sprint 1): Open handler (rfd pick_file + read) — touches: apps/tescellate-ui/src/app.rs
-- [ ] T-101g (sprint 1): Remove allow(dead_code) on capture/restore_state — touches: apps/tescellate-ui/src/app.rs
 - [ ] T-102a (sprint 1): autosave_to_local_storage — touches: apps/tescellate-ui/src/state_io.rs
 - [ ] T-102b (sprint 1): load_from_local_storage + boot rehydrate — touches: apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/app.rs
 - [ ] T-102c (sprint 1): dirty flag + mark_dirty helper + central call sites — touches: apps/tescellate-ui/src/app.rs

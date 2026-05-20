@@ -65,3 +65,9 @@
 - **Completed:** 2026-05-20T19:30:00Z
 - **Files modified:** apps/tescellate-ui/src/ribbon.rs, apps/tescellate-ui/src/app.rs
 - **Commit:** `2f56f82`
+
+## T-101d/e/f/g (sprint 1)
+- **Description:** Full Save / Open dialog wiring. `pending_open_bytes: Arc<Mutex<Option<Vec<u8>>>>` on `TescellateApp`; `drain_pending_open` runs at the top of `update()` and routes through `engine.open_bytes` + `restore_state`. Save handler builds bytes via `engine.save_bytes(&snapshot_to_ui_state(&capture_state()))`; native uses sync `rfd::FileDialog::save_file()` + `std::fs::write`, wasm uses `rfd::AsyncFileDialog` + `FileHandle::write` under `spawn_local`. Open mirrors it (native sync read; wasm async into the bytes slot). `#[allow(dead_code)]` dropped from `capture_state`/`restore_state` — both methods are now live.
+- **Completed:** 2026-05-20T19:50:00Z
+- **Files modified:** apps/tescellate-ui/src/app.rs
+- **Commit:** `371fe3f`
