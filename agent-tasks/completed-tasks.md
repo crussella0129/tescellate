@@ -83,3 +83,9 @@
 - **Completed:** 2026-05-20T20:25:00Z
 - **Files modified:** (verification only)
 - **Commit:** `8ce323c`
+
+## T-104 (sprint 1)
+- **Description:** Pushed `webui-v145-save-open-autosave`, opened PR #176, CI all green, squash-merged to main as commit `28392ae`. Sprint 1 ships the full Priority-3 launch-brief surface (Save/Open dialogs + localStorage autosave) on top of v144.
+- **Completed:** 2026-05-20T20:55:00Z
+- **Files modified:** (git only)
+- **Commit:** `bf932d3`
