@@ -155,6 +155,14 @@ enum HeaderDrag {
     Row(u32),
 }
 
+/// Which axis a fill-handle drag is extending the selection along —
+/// chosen on release from the original-vs-extended bounds.
+#[derive(Debug, Clone, Copy)]
+enum FillAxis {
+    Down,
+    Right,
+}
+
 /// The kind of condition picked in the conditional-formatting editor — a
 /// [`Condition`] without its threshold, which the editor's text field
 /// supplies separately.
@@ -436,10 +444,12 @@ pub struct TescellateApp {
     /// building a range reference. See [`formula_mode::DragState`].
     formula_drag: Option<formula_mode::DragState<(u32, u32)>>,
     /// `Some` while a fill-handle drag is in progress on the square
-    /// sheet. The stored tuple is the original cursor cell at drag
-    /// start; on release, that cell's value is copied into every
-    /// newly-included cell of the extended selection.
-    fill_drag: Option<(u32, u32)>,
+    /// sheet. The stored value is the ORIGINAL selection bounds at
+    /// drag start (inclusive corners) — on release, each fill lane
+    /// (column for down-fill, row for right-fill) reads its seed from
+    /// these cells and extends as an arithmetic series (if all-numeric)
+    /// or repeats the seed pattern (otherwise).
+    fill_drag: Option<((u32, u32), (u32, u32))>,
     /// The square-sheet formula reference the user pointed at — drawn
     /// as a dashed marquee on the grid until the edit is committed or
     /// cancelled. See [`formula_mode::Highlight`].
@@ -2256,23 +2266,73 @@ impl TescellateApp {
         egui::Rect::from_center_size(center, egui::vec2(SIZE, SIZE))
     }
 
-    /// Copy the original cursor cell's value into every cell of
-    /// `extended` that is NOT inside `original`. Called on fill-handle
-    /// release — the simple single-cell pattern (multi-cell pattern
-    /// repeat / arithmetic series come later).
-    fn fill_handle_apply(&mut self, source: (u32, u32), extended: ((u32, u32), (u32, u32))) {
-        let ((min_c, min_r), (max_c, max_r)) = extended;
-        let source_value = self
-            .engine
-            .get_cell(self.square_sheet, &grid::cell_address(source.0, source.1))
-            .and_then(|s| s.source);
+    /// Fill the cells of `extended` that lie OUTSIDE `original`,
+    /// using each fill lane's seed values from `original`. For each
+    /// lane (a column when filling down, a row when filling right),
+    /// [`grid::fill_lane`] extends an arithmetic progression if every
+    /// seed parses as a number — otherwise it repeats the seed
+    /// pattern cyclically. Called by the square sheet's fill-handle
+    /// drag on release.
+    fn fill_handle_apply(
+        &mut self,
+        original: ((u32, u32), (u32, u32)),
+        extended: ((u32, u32), (u32, u32)),
+    ) {
+        let ((oc0, or0), (oc1, or1)) = original;
+        let (_, (nc1, nr1)) = extended;
+        // Pick a single dominant axis. Down wins when both have grown —
+        // most fill drags are vertical and ambiguous diagonals are rare.
+        let mode = if nr1 > or1 {
+            FillAxis::Down
+        } else if nc1 > oc1 {
+            FillAxis::Right
+        } else {
+            // The selection grew above or to the left of the original —
+            // unsupported by the simple fill handle, do nothing.
+            return;
+        };
+        let format_num = |n: f64| {
+            if n.fract() == 0.0 && n.abs() < 1e15 {
+                (n as i64).to_string()
+            } else {
+                format!("{n}")
+            }
+        };
         let mut targets = Vec::new();
-        for r in min_r..=max_r {
-            for c in min_c..=max_c {
-                if (c, r) == source {
-                    continue;
+        match mode {
+            FillAxis::Down => {
+                let extend_count = (nr1 - or1) as usize;
+                for c in oc0..=oc1 {
+                    let seed: Vec<Option<String>> = (or0..=or1)
+                        .map(|r| {
+                            self.engine
+                                .get_cell(self.square_sheet, &grid::cell_address(c, r))
+                                .and_then(|s| s.source)
+                        })
+                        .collect();
+                    let extension = grid::fill_lane(&seed, extend_count, format_num);
+                    for (i, value) in extension.into_iter().enumerate() {
+                        let r = or1 + 1 + i as u32;
+                        targets.push((grid::cell_address(c, r), value));
+                    }
                 }
-                targets.push((grid::cell_address(c, r), source_value.clone()));
+            }
+            FillAxis::Right => {
+                let extend_count = (nc1 - oc1) as usize;
+                for r in or0..=or1 {
+                    let seed: Vec<Option<String>> = (oc0..=oc1)
+                        .map(|c| {
+                            self.engine
+                                .get_cell(self.square_sheet, &grid::cell_address(c, r))
+                                .and_then(|s| s.source)
+                        })
+                        .collect();
+                    let extension = grid::fill_lane(&seed, extend_count, format_num);
+                    for (i, value) in extension.into_iter().enumerate() {
+                        let c = oc1 + 1 + i as u32;
+                        targets.push((grid::cell_address(c, r), value));
+                    }
+                }
             }
         }
         if !targets.is_empty() {
@@ -2496,12 +2556,12 @@ impl TescellateApp {
             if response.drag_started() {
                 if let Some(p) = self.press_pos.or_else(|| response.interact_pointer_pos()) {
                     if fill_handle_rect.contains(p) {
-                        // Fill-handle drag — record the original cursor
-                        // cell as the source; subsequent dragged frames
+                        // Fill-handle drag — record the ORIGINAL bounds
+                        // at drag start; subsequent dragged frames
                         // extend the selection and the release applies
-                        // the fill.
+                        // the fill using each lane's seed values.
                         self.commit_edit();
-                        self.fill_drag = Some(self.selection.cursor);
+                        self.fill_drag = Some(self.selection.bounds());
                     } else if in_formula {
                         // Formula-mode drag — `formula_mode::drag_start`
                         // writes the start cell's address, records the
@@ -2588,9 +2648,9 @@ impl TescellateApp {
         if response.drag_stopped() {
             self.header_drag = None;
             self.formula_drag = None;
-            if let Some(source) = self.fill_drag.take() {
-                let bounds = self.selection.bounds();
-                self.fill_handle_apply(source, bounds);
+            if let Some(original) = self.fill_drag.take() {
+                let extended = self.selection.bounds();
+                self.fill_handle_apply(original, extended);
             }
         }
         if response.clicked() {
