@@ -534,16 +534,28 @@ impl TescellateApp {
         engine.new_workbook();
 
         let square_sheet = engine.add_sheet("Budget", LatticeKind::Square);
+        // Real-Time Budget demo (launch Demo A). Slider-driven spend
+        // categories feed a Total cell whose value the engine
+        // recomputes through the DAG on every slider tick — drag any
+        // slider and the Total and Remaining cells update in step.
         for (addr, src) in [
-            ("A1", "Monthly budget"),
-            ("A2", "Rent"),
-            ("B2", "=1200"),
-            ("A3", "Food"),
-            ("B3", "=450"),
-            ("A4", "Transport"),
-            ("B4", "=180"),
-            ("A5", "Total"),
-            ("B5", "=SUM(B2:B4)"),
+            ("A1", "Monthly Budget"),
+            ("A3", "Income"),
+            ("B3", "=4000"),
+            ("A5", "Rent"),
+            ("B5", "=1200"),
+            ("A6", "Food"),
+            ("B6", "=450"),
+            ("A7", "Transport"),
+            ("B7", "=180"),
+            ("A8", "Savings Goal"),
+            ("B8", "=500"),
+            ("A10", "Total Spend"),
+            ("B10", "=B5+B6+B7+B8"),
+            ("A11", "Remaining"),
+            ("B11", "=B3-B10"),
+            ("A12", "Status"),
+            ("B12", "=IF(B11>=0, \"Under\", \"Over\")"),
         ] {
             let _ = engine.set_cell(square_sheet, addr, Some(src));
         }
@@ -658,6 +670,14 @@ impl TescellateApp {
             widgets: {
                 let mut w = Widgets::default();
                 w.set_toggle((3, 1), true);
+                // Budget-demo sliders on B5..B8 (Rent / Food /
+                // Transport / Savings Goal). 0–3000 range per the
+                // launch brief; the cell sources above sit inside
+                // this range so the thumb starts at each line item's
+                // current value.
+                for r in 4..=7 {
+                    w.set_slider((1, r), 0.0, 3000.0);
+                }
                 w
             },
             formula_bar: String::new(),
