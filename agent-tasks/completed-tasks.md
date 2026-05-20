@@ -77,3 +77,9 @@
 - **Completed:** 2026-05-20T20:15:00Z
 - **Files modified:** apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/app.rs, apps/tescellate-ui/src/history.rs
 - **Commit:** `2803222`
+
+## T-103 (sprint 1)
+- **Description:** Local CI gate, all green: `cargo fmt --all --check` (workspace + UI), `cargo clippy --all-targets -- -D warnings` (workspace + UI), `cargo test --workspace` (every crate's tests pass; UI lib at 246 cases), `cargo build --target wasm32-unknown-unknown --release` (production wasm bundle builds clean).
+- **Completed:** 2026-05-20T20:25:00Z
+- **Files modified:** (verification only)
+- **Commit:** `8ce323c`
