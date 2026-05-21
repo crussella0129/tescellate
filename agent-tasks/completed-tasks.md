@@ -154,4 +154,4 @@
 - **Description:** Perf follow-up to v153's culling. New `GridLayout { col_lefts, row_tops }` (prefix-sum arrays) built once per frame by `GridMetrics::layout(cols, rows)` in one O(cols+rows) pass; O(1) accessors `col_left`/`row_top`/`col_width`/`row_height`/`cell_rect`. `draw_grid` builds it after the visible-range computation and indexes it in the four culled loops (main paint, border, widget, header strips) instead of `cell_rect`'s O(index) `col_left`/`row_top` walk — drops scrolled-to-bottom per-frame positioning from ~320K accumulation ops to ~1,600. `GridMetrics::cell_rect` unchanged for hit-testing / resize callers. 3 parity unit tests (default + overrides + accessor equality).
 - **Completed:** 2026-05-21T04:45:00Z
 - **Files modified:** apps/tescellate-ui/src/grid.rs, apps/tescellate-ui/src/app.rs
-- **Commit:** PENDING
+- **Commit:** `48bed76`
