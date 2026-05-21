@@ -136,4 +136,10 @@
 - **Description:** (1) Renamed the language-picker label "Excelite" → "Carbide" in `engine_label` (the `EngineKind::ExcelLite` enum variant stays for serialization back-compat). (2) Closed the four-lattice widget symmetry: `voronoi_widgets: Widgets<VoronoiCoord>` on `TescellateApp` + `UiSnapshot` (`#[serde(default)]`); capture/restore round-trip; `draw_voronoi_grid` gained a widget-skip gate on the text pass + a Button/Toggle render pass inscribed (120×24) at each widget cell's centroid; clicks on widget cells route to the widget, not select/edit. Demo Toggle seeded on `V(5)` (cell now `"FALSE"`). Tests: `widgets_generic_with_voronoi_coord_round_trip` + extended snapshot fixture. 250/250 UI tests pass.
 - **Completed:** 2026-05-21T02:55:00Z
 - **Files modified:** apps/tescellate-ui/src/app.rs, apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/widget.rs
-- **Commit:** `b685d32`
+- **Commit:** `b685d32` (PR #183 squash-merged as `eec563c`)
+
+## T-1001..T-1003 (sprint 10) — square-grid viewport culling
+- **Description:** `GridMetrics::visible_col_range` / `visible_row_range` — single-pass incremental walks returning the inclusive index span of cells whose extent overlaps the scroll clip-rect (boundary-straddling cells included; empty axis → (0,0)). `draw_grid` computes `(c0,c1)`/`(r0,r1)` from `ui.clip_rect()` once and culls all four full-axis loops (main cell paint, heavy-border pass, widget pass, frozen row/col header strips) from `0..ROWS`/`0..COLS` to the visible window. Cuts painted cells from 52×200 = 10,400 to ~the on-screen window (≈1,600 at 1080p), the dominant per-frame cost the user reacted to. 4 new unit tests (full/scrolled/straddle/empty). Residual O(index) cost in `cell_rect` left for a possible prefix-sum follow-up.
+- **Completed:** 2026-05-21T03:30:00Z
+- **Files modified:** apps/tescellate-ui/src/grid.rs, apps/tescellate-ui/src/app.rs
+- **Commit:** `34883e7`

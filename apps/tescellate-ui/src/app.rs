@@ -3643,12 +3643,24 @@ impl TescellateApp {
         let border_stroke = egui::Stroke::new(2.0, text_color);
         let font = egui::FontId::proportional(13.0);
 
+        // Viewport culling: only the cells whose span overlaps the
+        // scroll clip-rect get painted, instead of all COLS×ROWS = 10,400
+        // every frame. The frozen-header strips and the heavy-border /
+        // widget passes reuse the same window.
+        let clip = ui.clip_rect();
+        let (c0, c1) = self
+            .metrics
+            .visible_col_range(origin.x, clip.left(), clip.right(), COLS);
+        let (r0, r1) = self
+            .metrics
+            .visible_row_range(origin.y, clip.top(), clip.bottom(), ROWS);
+
         // Cells: fill, the selection tint, border, and the formatted
         // value. The cell being edited is left blank for the overlay.
         let cursor = self.square.selection.cursor;
         let editing_cell = self.edit.as_ref().map(|_| cursor);
-        for r in 0..ROWS {
-            for c in 0..COLS {
+        for r in r0..=r1 {
+            for c in c0..=c1 {
                 let rect = self.metrics.cell_rect(origin, c, r);
                 let base = self.square.formats.get((c, r));
                 let fmt = if self.cond_rules.is_empty() {
@@ -3703,8 +3715,8 @@ impl TescellateApp {
         // A second pass for the heavy format borders, so a neighbouring
         // cell's grid line does not overpaint a bordered range's right
         // or bottom perimeter.
-        for r in 0..ROWS {
-            for c in 0..COLS {
+        for r in r0..=r1 {
+            for c in c0..=c1 {
                 let base = self.square.formats.get((c, r));
                 let fmt = if self.cond_rules.is_empty() {
                     base
@@ -3808,8 +3820,8 @@ impl TescellateApp {
         // keep the engine recompute count bounded.
         if !self.square_widgets.is_empty() {
             let mut edits: Vec<(String, Option<String>)> = Vec::new();
-            for r in 0..ROWS {
-                for c in 0..COLS {
+            for r in r0..=r1 {
+                for c in c0..=c1 {
                     if editing_cell == Some((c, r)) {
                         continue;
                     }
@@ -3912,8 +3924,9 @@ impl TescellateApp {
         // Stage Mode so the sheet reads as an app, not a spreadsheet.
         if !self.stage_mode {
             // Row header — drawn after the cells so it overpaints any
-            // column that scrolls beneath it.
-            for r in 0..ROWS {
+            // column that scrolls beneath it. Culled to the visible row
+            // window, same as the cell passes.
+            for r in r0..=r1 {
                 let rect = egui::Rect::from_min_size(
                     egui::pos2(header_x, origin.y + self.metrics.row_top(r)),
                     egui::vec2(grid::HEADER_W, self.metrics.row_height(r)),
@@ -3933,7 +3946,7 @@ impl TescellateApp {
                 );
             }
             // Column header.
-            for c in 0..COLS {
+            for c in c0..=c1 {
                 let rect = egui::Rect::from_min_size(
                     egui::pos2(origin.x + self.metrics.col_left(c), header_y),
                     egui::vec2(self.metrics.col_width(c), grid::HEADER_H),
