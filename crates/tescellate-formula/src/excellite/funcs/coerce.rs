@@ -32,6 +32,12 @@ pub fn to_number(v: &CellValue) -> Result<f64, EvalError> {
         CellValue::Function(_) => Err(EvalError::Value(
             "function value in scalar context (use APPLY or pass to MAP/REDUCE)".into(),
         )),
+        // A reference reaching the scalar coercion un-dereferenced is a
+        // bug upstream — `deref_reference` should have resolved it to the
+        // target's value before arithmetic. Surface it rather than guess.
+        CellValue::Reference(_) => Err(EvalError::Value(
+            "reference in scalar context (should have been dereferenced)".into(),
+        )),
     }
 }
 
@@ -67,6 +73,11 @@ pub fn stringify(v: &CellValue) -> String {
         CellValue::Array(_) => "{array}".into(),
         CellValue::Pending => "...".into(),
         CellValue::Function(f) => f.debug_label(),
+        // A bare reference stringifies to its canonical address text.
+        CellValue::Reference(r) => match r {
+            tescellate_core::RefShape::Cell(a) => a.clone(),
+            tescellate_core::RefShape::Range(a, b) => format!("{a}:{b}"),
+        },
     }
 }
 
