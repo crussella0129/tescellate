@@ -1,4 +1,5 @@
-//! Lookup functions: VLOOKUP, HLOOKUP, INDEX, MATCH, CHOOSE, XLOOKUP.
+//! Lookup functions: VLOOKUP, HLOOKUP, INDEX, MATCH, CHOOSE, XLOOKUP,
+//! OFFSET, INDIRECT.
 //!
 //! XLOOKUP supports `match_mode` 0/-1/+1/2 and `search_mode` ±1.
 //! Wildcard match (`match_mode = 2`, v154) uses an Excel-style glob
@@ -7,15 +8,17 @@
 //! a linear scan; the asymptotic improvement only matters on large
 //! workbooks past launch.
 //!
-//! OFFSET and INDIRECT still come later — they return cell-reference
-//! shapes the engine doesn't yet model as first-class values.
+//! OFFSET and INDIRECT (v156) return [`CellValue::Reference`] — a cell or
+//! range pointer that auto-derefs to the target value(s). Both are
+//! *volatile*: the engine recomputes them on every change because their
+//! targets aren't statically analyzable.
 
 use super::coerce::{arity_range, compare, flatten, stringify, to_int};
 use super::FunctionRegistry;
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::{Array, CellValue};
+use tescellate_core::{Array, CellValue, RefShape};
 
 /// Evaluate `arg` to a 2D array. Range and ArrayLit are accepted naturally;
 /// scalar values become 1×1 arrays.
@@ -369,6 +372,78 @@ pub fn choose(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> 
     eval(&args[i as usize], ctx)
 }
 
+/// The anchor address of an OFFSET/INDIRECT reference argument: a literal
+/// `CellRef`, the start of a `Range`, or an expression that evaluates to a
+/// `Reference`. Anything else is an error (Excel's `#REF!`).
+fn anchor_address(arg: &Expr, ctx: &dyn EvalCtx) -> Result<String, EvalError> {
+    match arg {
+        Expr::CellRef(a) => Ok(a.clone()),
+        Expr::Range(a, _) => Ok(a.clone()),
+        _ => match eval(arg, ctx)? {
+            CellValue::Reference(RefShape::Cell(a)) => Ok(a),
+            CellValue::Reference(RefShape::Range(a, _)) => Ok(a),
+            other => Err(EvalError::Ref(format!(
+                "OFFSET/INDIRECT: expected a cell reference, got {other:?}"
+            ))),
+        },
+    }
+}
+
+/// OFFSET(reference, rows, cols, [height], [width]).
+///
+/// Translates `reference` by `(cols, rows)` on the active sheet's lattice
+/// (via `EvalCtx::offset_addr`), then — if `height`/`width` exceed 1 —
+/// extends to a range whose far corner is `(width-1, height-1)` further.
+/// Returns a [`CellValue::Reference`]; volatile (see module docs).
+pub fn offset(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_range("OFFSET", args, 3, 5)?;
+    let anchor = anchor_address(&args[0], ctx)?;
+    let rows = to_int(&eval(&args[1], ctx)?)? as i32;
+    let cols = to_int(&eval(&args[2], ctx)?)? as i32;
+    let height = match args.get(3) {
+        Some(a) => to_int(&eval(a, ctx)?)?,
+        None => 1,
+    };
+    let width = match args.get(4) {
+        Some(a) => to_int(&eval(a, ctx)?)?,
+        None => 1,
+    };
+    if height < 1 || width < 1 {
+        return Err(EvalError::Value(
+            "OFFSET: height and width must be >= 1".into(),
+        ));
+    }
+
+    let start = ctx.offset_addr(&anchor, cols, rows)?;
+    if height == 1 && width == 1 {
+        return Ok(CellValue::Reference(RefShape::Cell(start)));
+    }
+    // Far corner: (width-1) more columns, (height-1) more rows.
+    let end = ctx.offset_addr(&start, (width - 1) as i32, (height - 1) as i32)?;
+    Ok(CellValue::Reference(RefShape::Range(start, end)))
+}
+
+/// INDIRECT(text, [a1_style]).
+///
+/// Turns an address string into a reference. `"A1"` → a cell reference;
+/// `"A1:B3"` → a range reference. The optional A1/R1C1 style flag is
+/// accepted and ignored (only A1-style is supported). The address isn't
+/// validated here — an unresolvable target surfaces its error when the
+/// reference is dereferenced. Volatile (see module docs).
+pub fn indirect(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    arity_range("INDIRECT", args, 1, 2)?;
+    let text = stringify(&eval(&args[0], ctx)?);
+    let text = text.trim();
+    if let Some((a, b)) = text.split_once(':') {
+        Ok(CellValue::Reference(RefShape::Range(
+            a.trim().to_string(),
+            b.trim().to_string(),
+        )))
+    } else {
+        Ok(CellValue::Reference(RefShape::Cell(text.to_string())))
+    }
+}
+
 pub fn register(r: &mut FunctionRegistry) {
     r.add("VLOOKUP", vlookup);
     r.add("HLOOKUP", hlookup);
@@ -376,6 +451,8 @@ pub fn register(r: &mut FunctionRegistry) {
     r.add("MATCH", match_);
     r.add("CHOOSE", choose);
     r.add("XLOOKUP", xlookup);
+    r.add("OFFSET", offset);
+    r.add("INDIRECT", indirect);
 }
 
 #[cfg(test)]
