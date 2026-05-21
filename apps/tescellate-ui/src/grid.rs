@@ -141,6 +141,82 @@ impl GridMetrics {
         HEADER_H + (0..row).map(|r| self.row_height(r)).sum::<f32>()
     }
 
+    /// The inclusive `(start, end)` column index span whose cells overlap
+    /// the horizontal clip window `[clip_left, clip_right]` (screen
+    /// coords), given the grid content's left edge at `origin_x`. Used to
+    /// cull the render to on-screen columns instead of painting all of
+    /// them. One incremental pass over the axis; a cell is included when
+    /// its span overlaps the window inclusively (so an edge-straddling
+    /// cell still paints). An empty axis returns `(0, 0)`.
+    pub fn visible_col_range(
+        &self,
+        origin_x: f32,
+        clip_left: f32,
+        clip_right: f32,
+        cols: u32,
+    ) -> (u32, u32) {
+        if cols == 0 {
+            return (0, 0);
+        }
+        let rel_left = clip_left - origin_x;
+        let rel_right = clip_right - origin_x;
+        let mut x = HEADER_W;
+        let mut start = 0u32;
+        let mut end = cols - 1;
+        let mut found_start = false;
+        for c in 0..cols {
+            let w = self.col_width(c);
+            let cell_left = x;
+            let cell_right = x + w;
+            if !found_start && cell_right >= rel_left {
+                start = c;
+                found_start = true;
+            }
+            if cell_left <= rel_right {
+                end = c;
+            } else {
+                break;
+            }
+            x += w;
+        }
+        (start, end)
+    }
+
+    /// Row analogue of [`GridMetrics::visible_col_range`].
+    pub fn visible_row_range(
+        &self,
+        origin_y: f32,
+        clip_top: f32,
+        clip_bottom: f32,
+        rows: u32,
+    ) -> (u32, u32) {
+        if rows == 0 {
+            return (0, 0);
+        }
+        let rel_top = clip_top - origin_y;
+        let rel_bottom = clip_bottom - origin_y;
+        let mut y = HEADER_H;
+        let mut start = 0u32;
+        let mut end = rows - 1;
+        let mut found_start = false;
+        for r in 0..rows {
+            let h = self.row_height(r);
+            let cell_top = y;
+            let cell_bottom = y + h;
+            if !found_start && cell_bottom >= rel_top {
+                start = r;
+                found_start = true;
+            }
+            if cell_top <= rel_bottom {
+                end = r;
+            } else {
+                break;
+            }
+            y += h;
+        }
+        (start, end)
+    }
+
     /// Total grid width including the row-header band.
     pub fn total_width(&self, cols: u32) -> f32 {
         self.col_left(cols)
@@ -716,6 +792,48 @@ mod tests {
         ));
         // Above or left of the grid is not the corner.
         assert!(!in_header_corner(origin, pos2(-5.0, -5.0)));
+    }
+
+    #[test]
+    fn visible_range_full_when_everything_fits() {
+        let m = GridMetrics::new();
+        // A clip window wider/taller than the whole grid → full range.
+        let wide = HEADER_W + 100.0 * DEFAULT_COL_W;
+        assert_eq!(m.visible_col_range(0.0, 0.0, wide, 52), (0, 51));
+        let tall = HEADER_H + 1000.0 * DEFAULT_ROW_H;
+        assert_eq!(m.visible_row_range(0.0, 0.0, tall, 200), (0, 199));
+    }
+
+    #[test]
+    fn visible_range_windows_when_scrolled() {
+        let m = GridMetrics::new();
+        // Scroll right: origin_x is negative (content shifted left under
+        // a fixed viewport). Viewport is [0, 400] in screen coords.
+        let origin_x = -(HEADER_W + 10.0 * DEFAULT_COL_W); // 10 cols scrolled off
+        let (c0, c1) = m.visible_col_range(origin_x, 0.0, 400.0, 52);
+        assert!(
+            c0 >= 9,
+            "start should skip the scrolled-off columns, got {c0}"
+        );
+        assert!(c1 < 51, "end should not reach the last column, got {c1}");
+        assert!(c1 >= c0);
+    }
+
+    #[test]
+    fn visible_range_includes_boundary_straddle() {
+        let m = GridMetrics::new();
+        // Place the clip-left exactly partway through column 5's span.
+        // Column 5 straddles the boundary and must be included.
+        let col5_mid = HEADER_W + 5.0 * DEFAULT_COL_W + DEFAULT_COL_W / 2.0;
+        let (c0, _) = m.visible_col_range(0.0, col5_mid, col5_mid + 10.0, 52);
+        assert_eq!(c0, 5, "the straddling column must be the start");
+    }
+
+    #[test]
+    fn visible_range_empty_axis_is_zero_zero() {
+        let m = GridMetrics::new();
+        assert_eq!(m.visible_col_range(0.0, 0.0, 500.0, 0), (0, 0));
+        assert_eq!(m.visible_row_range(0.0, 0.0, 500.0, 0), (0, 0));
     }
 
     #[test]
