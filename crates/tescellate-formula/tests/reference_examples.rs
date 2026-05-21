@@ -227,10 +227,39 @@ fn xlookup_search_mode_minus_one_finds_last_match() {
 }
 
 #[test]
-fn xlookup_wildcard_match_mode_is_deferred() {
-    // match_mode = 2 is documented but not yet implemented; the engine
-    // surfaces a clear error rather than silently mis-matching.
-    assert!(eval_src(r#"XLOOKUP("b*", ["a","b","c"], [1,2,3], "", 2)"#).is_err());
+fn xlookup_wildcard_star_matches_prefix() {
+    // match_mode = 2 (v154): `*` matches any run, so "App*" finds "Apple".
+    assert_eq!(
+        num(r#"XLOOKUP("App*", ["Apple", "Banana"], [1, 2], "", 2)"#),
+        1.0
+    );
+}
+
+#[test]
+fn xlookup_wildcard_question_matches_single_char() {
+    // `?` matches exactly one character — "c?t" hits "cat", not "coat".
+    assert_eq!(
+        num(r#"XLOOKUP("c?t", ["coat", "cat"], [1, 2], "", 2)"#),
+        2.0
+    );
+}
+
+#[test]
+fn xlookup_wildcard_tilde_escapes_literal() {
+    // `~%` is a literal percent sign, so "50~%" matches "50%" not "500".
+    assert_eq!(
+        num(r#"XLOOKUP("50~%", ["500", "50%"], [1, 2], "", 2)"#),
+        2.0
+    );
+}
+
+#[test]
+fn xlookup_wildcard_miss_returns_if_not_found() {
+    // No candidate matches "z*" → the if_not_found value is returned.
+    assert_eq!(
+        text(r#"XLOOKUP("z*", ["Apple", "Banana"], [1, 2], "none", 2)"#),
+        "none"
+    );
 }
 
 #[test]

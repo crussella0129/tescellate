@@ -142,4 +142,10 @@
 - **Description:** `GridMetrics::visible_col_range` / `visible_row_range` — single-pass incremental walks returning the inclusive index span of cells whose extent overlaps the scroll clip-rect (boundary-straddling cells included; empty axis → (0,0)). `draw_grid` computes `(c0,c1)`/`(r0,r1)` from `ui.clip_rect()` once and culls all four full-axis loops (main cell paint, heavy-border pass, widget pass, frozen row/col header strips) from `0..ROWS`/`0..COLS` to the visible window. Cuts painted cells from 52×200 = 10,400 to ~the on-screen window (≈1,600 at 1080p), the dominant per-frame cost the user reacted to. 4 new unit tests (full/scrolled/straddle/empty). Residual O(index) cost in `cell_rect` left for a possible prefix-sum follow-up.
 - **Completed:** 2026-05-21T03:30:00Z
 - **Files modified:** apps/tescellate-ui/src/grid.rs, apps/tescellate-ui/src/app.rs
-- **Commit:** `34883e7`
+- **Commit:** `34883e7` (PR #184 squash-merged as `b18ede1`)
+
+## T-1201..T-1204 (sprint 12) — XLOOKUP wildcard match
+- **Description:** Implemented XLOOKUP `match_mode = 2` (the deferred wildcard path from v147). New `wildcard_match(pattern, haystack)` helper in `lookup.rs` — Excel glob (`?` = one char, `*` = any run incl. empty, `~` escapes the next char), case-insensitive, anchored to the full string, via a two-pointer algorithm (no exponential blowup). Wired into `xlookup`: error guard removed, range check widened to `-1..=2`, match loop globs `stringify(needle)` against `stringify(candidate)`, first hit wins. 7 in-module unit tests + 4 reference-examples tests; the v147 deferred test replaced with passing-match assertions.
+- **Completed:** 2026-05-21T04:10:00Z
+- **Files modified:** crates/tescellate-formula/src/excellite/funcs/lookup.rs, crates/tescellate-formula/tests/reference_examples.rs
+- **Commit:** `d61ddf3`
