@@ -682,9 +682,8 @@ impl WorkbookEngine {
             // A cell whose formula evaluates to a bare reference (e.g.
             // `=OFFSET(A1,1,1)` / `=INDIRECT("B2")`) shows the target's
             // value, not the reference itself — deref the final result.
-            let derefed = result.and_then(|v| {
-                crate::excellite::funcs::coerce::deref_reference(v, &view)
-            });
+            let derefed =
+                result.and_then(|v| crate::excellite::funcs::coerce::deref_reference(v, &view));
             derefed.unwrap_or_else(|e| CellValue::Error(eval_error_to_cell_error(e)))
         };
         if let Some(sheet) = self.workbook.sheets.get_mut(&cref.sheet) {
