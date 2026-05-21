@@ -509,6 +509,11 @@ pub struct TescellateApp {
     /// surface as the other two. Same Button + Toggle support; Slider
     /// and ProgressBar fall through to text render (ADR-006).
     triangle_widgets: Widgets<TriCoord>,
+    /// Voronoi-sheet widgets. The fourth and final lattice to gain the
+    /// `Widgets<K>` surface (closes the ADR-005 arc). Button + Toggle
+    /// render inscribed in each cell's polygon; Slider/ProgressBar fall
+    /// through to text (ADR-006).
+    voronoi_widgets: Widgets<VoronoiCoord>,
     /// The formula bar's edit buffer — mirrors the active cell's source
     /// except while the bar itself is being edited.
     formula_bar: String,
@@ -706,7 +711,9 @@ impl TescellateApp {
             ("V(2)", "=42"),
             ("V(3)", "Tundra"),
             ("V(4)", "=V(2) + 8"),
-            ("V(5)", "Desert"),
+            // V(5) hosts a Toggle widget (seeded below) — start it
+            // unchecked so the checkbox renders in its canonical state.
+            ("V(5)", "FALSE"),
             ("V(6)", "Coast"),
             ("V(7)", "Highlands"),
         ] {
@@ -790,6 +797,14 @@ impl TescellateApp {
                 // docs/screenshots. The accompanying set_cell below
                 // initialises the cell to FALSE.
                 w.set_toggle(TriCoord::new(2, -1), true);
+                w
+            },
+            voronoi_widgets: {
+                let mut w: Widgets<VoronoiCoord> = Widgets::default();
+                // Toggle on V(5) — gives the Voronoi sheet a visible
+                // widget surface and closes the four-lattice symmetry.
+                // The V(5) cell is seeded "FALSE" above.
+                w.set_toggle(VoronoiCoord(5), true);
                 w
             },
             formula_bar: String::new(),
@@ -4783,15 +4798,21 @@ impl TescellateApp {
         };
         let doubled = response.double_clicked();
 
+        // A click that lands on a widget cell is handled by the widget
+        // pass (it owns the checkbox / button hit area), so suppress the
+        // select-or-edit behaviour there.
+        let clicked_is_widget = clicked_coord.is_some_and(|c| self.voronoi_widgets.is_widget(c));
         if let Some(coord) = clicked_coord {
-            self.commit_edit();
-            self.voronoi.selection.collapse_to(coord);
-            if doubled {
-                let buffer = self.voronoi_cell_source(coord);
-                self.edit = Some(EditState {
-                    buffer,
-                    fresh: true,
-                });
+            if !clicked_is_widget {
+                self.commit_edit();
+                self.voronoi.selection.collapse_to(coord);
+                if doubled {
+                    let buffer = self.voronoi_cell_source(coord);
+                    self.edit = Some(EditState {
+                        buffer,
+                        fresh: true,
+                    });
+                }
             }
         }
 
@@ -4821,10 +4842,15 @@ impl TescellateApp {
             painter.add(egui::Shape::convex_polygon(pts, fill, stroke));
         }
 
-        // Second pass — cell value text at each centroid.
+        // Second pass — cell value text at each centroid. Widget cells
+        // are skipped: the Button/Toggle paints over the centroid, and
+        // showing the value behind it bleeds the source through.
         let fg = ui.visuals().text_color();
         for i in 0..self.voronoi_lattice.len() as u32 {
             let coord = VoronoiCoord(i);
+            if self.voronoi_widgets.is_widget(coord) {
+                continue;
+            }
             let centroid = self.voronoi_lattice.centroid(coord);
             let pos = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
             let text = self.voronoi_cell_text(coord);
@@ -4853,6 +4879,61 @@ impl TescellateApp {
                 pts.push(first);
             }
             painter.add(egui::Shape::line(pts, sel_stroke));
+        }
+
+        // Widget pass — Button + Toggle inscribed at each widget cell's
+        // centroid. Slider/ProgressBar fall through to text (ADR-006).
+        if !self.voronoi_widgets.is_empty() {
+            let editing_coord = self.edit.as_ref().map(|_| self.voronoi.selection.cursor);
+            let mut vor_edits: Vec<(VoronoiCoord, Option<String>)> = Vec::new();
+            for (coord, kind) in self
+                .voronoi_widgets
+                .iter()
+                .map(|(c, k)| (*c, *k))
+                .collect::<Vec<_>>()
+            {
+                if editing_coord == Some(coord) {
+                    continue;
+                }
+                let centroid = self.voronoi_lattice.centroid(coord);
+                let center = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+                let rect = egui::Rect::from_center_size(center, egui::vec2(120.0, 24.0));
+                let addr = voronoi_address(coord);
+                match kind {
+                    widget::WidgetKind::Button => {
+                        let label = self
+                            .engine
+                            .get_cell(self.voronoi.sheet_id, &addr)
+                            .and_then(|s| s.source)
+                            .unwrap_or_else(|| "Click".to_string());
+                        if ui.put(rect, egui::Button::new(label.clone())).clicked() {
+                            vor_edits.push((coord, Some(label)));
+                        }
+                    }
+                    widget::WidgetKind::Toggle => {
+                        let value = self
+                            .engine
+                            .get_cell(self.voronoi.sheet_id, &addr)
+                            .map(|s| s.value)
+                            .unwrap_or(CellValue::Empty);
+                        let mut checked = widget::bool_state(&value);
+                        if ui
+                            .put(rect, egui::Checkbox::new(&mut checked, ""))
+                            .changed()
+                        {
+                            vor_edits.push((coord, Some(widget::bool_source(checked).to_string())));
+                        }
+                    }
+                    widget::WidgetKind::Slider { .. } | widget::WidgetKind::ProgressBar { .. } => {}
+                }
+            }
+            for (coord, source) in vor_edits {
+                let _ = self.engine.set_cell(
+                    self.voronoi.sheet_id,
+                    &voronoi_address(coord),
+                    source.as_deref(),
+                );
+            }
         }
 
         // In-cell edit overlay — a small text field centred on the
@@ -5058,6 +5139,8 @@ impl TescellateApp {
         hex_widgets.replace_with(self.hex_widgets.iter().map(|(k, v)| (*k, *v)));
         let mut tri_widgets: widget::Widgets<TriCoord> = widget::Widgets::default();
         tri_widgets.replace_with(self.triangle_widgets.iter().map(|(k, v)| (*k, *v)));
+        let mut vor_widgets: widget::Widgets<VoronoiCoord> = widget::Widgets::default();
+        vor_widgets.replace_with(self.voronoi_widgets.iter().map(|(k, v)| (*k, *v)));
 
         UiSnapshot {
             active_sheet: active,
@@ -5069,6 +5152,7 @@ impl TescellateApp {
             square_widgets: sq_widgets,
             hex_widgets,
             triangle_widgets: tri_widgets,
+            voronoi_widgets: vor_widgets,
             square_notes: self
                 .notes
                 .iter()
@@ -5121,6 +5205,8 @@ impl TescellateApp {
             .replace_with(s.hex_widgets.iter().map(|(k, v)| (*k, *v)));
         self.triangle_widgets
             .replace_with(s.triangle_widgets.iter().map(|(k, v)| (*k, *v)));
+        self.voronoi_widgets
+            .replace_with(s.voronoi_widgets.iter().map(|(k, v)| (*k, *v)));
         self.notes.replace_with(s.square_notes);
         self.hex_notes.replace_with(s.hex_notes);
         self.triangle_notes.replace_with(s.triangle_notes);
@@ -5859,7 +5945,9 @@ fn blend_over(over: egui::Color32, under: egui::Color32) -> egui::Color32 {
 /// signals that the choice was inherited.
 fn engine_label(kind: EngineKind, is_override: bool) -> String {
     let base = match kind {
-        EngineKind::ExcelLite => "Excelite",
+        // The built-in formula language is "Carbide" — `ExcelLite` is the
+        // historical enum name kept for serialization back-compat.
+        EngineKind::ExcelLite => "Carbide",
         EngineKind::Python => "Python",
         EngineKind::Rhai => "Rhai",
         EngineKind::RustNative => "Rust",
