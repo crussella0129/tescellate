@@ -22,6 +22,11 @@ pub struct WorkbookEngine {
     dag: Dag,
     compiled: HashMap<CellRef, CompiledFormula>,
     engines: HashMap<EngineKind, Box<dyn FormulaEngine>>,
+    /// Cells whose formula contains a *volatile* function (OFFSET /
+    /// INDIRECT) — their dependencies aren't statically analyzable, so
+    /// they must recompute on every edit. Unioned into each `set_cell`
+    /// dirty closure. See PLAN.md §6.2 / the lookup.rs module docs.
+    volatile: std::collections::HashSet<CellRef>,
     /// Cells promoted to the native compiled tier (see `promote_native`).
     /// A promoted cell's formula evaluates through its compiled `cdylib`
     /// rather than the interpreter.
@@ -63,6 +68,7 @@ impl WorkbookEngine {
             dag: Dag::new(),
             compiled: HashMap::new(),
             engines,
+            volatile: std::collections::HashSet::new(),
             #[cfg(feature = "native")]
             native: HashMap::new(),
         }
@@ -72,6 +78,7 @@ impl WorkbookEngine {
         self.workbook = empty_workbook();
         self.dag = Dag::new();
         self.compiled.clear();
+        self.volatile.clear();
         #[cfg(feature = "native")]
         self.native.clear();
         self.workbook.id
@@ -355,6 +362,20 @@ impl WorkbookEngine {
         } else {
             self.compiled.remove(&cref);
         }
+
+        // Track volatility: a formula mentioning OFFSET/INDIRECT recomputes
+        // on every edit (its targets aren't statically known). Token check
+        // on the source is sufficient — a false positive only costs an
+        // extra recompute, never correctness.
+        let is_volatile = source.is_some_and(|s| {
+            let up = s.to_ascii_uppercase();
+            up.contains("OFFSET(") || up.contains("INDIRECT(")
+        });
+        if is_volatile {
+            self.volatile.insert(cref.clone());
+        } else {
+            self.volatile.remove(&cref);
+        }
         // Pre-seed the value with the literal if there is one. For formulas
         // this stays Empty until `recompute` runs below and overwrites it.
         self.store_cell(
@@ -367,8 +388,11 @@ impl WorkbookEngine {
             },
         );
 
-        // Recompute the dirty closure.
-        let dirty = self.dag.dirty_closure(&cref);
+        // Recompute the dirty closure, plus every volatile cell (OFFSET/
+        // INDIRECT) — their dynamic targets may have just changed even
+        // though the static DAG didn't link them to this edit.
+        let mut dirty = self.dag.dirty_closure(&cref);
+        dirty.extend(self.volatile.iter().cloned());
         let order = self.dag.topo_order(dirty.clone());
         let mut changed = Vec::with_capacity(order.len());
         for c in &order {
