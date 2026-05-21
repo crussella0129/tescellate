@@ -4,7 +4,24 @@
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::CellValue;
+use tescellate_core::{Array, CellValue, RefShape};
+
+/// Resolve a [`CellValue::Reference`] to the value(s) it points at:
+/// `Cell` → the target cell's value; `Range` → a column `Array` of the
+/// range's values. Non-reference values pass through unchanged. This is
+/// the auto-deref applied wherever a concrete value is needed (arithmetic,
+/// comparison, a cell's final result) — references only survive as
+/// references into range-consuming functions, which resolve them directly.
+pub fn deref_reference(v: CellValue, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
+    match v {
+        CellValue::Reference(RefShape::Cell(a)) => ctx.cell(&a),
+        CellValue::Reference(RefShape::Range(a, b)) => {
+            let data = ctx.range(&a, &b)?;
+            Ok(CellValue::Array(Box::new(Array::col(data))))
+        }
+        other => Ok(other),
+    }
+}
 
 pub fn as_number(v: &CellValue) -> Option<f64> {
     match v {
@@ -98,7 +115,13 @@ pub fn flatten(arg: &Expr, ctx: &dyn EvalCtx) -> Result<Vec<CellValue>, EvalErro
         Expr::Range(a, b) => ctx.range(a, b),
         _ => {
             let v = eval(arg, ctx)?;
-            Ok(flatten_value(v))
+            // A reference (from OFFSET/INDIRECT) resolves like a range:
+            // Range → its cells; Cell → that one cell's value.
+            match v {
+                CellValue::Reference(RefShape::Range(a, b)) => ctx.range(&a, &b),
+                CellValue::Reference(RefShape::Cell(a)) => Ok(vec![ctx.cell(&a)?]),
+                other => Ok(flatten_value(other)),
+            }
         }
     }
 }

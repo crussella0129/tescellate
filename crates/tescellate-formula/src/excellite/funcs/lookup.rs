@@ -34,6 +34,15 @@ fn to_array_2d(arg: &Expr, ctx: &dyn EvalCtx) -> Result<Array, EvalError> {
             let v = eval(arg, ctx)?;
             match v {
                 CellValue::Array(a) => Ok(*a),
+                // A reference (OFFSET/INDIRECT) resolves like a range.
+                CellValue::Reference(tescellate_core::RefShape::Range(a, b)) => {
+                    let data = ctx.range(&a, &b)?;
+                    let len = data.len();
+                    Ok(Array::col(data).normalise_if_empty(len))
+                }
+                CellValue::Reference(tescellate_core::RefShape::Cell(a)) => {
+                    Ok(Array::new(1, 1, vec![ctx.cell(&a)?]))
+                }
                 other => Ok(Array::new(1, 1, vec![other])),
             }
         }
