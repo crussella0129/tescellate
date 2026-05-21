@@ -124,6 +124,23 @@ pub enum CellValue {
     /// — deserializes to `CellError::StaleFunction` and is restored by
     /// recompute-on-load from the cell's stored `source`.
     Function(Arc<dyn CarbideFn>),
+    /// A cell or range *reference*, as produced by `OFFSET` / `INDIRECT`.
+    /// Carries canonical address text, not data. Auto-derefs to the
+    /// target's value(s) wherever a concrete value is needed; survives
+    /// as a reference into range-consuming functions (so
+    /// `SUM(OFFSET(...))` resolves the range).
+    Reference(RefShape),
+}
+
+/// The shape of a [`CellValue::Reference`] — a single cell or a range,
+/// each as canonical address text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "ref", content = "addr")]
+pub enum RefShape {
+    /// A single cell, e.g. `"C3"` / `"H(1,2)"` / `"V(5)"`.
+    Cell(String),
+    /// An inclusive range `(start, end)`, e.g. `("A1", "B10")`.
+    Range(String, String),
 }
 
 impl PartialEq for CellValue {
@@ -142,6 +159,7 @@ impl PartialEq for CellValue {
             // same allocation. Cheap, deterministic, and good enough for
             // the DAG's needs (which keys on CellRef anyway).
             (Function(a), Function(b)) => Arc::ptr_eq(a, b),
+            (Reference(a), Reference(b)) => a == b,
             _ => false,
         }
     }
@@ -201,6 +219,10 @@ impl Serialize for CellValue {
                 let label = f.debug_label();
                 s.serialize_field("value", &FnLabel { label: &label })?;
             }
+            CellValue::Reference(r) => {
+                s.serialize_field("kind", "reference")?;
+                s.serialize_field("value", r)?;
+            }
         }
         s.end()
     }
@@ -223,6 +245,7 @@ impl<'de> Deserialize<'de> for CellValue {
             Error(super::cell::CellError),
             Pending,
             Function(serde::de::IgnoredAny),
+            Reference(RefShape),
         }
         let wire = Wire::deserialize(deserializer)?;
         Ok(match wire {
@@ -235,6 +258,7 @@ impl<'de> Deserialize<'de> for CellValue {
             Wire::Error(e) => CellValue::Error(e),
             Wire::Pending => CellValue::Pending,
             Wire::Function(_) => CellValue::Error(super::cell::CellError::StaleFunction),
+            Wire::Reference(r) => CellValue::Reference(r),
         })
     }
 }

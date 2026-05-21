@@ -40,6 +40,14 @@ fn recognise_lattice_address(name: &str, args: &[Expr]) -> Option<String> {
         let row = literal_int(&args[1])?;
         return Some(format!("T({col},{row})"));
     }
+    if name == "V" && args.len() == 1 {
+        // Voronoi seed index `V(n)` — a single non-negative integer.
+        let n = literal_int(&args[0])?;
+        if n < 0 {
+            return None;
+        }
+        return Some(format!("V({n})"));
+    }
     None
 }
 

@@ -18,7 +18,7 @@ pub use dag::{Dag, DagError};
 pub use env::Env;
 pub use extent::{BoundedExtent, SheetExtent};
 pub use reference::CellRef;
-pub use value::{Array, CarbideFn, CellValue, ShapeError};
+pub use value::{Array, CarbideFn, CellValue, RefShape, ShapeError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WorkbookId(pub u64);

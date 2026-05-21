@@ -363,6 +363,18 @@ impl EvalCtx for MapCtx {
         }
         Ok(out)
     }
+
+    /// Single-letter A1 offset — enough to exercise OFFSET in the
+    /// reference corpus. Columns are 0-based (`A`=0), rows 1-based.
+    fn offset_addr(&self, addr: &str, dcol: i32, drow: i32) -> Result<String, EvalError> {
+        let (col, row) = parse_a1(addr)?;
+        let nc = col as i32 + dcol;
+        let nr = row as i32 + drow;
+        if nc < 0 || nr < 1 {
+            return Err(addr_err(addr));
+        }
+        Ok(format!("{}{nr}", (b'A' + nc as u8) as char))
+    }
 }
 
 fn addr_err(addr: &str) -> EvalError {

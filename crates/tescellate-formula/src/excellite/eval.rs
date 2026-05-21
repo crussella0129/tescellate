@@ -42,7 +42,7 @@ pub fn eval(expr: &Expr, ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
         Expr::Range(_, _) => bare_range(),
         Expr::Array(rows) => eval_array_literal(rows, ctx),
         Expr::Unary(op, rhs) => {
-            let v = eval(rhs, ctx)?;
+            let v = crate::excellite::funcs::coerce::deref_reference(eval(rhs, ctx)?, ctx)?;
             apply_unary_op(*op, v)
         }
         Expr::Binary(op, lhs, rhs) => eval_binary(*op, lhs, rhs, ctx),
@@ -82,8 +82,8 @@ fn eval_binary(
     rhs: &Expr,
     ctx: &dyn EvalCtx,
 ) -> Result<CellValue, EvalError> {
-    let l = eval(lhs, ctx)?;
-    let r = eval(rhs, ctx)?;
+    let l = crate::excellite::funcs::coerce::deref_reference(eval(lhs, ctx)?, ctx)?;
+    let r = crate::excellite::funcs::coerce::deref_reference(eval(rhs, ctx)?, ctx)?;
     apply_binary_op(op, l, r)
 }
 

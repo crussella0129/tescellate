@@ -22,6 +22,11 @@ pub struct WorkbookEngine {
     dag: Dag,
     compiled: HashMap<CellRef, CompiledFormula>,
     engines: HashMap<EngineKind, Box<dyn FormulaEngine>>,
+    /// Cells whose formula contains a *volatile* function (OFFSET /
+    /// INDIRECT) — their dependencies aren't statically analyzable, so
+    /// they must recompute on every edit. Unioned into each `set_cell`
+    /// dirty closure. See PLAN.md §6.2 / the lookup.rs module docs.
+    volatile: std::collections::HashSet<CellRef>,
     /// Cells promoted to the native compiled tier (see `promote_native`).
     /// A promoted cell's formula evaluates through its compiled `cdylib`
     /// rather than the interpreter.
@@ -63,6 +68,7 @@ impl WorkbookEngine {
             dag: Dag::new(),
             compiled: HashMap::new(),
             engines,
+            volatile: std::collections::HashSet::new(),
             #[cfg(feature = "native")]
             native: HashMap::new(),
         }
@@ -72,6 +78,7 @@ impl WorkbookEngine {
         self.workbook = empty_workbook();
         self.dag = Dag::new();
         self.compiled.clear();
+        self.volatile.clear();
         #[cfg(feature = "native")]
         self.native.clear();
         self.workbook.id
@@ -355,6 +362,20 @@ impl WorkbookEngine {
         } else {
             self.compiled.remove(&cref);
         }
+
+        // Track volatility: a formula mentioning OFFSET/INDIRECT recomputes
+        // on every edit (its targets aren't statically known). Token check
+        // on the source is sufficient — a false positive only costs an
+        // extra recompute, never correctness.
+        let is_volatile = source.is_some_and(|s| {
+            let up = s.to_ascii_uppercase();
+            up.contains("OFFSET(") || up.contains("INDIRECT(")
+        });
+        if is_volatile {
+            self.volatile.insert(cref.clone());
+        } else {
+            self.volatile.remove(&cref);
+        }
         // Pre-seed the value with the literal if there is one. For formulas
         // this stays Empty until `recompute` runs below and overwrites it.
         self.store_cell(
@@ -367,7 +388,7 @@ impl WorkbookEngine {
             },
         );
 
-        // Recompute the dirty closure.
+        // Recompute the static dirty closure first, in topo order.
         let dirty = self.dag.dirty_closure(&cref);
         let order = self.dag.topo_order(dirty.clone());
         let mut changed = Vec::with_capacity(order.len());
@@ -381,6 +402,18 @@ impl WorkbookEngine {
             if !order.contains(c) {
                 self.recompute(c);
                 changed.push(c.clone());
+            }
+        }
+        // Volatile cells (OFFSET/INDIRECT) recompute in a SECOND pass —
+        // after the static closure has settled — because their dynamic
+        // targets may be among the cells just recomputed above. Running
+        // them in the same pass risks reading a stale value (a volatile
+        // cell has no static DAG edge, so topo-order can't sequence it
+        // after its dynamic target).
+        for c in self.volatile.clone() {
+            if !changed.contains(&c) {
+                self.recompute(&c);
+                changed.push(c);
             }
         }
         Ok(changed)
@@ -646,7 +679,12 @@ impl WorkbookEngine {
             };
             #[cfg(not(feature = "native"))]
             let result = engine.eval(&compiled, &view);
-            result.unwrap_or_else(|e| CellValue::Error(eval_error_to_cell_error(e)))
+            // A cell whose formula evaluates to a bare reference (e.g.
+            // `=OFFSET(A1,1,1)` / `=INDIRECT("B2")`) shows the target's
+            // value, not the reference itself — deref the final result.
+            let derefed =
+                result.and_then(|v| crate::excellite::funcs::coerce::deref_reference(v, &view));
+            derefed.unwrap_or_else(|e| CellValue::Error(eval_error_to_cell_error(e)))
         };
         if let Some(sheet) = self.workbook.sheets.get_mut(&cref.sheet) {
             if let Some(cell) = sheet.cells.get_mut(&cref.address) {
@@ -758,6 +796,12 @@ impl EvalCtx for SheetEvalView<'_> {
             .lattice_distance(a, b)
             .map_err(|e| EvalError::Ref(format!("{e}")))
     }
+
+    fn offset_addr(&self, addr: &str, dcol: i32, drow: i32) -> Result<String, EvalError> {
+        self.lattice
+            .offset(addr, dcol, drow)
+            .map_err(|e| EvalError::Ref(format!("{e}")))
+    }
 }
 
 /// Parse a literal cell input (anything not starting with `=`) into a
@@ -863,6 +907,79 @@ mod tests {
         eng.set_cell(sid, "A1", Some("=42")).unwrap();
         let cell = eng.get_cell(sid, "A1").unwrap();
         assert_eq!(cell.value, CellValue::Number(42.0));
+    }
+
+    #[test]
+    fn offset_resolves_target_on_square() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "B2", Some("=99")).unwrap();
+        // Formula lives in D5 (not the anchor) to avoid a self-cycle.
+        // OFFSET(A1, 1, 1) → B2 = 99.
+        eng.set_cell(sid, "D5", Some("=OFFSET(A1, 1, 1)")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "D5").unwrap().value,
+            CellValue::Number(99.0)
+        );
+    }
+
+    #[test]
+    fn indirect_resolves_target_on_square() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "C3", Some("=7")).unwrap();
+        eng.set_cell(sid, "A1", Some(r#"=INDIRECT("C3")"#)).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "A1").unwrap().value,
+            CellValue::Number(7.0)
+        );
+    }
+
+    #[test]
+    fn offset_volatile_recomputes_on_unrelated_edit() {
+        let (mut eng, sid) = new_sheet();
+        eng.set_cell(sid, "B1", Some("=5")).unwrap();
+        // D1 points dynamically at B1 via OFFSET — the static DAG has no
+        // edge from B1 to D1, so only volatile recompute keeps it fresh.
+        eng.set_cell(sid, "D1", Some("=OFFSET(A1, 0, 1)")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "D1").unwrap().value,
+            CellValue::Number(5.0)
+        );
+        // Edit the dynamic target; D1 must refresh even though nothing
+        // statically links them.
+        eng.set_cell(sid, "B1", Some("=42")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "D1").unwrap().value,
+            CellValue::Number(42.0)
+        );
+    }
+
+    #[test]
+    fn offset_on_hex_axial() {
+        let (mut eng, sid) = new_hex_sheet();
+        eng.set_cell(sid, "H(1,2)", Some("=88")).unwrap();
+        // Formula in H(5,5) (not the anchor) to avoid a self-cycle.
+        // OFFSET(H(0,0), rows=2, cols=1) → axial (q+1, r+2) = H(1,2).
+        eng.set_cell(sid, "H(5,5)", Some("=OFFSET(H(0,0), 2, 1)"))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "H(5,5)").unwrap().value,
+            CellValue::Number(88.0)
+        );
+    }
+
+    #[test]
+    fn offset_on_voronoi_index() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("Vor1", LatticeKind::Voronoi);
+        eng.set_cell(sid, "V(2)", Some("=55")).unwrap();
+        // Formula in V(7) (not the anchor) to avoid a self-cycle.
+        eng.set_cell(sid, "V(7)", Some("=OFFSET(V(0), 2, 0)"))
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "V(7)").unwrap().value,
+            CellValue::Number(55.0)
+        );
     }
 
     #[test]

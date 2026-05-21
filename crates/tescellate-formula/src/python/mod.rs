@@ -159,6 +159,16 @@ fn cell_value_to_py<'py>(py: Python<'py>, value: &CellValue) -> PyResult<Bound<'
         CellValue::Error(e) => Err(PyRuntimeError::new_err(format!("cell error: {e:?}"))),
         CellValue::Pending => Err(PyRuntimeError::new_err("cell value is pending")),
         CellValue::Function(_) => Err(PyRuntimeError::new_err("cell holds a function value")),
+        // A stored cell value is always already dereferenced; a reference
+        // reaching here is anomalous. Surface its address text rather than
+        // panic, matching `stringify`'s treatment.
+        CellValue::Reference(r) => {
+            let s = match r {
+                tescellate_core::RefShape::Cell(a) => a.clone(),
+                tescellate_core::RefShape::Range(a, b) => format!("{a}:{b}"),
+            };
+            Ok(PyString::new(py, &s).into_any())
+        }
     }
 }
 

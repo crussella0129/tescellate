@@ -11,6 +11,7 @@ use tescellate_core::CellValue;
 use tescellate_formula::excellite::eval::eval;
 use tescellate_formula::excellite::parse::parse;
 use tescellate_formula::transpile::MapCtx;
+use tescellate_formula::EvalCtx;
 
 /// The cell context the reference's cell-reference examples assume.
 fn ctx() -> MapCtx {
@@ -21,10 +22,25 @@ fn ctx() -> MapCtx {
     ])
 }
 
-/// Parse and evaluate a Carbide expression body.
+/// Parse and evaluate a Carbide expression body. A top-level reference
+/// (from OFFSET/INDIRECT) is dereferenced to the target's value(s), the
+/// same way the engine resolves a cell's final result before display.
 fn eval_src(src: &str) -> Result<CellValue, String> {
     let ast = parse(src).map_err(|e| format!("parse error: {e}"))?;
-    eval(&ast, &ctx()).map_err(|e| format!("eval error: {e:?}"))
+    let c = ctx();
+    let v = eval(&ast, &c).map_err(|e| format!("eval error: {e:?}"))?;
+    match v {
+        CellValue::Reference(tescellate_core::RefShape::Cell(a)) => {
+            c.cell(&a).map_err(|e| format!("deref error: {e:?}"))
+        }
+        CellValue::Reference(tescellate_core::RefShape::Range(a, b)) => {
+            let data = c.range(&a, &b).map_err(|e| format!("deref error: {e:?}"))?;
+            Ok(CellValue::Array(Box::new(tescellate_core::Array::col(
+                data,
+            ))))
+        }
+        other => Ok(other),
+    }
 }
 
 /// The numeric value of a formula. Carbide has two numeric variants —
@@ -224,6 +240,41 @@ fn xlookup_search_mode_minus_one_finds_last_match() {
         num(r#"XLOOKUP("a", ["a","b","a"], [1,2,3], "", 0, -1)"#),
         3.0
     );
+}
+
+#[test]
+fn offset_returns_target_value() {
+    // A1=10, A2=20, A3=30. OFFSET(A1, 1, 0) points at A2.
+    assert_eq!(num("OFFSET(A1, 1, 0)"), 20.0);
+    assert_eq!(num("OFFSET(A1, 2, 0)"), 30.0);
+}
+
+#[test]
+fn offset_range_summable() {
+    // A 3-tall column starting at A1: SUM(OFFSET(A1,0,0,3,1)) = 10+20+30.
+    assert_eq!(num("SUM(OFFSET(A1, 0, 0, 3, 1))"), 60.0);
+}
+
+#[test]
+fn offset_out_of_range_is_error() {
+    // Off the top of the grid → an error (no negative rows).
+    assert!(eval_src("OFFSET(A1, -5, 0)").is_err());
+}
+
+#[test]
+fn indirect_resolves_address() {
+    assert_eq!(num(r#"INDIRECT("A2")"#), 20.0);
+}
+
+#[test]
+fn indirect_range_summable() {
+    assert_eq!(num(r#"SUM(INDIRECT("A1:A3"))"#), 60.0);
+}
+
+#[test]
+fn offset_then_arithmetic_derefs() {
+    // A bare reference auto-derefs in arithmetic context.
+    assert_eq!(num("OFFSET(A1, 1, 0) + 5"), 25.0);
 }
 
 #[test]
