@@ -813,6 +813,41 @@ impl TescellateApp {
             suppress_autosave_until: 0.0,
         };
 
+        // Widget-fit minimums: cells that host a slider, button, or
+        // progress bar render their affordance inside the cell rect.
+        // At the default 64 px column width an egui slider thumb + the
+        // numeric value display look crammed; bump every widget column
+        // to a friendlier minimum so the launch demo reads cleanly.
+        // The user can resize columns wider after this initial pass —
+        // we only enforce a *minimum*, never override a wider setting.
+        let mut widget_cols: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut widget_rows: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        for (cell, kind) in this.square_widgets.iter() {
+            let (c, r) = *cell;
+            match kind {
+                widget::WidgetKind::Slider { .. } | widget::WidgetKind::ProgressBar { .. } => {
+                    widget_cols.insert(c);
+                }
+                widget::WidgetKind::Button => {
+                    widget_cols.insert(c);
+                }
+                widget::WidgetKind::Toggle => {} // a checkbox fits in the default cell
+            }
+            widget_rows.insert(r);
+        }
+        for col in widget_cols {
+            let current = this.metrics.col_width(col);
+            if current < 160.0 {
+                this.metrics.set_col_width(col, 160.0);
+            }
+        }
+        for row in widget_rows {
+            let current = this.metrics.row_height(row);
+            if current < 28.0 {
+                this.metrics.set_row_height(row, 28.0);
+            }
+        }
+
         // Boot rehydrate: if an autosave is present, swap the seed-demo
         // workbook for the saved one. Failure here is silent — the seed
         // demos remain. Skips entirely on native (localStorage is wasm-only).
@@ -3942,7 +3977,16 @@ impl TescellateApp {
             }
         }
 
-        let text = self.hex_cell_text(coord);
+        // Skip the cell-text paint when this cell is a widget — the
+        // checkbox / button etc. paints over the centroid, and showing
+        // the value text behind it bleeds the source ("TRUE"/"FALSE",
+        // the button label) out from under the widget.
+        let suppress_text = self.hex_widgets.is_widget(coord);
+        let text = if suppress_text {
+            String::new()
+        } else {
+            self.hex_cell_text(coord)
+        };
         if !text.is_empty() {
             let value = self.hex_cell_value(coord);
             let numeric = matches!(value, CellValue::Number(_) | CellValue::Integer(_));
@@ -4529,6 +4573,12 @@ impl TescellateApp {
         for row in -r..=r {
             for col in -r..=r {
                 let coord = TriCoord::new(col, row);
+                // Skip widget cells — the Button/Toggle render paints
+                // over the centroid; showing the source text behind it
+                // bleeds "TRUE"/"FALSE" / the button label through.
+                if self.triangle_widgets.is_widget(coord) {
+                    continue;
+                }
                 let centroid = self.triangle_lattice.centroid(coord);
                 let p = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
                 let text = self.triangle_cell_text(coord);
