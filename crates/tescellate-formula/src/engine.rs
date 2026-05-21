@@ -758,6 +758,12 @@ impl EvalCtx for SheetEvalView<'_> {
             .lattice_distance(a, b)
             .map_err(|e| EvalError::Ref(format!("{e}")))
     }
+
+    fn offset_addr(&self, addr: &str, dcol: i32, drow: i32) -> Result<String, EvalError> {
+        self.lattice
+            .offset(addr, dcol, drow)
+            .map_err(|e| EvalError::Ref(format!("{e}")))
+    }
 }
 
 /// Parse a literal cell input (anything not starting with `=`) into a

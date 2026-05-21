@@ -107,6 +107,15 @@ pub trait EvalCtx {
             "DISTANCE is not available on this lattice".into(),
         ))
     }
+    /// Translate `addr` by `(dcol, drow)` on the active sheet's lattice,
+    /// returning the canonical address of the result. This is what the
+    /// `OFFSET()` function consults. Default impl errors so engines opt
+    /// in via the lattice (see `LatticeHandle::offset`).
+    fn offset_addr(&self, _addr: &str, _dcol: i32, _drow: i32) -> Result<String, EvalError> {
+        Err(EvalError::Value(
+            "OFFSET is not available on this lattice".into(),
+        ))
+    }
 }
 
 /// Wraps an `EvalCtx` with an additional `Env` scope. Used by `LAMBDA`,
@@ -135,6 +144,12 @@ impl<'a> EvalCtx for ScopedCtx<'a> {
     }
     fn cells_within(&self, addr: &str, radius: i64) -> Result<Vec<CellValue>, EvalError> {
         self.parent.cells_within(addr, radius)
+    }
+    fn lattice_distance(&self, a: &str, b: &str) -> Result<i64, EvalError> {
+        self.parent.lattice_distance(a, b)
+    }
+    fn offset_addr(&self, addr: &str, dcol: i32, drow: i32) -> Result<String, EvalError> {
+        self.parent.offset_addr(addr, dcol, drow)
     }
 }
 
