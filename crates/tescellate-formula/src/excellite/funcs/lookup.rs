@@ -1,8 +1,8 @@
 //! Lookup functions: VLOOKUP, HLOOKUP, INDEX, MATCH, CHOOSE, XLOOKUP.
 //!
-//! XLOOKUP (v147) supports `match_mode` 0/-1/+1 and `search_mode` ±1.
-//! Wildcard match (`match_mode = 2`) errors with a clear message —
-//! a glob/regex backend is the natural follow-up. Binary search modes
+//! XLOOKUP supports `match_mode` 0/-1/+1/2 and `search_mode` ±1.
+//! Wildcard match (`match_mode = 2`, v154) uses an Excel-style glob
+//! (`?`, `*`, `~`-escape, case-insensitive). Binary search modes
 //! (`search_mode = ±2`) accept the parameter but currently fall back to
 //! a linear scan; the asymptotic improvement only matters on large
 //! workbooks past launch.
@@ -10,7 +10,7 @@
 //! OFFSET and INDIRECT still come later — they return cell-reference
 //! shapes the engine doesn't yet model as first-class values.
 
-use super::coerce::{arity_range, compare, flatten, to_int};
+use super::coerce::{arity_range, compare, flatten, stringify, to_int};
 use super::FunctionRegistry;
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
@@ -160,7 +160,7 @@ pub fn match_(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> 
 ///   0  — exact match (returns `if_not_found` / `#N/A` on miss)
 ///  -1  — exact, else the next-smaller value
 ///   1  — exact, else the next-larger value
-///   2  — wildcard (deferred — errors here)
+///   2  — wildcard (Excel glob: `?`, `*`, `~`-escape; case-insensitive)
 ///
 /// search_mode (default 1):
 ///   1  — first-to-last
@@ -192,12 +192,7 @@ pub fn xlookup(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError>
         1
     };
 
-    if match_mode == 2 {
-        return Err(EvalError::Value(
-            "XLOOKUP: wildcard match (match_mode = 2) not yet supported".into(),
-        ));
-    }
-    if !(-1..=1).contains(&match_mode) {
+    if !(-1..=2).contains(&match_mode) {
         return Err(EvalError::Value(format!(
             "XLOOKUP: match_mode {match_mode} out of range -1..=2"
         )));
@@ -222,8 +217,23 @@ pub fn xlookup(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError>
     let mut exact: Option<usize> = None;
     let mut best_fit: Option<usize> = None;
 
+    // Wildcard mode treats the needle as a glob pattern matched against
+    // each candidate's text form; first match in iteration order wins.
+    let needle_pattern = if match_mode == 2 {
+        Some(stringify(&needle))
+    } else {
+        None
+    };
+
     for i in indices {
         let v = &lookup[i];
+        if let Some(pattern) = &needle_pattern {
+            if wildcard_match(pattern, &stringify(v)) {
+                exact = Some(i);
+                break;
+            }
+            continue;
+        }
         match compare(v, &needle) {
             std::cmp::Ordering::Equal => {
                 exact = Some(i);
@@ -267,6 +277,73 @@ pub fn xlookup(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError>
     Ok(result.get(idx).cloned().unwrap_or(CellValue::Empty))
 }
 
+/// Excel-style wildcard match: `?` matches exactly one character, `*`
+/// matches any run (including empty), and `~` escapes the next character
+/// so `~?` / `~*` / `~~` match those literals. Case-insensitive, and the
+/// pattern is anchored to the whole `haystack` (no implicit trailing
+/// `*`). Two-pointer algorithm with a single backtrack pointer for `*` —
+/// O(n·m) worst case, no exponential blowup.
+fn wildcard_match(pattern: &str, haystack: &str) -> bool {
+    let p: Vec<char> = pattern.to_lowercase().chars().collect();
+    let h: Vec<char> = haystack.to_lowercase().chars().collect();
+
+    let (mut pi, mut hi) = (0usize, 0usize);
+    // Backtrack anchors: where the last `*` sat in the pattern, and the
+    // haystack position to resume from if the current attempt fails.
+    let mut star_pi: Option<usize> = None;
+    let mut star_hi = 0usize;
+
+    while hi < h.len() {
+        let pc = p.get(pi).copied();
+        match pc {
+            Some('~') => {
+                // Escaped literal: the next pattern char matches verbatim.
+                let lit = p.get(pi + 1).copied();
+                if lit == Some(h[hi]) {
+                    pi += 2;
+                    hi += 1;
+                } else if let Some(spi) = star_pi {
+                    pi = spi + 1;
+                    star_hi += 1;
+                    hi = star_hi;
+                } else {
+                    return false;
+                }
+            }
+            Some('*') => {
+                star_pi = Some(pi);
+                star_hi = hi;
+                pi += 1;
+            }
+            Some('?') => {
+                pi += 1;
+                hi += 1;
+            }
+            Some(c) if c == h[hi] => {
+                pi += 1;
+                hi += 1;
+            }
+            _ => {
+                // Mismatch (or pattern exhausted). Backtrack to the last
+                // `*` if there was one; otherwise no match.
+                if let Some(spi) = star_pi {
+                    pi = spi + 1;
+                    star_hi += 1;
+                    hi = star_hi;
+                } else {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Haystack consumed; any trailing pattern must be all `*`.
+    while p.get(pi) == Some(&'*') {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
 /// CHOOSE(index, val1, val2, ...).
 pub fn choose(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
     if args.len() < 2 {
@@ -290,4 +367,63 @@ pub fn register(r: &mut FunctionRegistry) {
     r.add("MATCH", match_);
     r.add("CHOOSE", choose);
     r.add("XLOOKUP", xlookup);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wildcard_match;
+
+    #[test]
+    fn wildcard_literal_match() {
+        assert!(wildcard_match("abc", "abc"));
+        assert!(!wildcard_match("abc", "abd"));
+    }
+
+    #[test]
+    fn wildcard_star_prefix_suffix_infix() {
+        assert!(wildcard_match("a*", "abc"));
+        assert!(wildcard_match("*c", "abc"));
+        assert!(wildcard_match("a*c", "abc"));
+        assert!(wildcard_match("a*c", "ac")); // `*` matches empty
+        assert!(wildcard_match("*", "anything"));
+        assert!(wildcard_match("*", "")); // `*` matches empty haystack
+        assert!(!wildcard_match("a*c", "abd"));
+    }
+
+    #[test]
+    fn wildcard_question_single_char() {
+        assert!(wildcard_match("c?t", "cat"));
+        assert!(!wildcard_match("c?t", "coat")); // `?` is exactly one
+        assert!(!wildcard_match("c?t", "ct")); // `?` is not zero
+    }
+
+    #[test]
+    fn wildcard_tilde_escapes_metachar() {
+        assert!(wildcard_match("50~%", "50%"));
+        assert!(!wildcard_match("50~%", "500"));
+        assert!(wildcard_match("a~?", "a?"));
+        assert!(!wildcard_match("a~?", "ab")); // escaped `?` is a literal
+        assert!(wildcard_match("~*", "*")); // escaped star is a literal
+    }
+
+    #[test]
+    fn wildcard_is_case_insensitive() {
+        assert!(wildcard_match("AP*", "apple"));
+        assert!(wildcard_match("apple", "APPLE"));
+    }
+
+    #[test]
+    fn wildcard_anchors_full_string() {
+        // No implicit trailing `*` — the pattern must cover the whole string.
+        assert!(!wildcard_match("ab", "abc"));
+        assert!(wildcard_match("ab*", "abc"));
+    }
+
+    #[test]
+    fn wildcard_multiple_stars_no_blowup() {
+        // A pathological many-star pattern resolves quickly (two-pointer,
+        // not exponential recursion).
+        assert!(wildcard_match("a*b*c*d", "axxbxxcxxd"));
+        assert!(!wildcard_match("a*b*c*d*e", "axxbxxcxxd"));
+    }
 }
