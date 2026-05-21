@@ -148,4 +148,10 @@
 - **Description:** Implemented XLOOKUP `match_mode = 2` (the deferred wildcard path from v147). New `wildcard_match(pattern, haystack)` helper in `lookup.rs` — Excel glob (`?` = one char, `*` = any run incl. empty, `~` escapes the next char), case-insensitive, anchored to the full string, via a two-pointer algorithm (no exponential blowup). Wired into `xlookup`: error guard removed, range check widened to `-1..=2`, match loop globs `stringify(needle)` against `stringify(candidate)`, first hit wins. 7 in-module unit tests + 4 reference-examples tests; the v147 deferred test replaced with passing-match assertions.
 - **Completed:** 2026-05-21T04:10:00Z
 - **Files modified:** crates/tescellate-formula/src/excellite/funcs/lookup.rs, crates/tescellate-formula/tests/reference_examples.rs
-- **Commit:** `d61ddf3`
+- **Commit:** `d61ddf3` (PR #185 squash-merged as `ac40d18`)
+
+## T-1301..T-1303 (sprint 13) — cell_rect O(1) prefix-sum layout
+- **Description:** Perf follow-up to v153's culling. New `GridLayout { col_lefts, row_tops }` (prefix-sum arrays) built once per frame by `GridMetrics::layout(cols, rows)` in one O(cols+rows) pass; O(1) accessors `col_left`/`row_top`/`col_width`/`row_height`/`cell_rect`. `draw_grid` builds it after the visible-range computation and indexes it in the four culled loops (main paint, border, widget, header strips) instead of `cell_rect`'s O(index) `col_left`/`row_top` walk — drops scrolled-to-bottom per-frame positioning from ~320K accumulation ops to ~1,600. `GridMetrics::cell_rect` unchanged for hit-testing / resize callers. 3 parity unit tests (default + overrides + accessor equality).
+- **Completed:** 2026-05-21T04:45:00Z
+- **Files modified:** apps/tescellate-ui/src/grid.rs, apps/tescellate-ui/src/app.rs
+- **Commit:** PENDING

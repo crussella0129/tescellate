@@ -376,6 +376,82 @@ impl GridMetrics {
         self.axis_index(y, rows, |r| self.row_height(r), HEADER_H)
             .unwrap_or(rows - 1)
     }
+
+    /// Snapshot the current column/row geometry into a [`GridLayout`] with
+    /// precomputed prefix sums, so the render loop can position cells in
+    /// O(1) instead of `cell_rect`'s O(index) `col_left`/`row_top` walk.
+    /// Built once per frame in `draw_grid`; one O(cols + rows) pass.
+    pub fn layout(&self, cols: u32, rows: u32) -> GridLayout {
+        let mut col_lefts = Vec::with_capacity(cols as usize + 1);
+        let mut x = HEADER_W;
+        col_lefts.push(x);
+        for c in 0..cols {
+            x += self.col_width(c);
+            col_lefts.push(x);
+        }
+        let mut row_tops = Vec::with_capacity(rows as usize + 1);
+        let mut y = HEADER_H;
+        row_tops.push(y);
+        for r in 0..rows {
+            y += self.row_height(r);
+            row_tops.push(y);
+        }
+        GridLayout {
+            col_lefts,
+            row_tops,
+        }
+    }
+}
+
+/// Precomputed per-frame grid geometry: prefix sums of column lefts and
+/// row tops, so cell positioning is O(1). Produced by
+/// [`GridMetrics::layout`]; valid for the frame it was built in (a
+/// column resize mutates the metrics and is reflected next frame).
+pub struct GridLayout {
+    /// `col_lefts[c]` is the left edge of column `c`; length `cols + 1`,
+    /// so `col_lefts[cols]` is the grid's right edge.
+    col_lefts: Vec<f32>,
+    /// `row_tops[r]` is the top edge of row `r`; length `rows + 1`.
+    row_tops: Vec<f32>,
+}
+
+impl GridLayout {
+    /// Left edge of column `c` relative to the grid origin. O(1).
+    pub fn col_left(&self, col: u32) -> f32 {
+        self.col_lefts[(col as usize).min(self.col_lefts.len() - 1)]
+    }
+
+    /// Top edge of row `r` relative to the grid origin. O(1).
+    pub fn row_top(&self, row: u32) -> f32 {
+        self.row_tops[(row as usize).min(self.row_tops.len() - 1)]
+    }
+
+    /// Width of column `c` (difference of adjacent prefix sums). O(1).
+    pub fn col_width(&self, col: u32) -> f32 {
+        let i = col as usize;
+        if i + 1 < self.col_lefts.len() {
+            self.col_lefts[i + 1] - self.col_lefts[i]
+        } else {
+            DEFAULT_COL_W
+        }
+    }
+
+    /// Height of row `r`. O(1).
+    pub fn row_height(&self, row: u32) -> f32 {
+        let i = row as usize;
+        if i + 1 < self.row_tops.len() {
+            self.row_tops[i + 1] - self.row_tops[i]
+        } else {
+            DEFAULT_ROW_H
+        }
+    }
+
+    /// The screen rect of cell `(col, row)` given the grid `origin`.
+    /// Matches [`GridMetrics::cell_rect`] exactly. O(1).
+    pub fn cell_rect(&self, origin: Pos2, col: u32, row: u32) -> Rect {
+        let min = pos2(origin.x + self.col_left(col), origin.y + self.row_top(row));
+        Rect::from_min_size(min, Vec2::new(self.col_width(col), self.row_height(row)))
+    }
 }
 
 /// Whether `p` lies in the header corner — the box above the row-header
@@ -792,6 +868,51 @@ mod tests {
         ));
         // Above or left of the grid is not the corner.
         assert!(!in_header_corner(origin, pos2(-5.0, -5.0)));
+    }
+
+    #[test]
+    fn layout_matches_cell_rect() {
+        let m = GridMetrics::new();
+        let layout = m.layout(52, 200);
+        let origin = pos2(7.0, 11.0);
+        for &(c, r) in &[(0u32, 0u32), (5, 3), (51, 199)] {
+            assert_eq!(
+                layout.cell_rect(origin, c, r),
+                m.cell_rect(origin, c, r),
+                "layout rect must match cell_rect at ({c}, {r})"
+            );
+        }
+    }
+
+    #[test]
+    fn layout_matches_cell_rect_with_overrides() {
+        let mut m = GridMetrics::new();
+        m.set_col_width(2, 200.0);
+        m.set_row_height(4, 40.0);
+        let layout = m.layout(52, 200);
+        let origin = pos2(0.0, 0.0);
+        // Before, at, and after each override.
+        for &(c, r) in &[(1u32, 3u32), (2, 4), (5, 6)] {
+            assert_eq!(
+                layout.cell_rect(origin, c, r),
+                m.cell_rect(origin, c, r),
+                "layout rect must match cell_rect at ({c}, {r}) with overrides"
+            );
+        }
+    }
+
+    #[test]
+    fn layout_col_width_row_height_accessors() {
+        let mut m = GridMetrics::new();
+        m.set_col_width(3, 150.0);
+        m.set_row_height(7, 33.0);
+        let layout = m.layout(52, 200);
+        for c in [0u32, 3, 10] {
+            assert_eq!(layout.col_width(c), m.col_width(c));
+        }
+        for r in [0u32, 7, 50] {
+            assert_eq!(layout.row_height(r), m.row_height(r));
+        }
     }
 
     #[test]

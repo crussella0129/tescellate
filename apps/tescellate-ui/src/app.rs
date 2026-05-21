@@ -3654,6 +3654,10 @@ impl TescellateApp {
         let (r0, r1) = self
             .metrics
             .visible_row_range(origin.y, clip.top(), clip.bottom(), ROWS);
+        // Prefix-sum layout: O(1) cell positioning for this frame, vs.
+        // `cell_rect`'s O(index) walk. Built once; `cell_rect` itself
+        // stays for hit-testing / resize callers outside the loop.
+        let layout = self.metrics.layout(COLS, ROWS);
 
         // Cells: fill, the selection tint, border, and the formatted
         // value. The cell being edited is left blank for the overlay.
@@ -3661,7 +3665,7 @@ impl TescellateApp {
         let editing_cell = self.edit.as_ref().map(|_| cursor);
         for r in r0..=r1 {
             for c in c0..=c1 {
-                let rect = self.metrics.cell_rect(origin, c, r);
+                let rect = layout.cell_rect(origin, c, r);
                 let base = self.square.formats.get((c, r));
                 let fmt = if self.cond_rules.is_empty() {
                     base
@@ -3726,7 +3730,7 @@ impl TescellateApp {
                 if fmt.borders == Borders::default() {
                     continue;
                 }
-                let rect = self.metrics.cell_rect(origin, c, r);
+                let rect = layout.cell_rect(origin, c, r);
                 draw_borders(&painter, rect, &fmt.borders, border_stroke);
             }
         }
@@ -3828,7 +3832,7 @@ impl TescellateApp {
                     let Some(kind) = self.square_widgets.kind((c, r)) else {
                         continue;
                     };
-                    let rect = self.metrics.cell_rect(origin, c, r);
+                    let rect = layout.cell_rect(origin, c, r);
                     match kind {
                         widget::WidgetKind::Toggle => {
                             let mut checked = widget::bool_state(&self.cell_value(c, r));
@@ -3928,8 +3932,8 @@ impl TescellateApp {
             // window, same as the cell passes.
             for r in r0..=r1 {
                 let rect = egui::Rect::from_min_size(
-                    egui::pos2(header_x, origin.y + self.metrics.row_top(r)),
-                    egui::vec2(grid::HEADER_W, self.metrics.row_height(r)),
+                    egui::pos2(header_x, origin.y + layout.row_top(r)),
+                    egui::vec2(grid::HEADER_W, layout.row_height(r)),
                 );
                 painter.rect_filled(rect, 0.0, header_bg);
                 // Tint the active cell's row header.
@@ -3948,8 +3952,8 @@ impl TescellateApp {
             // Column header.
             for c in c0..=c1 {
                 let rect = egui::Rect::from_min_size(
-                    egui::pos2(origin.x + self.metrics.col_left(c), header_y),
-                    egui::vec2(self.metrics.col_width(c), grid::HEADER_H),
+                    egui::pos2(origin.x + layout.col_left(c), header_y),
+                    egui::vec2(layout.col_width(c), grid::HEADER_H),
                 );
                 painter.rect_filled(rect, 0.0, header_bg);
                 // Tint the active cell's column header.
