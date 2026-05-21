@@ -118,6 +118,58 @@ impl LatticeHandle {
         }
     }
 
+    /// Translate `addr` by `(dcol, drow)` and return the canonical
+    /// address of the resulting cell — the geometric primitive behind
+    /// the `OFFSET` formula function. The two delta axes map per lattice:
+    ///
+    /// - **Square / Triangle:** `(col + dcol, row + drow)`.
+    /// - **Hex:** axial translation `(q + dcol, r + drow)` — the two
+    ///   offset axes are the two axial axes, not screen-space x/y.
+    /// - **Voronoi:** 1-D seed index; only `drow` applies — a non-zero
+    ///   `dcol` is an error since the seeds have no second axis.
+    ///
+    /// Out-of-range results (negative square col/row, a Voronoi index
+    /// past the seed count) return [`AddressError::OutOfRange`].
+    pub fn offset(&self, addr: &str, dcol: i32, drow: i32) -> Result<String, AddressError> {
+        match self {
+            LatticeHandle::Square(l) => {
+                let c = l.parse_address(addr)?;
+                let col = c.col + dcol;
+                let row = c.row + drow;
+                if col < 0 || row < 0 {
+                    return Err(AddressError::OutOfRange);
+                }
+                Ok(l.address(square::SquareCoord { col, row }))
+            }
+            LatticeHandle::Hex(l) => {
+                let c = l.parse_address(addr)?;
+                Ok(l.address(hex::HexCoord {
+                    q: c.q + dcol,
+                    r: c.r + drow,
+                }))
+            }
+            LatticeHandle::Triangle(l) => {
+                let c = l.parse_address(addr)?;
+                Ok(l.address(triangle::TriCoord {
+                    col: c.col + dcol,
+                    row: c.row + drow,
+                }))
+            }
+            LatticeHandle::Voronoi(l) => {
+                if dcol != 0 {
+                    // Seeds are a 1-D sequence — there is no column axis.
+                    return Err(AddressError::OutOfRange);
+                }
+                let c = l.parse_address(addr)?;
+                let idx = c.0 as i64 + drow as i64;
+                if idx < 0 || idx >= l.len() as i64 {
+                    return Err(AddressError::OutOfRange);
+                }
+                Ok(l.address(voronoi::VoronoiCoord(idx as u32)))
+            }
+        }
+    }
+
     /// Enumerate the cells in `start:end`. Square = rectangle; hex =
     /// axial-aligned parallelogram. Both endpoints are inclusive.
     pub fn enumerate_range(&self, start: &str, end: &str) -> Result<Vec<String>, AddressError> {
@@ -322,6 +374,54 @@ mod handle_tests {
         let h = LatticeHandle::for_kind(LatticeKind::Square).unwrap();
         let cells = h.enumerate_range("A1", "B2").unwrap();
         assert_eq!(cells, vec!["A1", "B1", "A2", "B2"]);
+    }
+
+    #[test]
+    fn offset_square_translates_col_row() {
+        let h = LatticeHandle::for_kind(LatticeKind::Square).unwrap();
+        // B2 is (col 1, row 1); +1 col, +2 row → (col 2, row 3) = C4.
+        assert_eq!(h.offset("B2", 1, 2).unwrap(), "C4");
+    }
+
+    #[test]
+    fn offset_square_out_of_range_errors() {
+        let h = LatticeHandle::for_kind(LatticeKind::Square).unwrap();
+        assert!(h.offset("A1", -1, 0).is_err());
+        assert!(h.offset("A1", 0, -1).is_err());
+    }
+
+    #[test]
+    fn offset_hex_axial() {
+        let h = LatticeHandle::for_kind(LatticeKind::HexPointy).unwrap();
+        assert_eq!(h.offset("H(0,0)", 1, 2).unwrap(), "H(1,2)");
+        assert_eq!(h.offset("H(2,-3)", -1, 1).unwrap(), "H(1,-2)");
+    }
+
+    #[test]
+    fn offset_triangle_translates() {
+        let h = LatticeHandle::for_kind(LatticeKind::Triangle).unwrap();
+        assert_eq!(h.offset("T(0,0)", 2, -1).unwrap(), "T(2,-1)");
+    }
+
+    #[test]
+    fn offset_voronoi_linear() {
+        let h = LatticeHandle::for_kind(LatticeKind::Voronoi).unwrap();
+        // 1-D index: only the row delta applies.
+        assert_eq!(h.offset("V(2)", 0, 3).unwrap(), "V(5)");
+    }
+
+    #[test]
+    fn offset_voronoi_nonzero_dcol_errors() {
+        let h = LatticeHandle::for_kind(LatticeKind::Voronoi).unwrap();
+        assert!(h.offset("V(2)", 1, 0).is_err());
+    }
+
+    #[test]
+    fn offset_voronoi_out_of_range_errors() {
+        let h = LatticeHandle::for_kind(LatticeKind::Voronoi).unwrap();
+        // Default config has 8 seeds (indices 0..=7).
+        assert!(h.offset("V(0)", 0, 999).is_err());
+        assert!(h.offset("V(0)", 0, -1).is_err());
     }
 
     #[test]
