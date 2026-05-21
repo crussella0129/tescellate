@@ -159,3 +159,30 @@ Microsoft's docs and StackOverflow patterns), the implementation is
 clean, and shipping it now unblocks the 70-80% of XLOOKUP queries
 without committing to a half-finished 2D shape that would need
 backwards-incompat changes when the full ref system lands.
+
+## ADR-010 — Voronoi Delaunay neighbors via the `delaunator` crate (sprint 15)
+**Date:** 2026-05-21
+**Status:** Adopted, shipping in v157.
+
+`VoronoiLattice::neighbors` returned an every-other-seed placeholder.
+Replaced with true Delaunay adjacency (two seeds neighbor iff their
+Voronoi cells share an edge) computed via `delaunator = "1"`.
+
+Why a crate over deriving adjacency from the existing Sutherland-Hodgman
+clipping (user's call): `delaunator` is correct-by-construction, tiny,
+and the triangulation is reusable if a future `vertices()` rewrite wants
+O(N log N). Degenerate configs (<3 seeds, or all-collinear → empty
+triangulation) fall back to the every-other-seed behavior.
+
+## ADR-011 — Voronoi seed persistence stores the full lattice config on the Sheet (sprint 15, for the follow-up drag+persist sprint)
+**Date:** 2026-05-21
+**Status:** Accepted (design); implementation deferred to the drag+persist sprint.
+
+The engine's `lattice_for` rebuilds the lattice from just `LatticeKind`
+(`for_kind(Voronoi)` → default 8 seeds), so custom/dragged seeds can't
+survive eval or save/load today. Decision: generalize the `Sheet` to
+carry its lattice's full configuration (not just the kind), so dragged
+Voronoi seeds persist and the engine's eval-time lattice matches the UI.
+This is a `.tscl` format change — requires a `manifest.json` version bump
+and an upgrade path (older files → default seeds). Larger than ADR-010;
+sequenced as a separate sprint after v157.

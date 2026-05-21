@@ -471,12 +471,36 @@ mod handle_tests {
     }
 
     #[test]
-    fn voronoi_handle_neighbors_returns_other_seeds() {
+    fn voronoi_handle_neighbors_are_delaunay() {
         let h = LatticeHandle::for_kind(LatticeKind::Voronoi).unwrap();
         let n = h.neighbor_addresses("V(0)").unwrap();
-        // First-cut: every other seed is a neighbor. Default has 8 seeds.
-        assert_eq!(n.len(), 7);
-        assert!(!n.contains(&"V(0)".to_string()));
+        // v157: Delaunay adjacency — a strict subset of "all 7 others"
+        // (a seed neighbors only those whose cells share an edge). The
+        // exact set is pinned by `voronoi::tests::delaunay_neighbors_on_
+        // known_config`; here we assert the dispatch returns a sane,
+        // self-excluding, in-range, deduplicated neighbor set.
+        assert!(
+            !n.is_empty(),
+            "a 2-D seed has at least one Delaunay neighbor"
+        );
+        assert!(
+            n.len() < 7,
+            "Delaunay adjacency is a strict subset of all others"
+        );
+        assert!(!n.contains(&"V(0)".to_string()), "no self-adjacency");
+        let mut seen = std::collections::HashSet::new();
+        for addr in &n {
+            assert!(
+                seen.insert(addr.clone()),
+                "neighbors must be unique: {addr}"
+            );
+            let idx: u32 = addr
+                .trim_start_matches("V(")
+                .trim_end_matches(')')
+                .parse()
+                .unwrap();
+            assert!(idx < 8, "neighbor index in range for the 8-seed default");
+        }
     }
 
     #[test]

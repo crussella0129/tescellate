@@ -14,3 +14,4 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 smallvec = { workspace = true }
 glam = { workspace = true }
+delaunator = "1"
