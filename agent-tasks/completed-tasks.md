@@ -130,4 +130,10 @@
 - **Description:** Two fixes the user surfaced after running the v150 release build. (1) Hex `paint_hex` + triangle `draw_triangle_grid` text passes now skip widget cells, so a Toggle's bool source ("TRUE"/"FALSE") no longer prints behind the checkbox (square already had this gate from v141). (2) `TescellateApp::new` enforces a widget-fit sizing floor: square columns hosting a Slider/Button/ProgressBar bump to ≥ 160 px, host rows to ≥ 28 px, so the launch-demo sliders render legibly instead of cramped at the 64 px default. The floor runs before boot-rehydrate, so a user's saved column widths still win.
 - **Completed:** 2026-05-21T02:15:00Z
 - **Files modified:** apps/tescellate-ui/src/app.rs
-- **Commit:** `75a38bd`
+- **Commit:** `75a38bd` (PR #182 squash-merged as `54d346f`)
+
+## T-901..T-906 (sprint 9) — Voronoi widgets + Carbide label fix
+- **Description:** (1) Renamed the language-picker label "Excelite" → "Carbide" in `engine_label` (the `EngineKind::ExcelLite` enum variant stays for serialization back-compat). (2) Closed the four-lattice widget symmetry: `voronoi_widgets: Widgets<VoronoiCoord>` on `TescellateApp` + `UiSnapshot` (`#[serde(default)]`); capture/restore round-trip; `draw_voronoi_grid` gained a widget-skip gate on the text pass + a Button/Toggle render pass inscribed (120×24) at each widget cell's centroid; clicks on widget cells route to the widget, not select/edit. Demo Toggle seeded on `V(5)` (cell now `"FALSE"`). Tests: `widgets_generic_with_voronoi_coord_round_trip` + extended snapshot fixture. 250/250 UI tests pass.
+- **Completed:** 2026-05-21T02:55:00Z
+- **Files modified:** apps/tescellate-ui/src/app.rs, apps/tescellate-ui/src/state_io.rs, apps/tescellate-ui/src/widget.rs
+- **Commit:** `b685d32`

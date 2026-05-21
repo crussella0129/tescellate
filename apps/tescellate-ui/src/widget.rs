@@ -380,6 +380,21 @@ mod tests {
     }
 
     #[test]
+    fn widgets_generic_with_voronoi_coord_round_trip() {
+        use tescellate_tess::voronoi::VoronoiCoord;
+        let mut w: Widgets<VoronoiCoord> = Widgets::default();
+        w.set_toggle(VoronoiCoord(5), true);
+        w.set_button(VoronoiCoord(0), true);
+
+        let json = serde_json::to_string(&w).unwrap();
+        let back: Widgets<VoronoiCoord> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.count(), 2);
+        assert!(back.is_toggle(VoronoiCoord(5)));
+        assert!(back.is_button(VoronoiCoord(0)));
+    }
+
+    #[test]
     fn widgets_generic_with_tri_coord_round_trip() {
         use tescellate_tess::triangle::TriCoord;
         let mut w: Widgets<TriCoord> = Widgets::default();
