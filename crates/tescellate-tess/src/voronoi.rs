@@ -83,6 +83,48 @@ impl VoronoiLattice {
     pub fn is_empty(&self) -> bool {
         self.seeds.is_empty()
     }
+
+    /// Per-seed Delaunay neighbor sets: `adjacency[i]` is the ascending
+    /// list of seed indices whose Voronoi cells share an edge with seed
+    /// `i` (the Delaunay graph is the dual of the Voronoi diagram).
+    ///
+    /// `delaunator` needs ≥3 non-collinear points; for a degenerate
+    /// config (<3 seeds, or all-collinear → empty triangulation) we fall
+    /// back to every-other-seed, preserving the pre-v157 contract for
+    /// those edge cases.
+    fn delaunay_adjacency(&self) -> Vec<Vec<u32>> {
+        let n = self.seeds.len();
+        let mut adj: Vec<std::collections::BTreeSet<u32>> = vec![Default::default(); n];
+
+        if n >= 3 {
+            let points: Vec<delaunator::Point> = self
+                .seeds
+                .iter()
+                .map(|s| delaunator::Point {
+                    x: s.x as f64,
+                    y: s.y as f64,
+                })
+                .collect();
+            let tri = delaunator::triangulate(&points);
+            for t in tri.triangles.chunks_exact(3) {
+                let (a, b, c) = (t[0] as u32, t[1] as u32, t[2] as u32);
+                for (u, v) in [(a, b), (b, c), (c, a)] {
+                    adj[u as usize].insert(v);
+                    adj[v as usize].insert(u);
+                }
+            }
+        }
+
+        // Degenerate fallback: no triangulation produced any edge.
+        let no_edges = adj.iter().all(|s| s.is_empty());
+        if no_edges && n > 1 {
+            return (0..n)
+                .map(|i| (0..n as u32).filter(|&j| j != i as u32).collect())
+                .collect();
+        }
+
+        adj.into_iter().map(|s| s.into_iter().collect()).collect()
+    }
 }
 
 impl Default for VoronoiLattice {
@@ -189,16 +231,20 @@ impl Lattice for VoronoiLattice {
     }
 
     fn neighbors(&self, c: Self::Coord) -> SmallVec<[(Direction, Self::Coord); 8]> {
-        // First-cut: every other seed is a neighbor. Delaunay-driven
-        // adjacency (only seeds whose Voronoi cells share an edge) is a
-        // v150 tightening. Direction labels don't have natural meaning
-        // on a Voronoi diagram; `Direction::N` is a placeholder.
-        let i = c.0;
+        // Delaunay adjacency (v157): two seeds neighbor iff their Voronoi
+        // cells share an edge, i.e. they share a Delaunay-triangulation
+        // edge (the Delaunay graph is the dual of the Voronoi diagram).
+        // Direction labels have no natural meaning on a Voronoi diagram;
+        // `Direction::N` is a placeholder. Neighbors come back in
+        // ascending seed-index order for determinism.
+        let i = c.0 as usize;
         let mut out: SmallVec<[(Direction, VoronoiCoord); 8]> = SmallVec::new();
-        for j in 0..self.seeds.len() as u32 {
-            if j != i {
-                out.push((Direction::N, VoronoiCoord(j)));
-            }
+        if i >= self.seeds.len() {
+            return out;
+        }
+        let adjacency = self.delaunay_adjacency();
+        for &j in &adjacency[i] {
+            out.push((Direction::N, VoronoiCoord(j)));
         }
         out
     }
@@ -294,6 +340,67 @@ mod tests {
             max: Vec2::new(20.0, 20.0),
         };
         VoronoiLattice::new(seeds, bounds).unwrap()
+    }
+
+    fn bounds() -> Rect {
+        Rect {
+            min: Vec2::new(-10.0, -10.0),
+            max: Vec2::new(20.0, 20.0),
+        }
+    }
+
+    fn neighbor_indices(v: &VoronoiLattice, i: u32) -> Vec<u32> {
+        let mut out: Vec<u32> = v
+            .neighbors(VoronoiCoord(i))
+            .into_iter()
+            .map(|(_, c)| c.0)
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
+    #[test]
+    fn delaunay_neighbors_on_known_config() {
+        // 4 square corners (0..3) + a centre seed (4). The centre breaks
+        // the cocircular corners into 4 triangles, giving an unambiguous
+        // Delaunay graph: centre ↔ all corners; each corner ↔ centre + its
+        // two edge-adjacent corners (NOT the diagonal one).
+        let seeds = vec![
+            Vec2::new(0.0, 0.0),   // 0
+            Vec2::new(10.0, 0.0),  // 1
+            Vec2::new(0.0, 10.0),  // 2
+            Vec2::new(10.0, 10.0), // 3
+            Vec2::new(5.0, 5.0),   // 4 centre
+        ];
+        let v = VoronoiLattice::new(seeds, bounds()).unwrap();
+        assert_eq!(neighbor_indices(&v, 4), vec![0, 1, 2, 3]);
+        assert_eq!(neighbor_indices(&v, 0), vec![1, 2, 4]);
+        assert_eq!(neighbor_indices(&v, 1), vec![0, 3, 4]);
+        assert_eq!(neighbor_indices(&v, 2), vec![0, 3, 4]);
+        assert_eq!(neighbor_indices(&v, 3), vec![1, 2, 4]);
+    }
+
+    #[test]
+    fn delaunay_neighbors_two_seeds_fallback() {
+        // <3 seeds → no triangulation → every-other-seed fallback.
+        let seeds = vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0)];
+        let v = VoronoiLattice::new(seeds, bounds()).unwrap();
+        assert_eq!(neighbor_indices(&v, 0), vec![1]);
+        assert_eq!(neighbor_indices(&v, 1), vec![0]);
+    }
+
+    #[test]
+    fn delaunay_neighbors_collinear_fallback() {
+        // 3 collinear seeds → empty triangulation → fallback.
+        let seeds = vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(5.0, 0.0),
+            Vec2::new(10.0, 0.0),
+        ];
+        let v = VoronoiLattice::new(seeds, bounds()).unwrap();
+        assert_eq!(neighbor_indices(&v, 0), vec![1, 2]);
+        assert_eq!(neighbor_indices(&v, 1), vec![0, 2]);
+        assert_eq!(neighbor_indices(&v, 2), vec![0, 1]);
     }
 
     #[test]
