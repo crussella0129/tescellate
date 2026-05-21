@@ -124,4 +124,10 @@
 - **Description:** Threaded the Voronoi engine bringup all the way through to the UI. `impl Coord for VoronoiCoord` in `selection.rs` (degenerate `min_max` / `rect_cells` — Voronoi is single-cell-selection only this sprint). `TescellateApp` gains `voronoi_lattice: VoronoiLattice` and `voronoi: Sheet<VoronoiCoord>` fields. `ActiveSheet::Voronoi`, `CellId::Voronoi(VoronoiCoord)`, `ActiveSheetTag::Voronoi` variants threaded through every match in `app.rs` and `state_io.rs`. New `draw_voronoi_grid` render fn: convex-polygon fill (per-seed palette), centroid text, selection stroke, double-click-to-edit overlay. 4th "Voronoi" tab added to the tab bar. Eight demo seeds (`V(0)=Plains, V(1)=Forest, V(2)=42, V(3)=Tundra, V(4)=V(2)+8, V(5)=Desert, V(6)=Coast, V(7)=Highlands`) showcase mixed labels + a formula. v151 follow-up: widgets / formatting / range selection / fill drag / copy-paste on Voronoi.
 - **Completed:** 2026-05-21T01:30:00Z
 - **Files modified:** apps/tescellate-ui/src/app.rs, apps/tescellate-ui/src/selection.rs, apps/tescellate-ui/src/state_io.rs
-- **Commit:** PENDING
+- **Commit:** (PR #181 squash-merged as `5cd2053`)
+
+## T-801..T-804 (sprint 8) — visual polish from the v150 release review
+- **Description:** Two fixes the user surfaced after running the v150 release build. (1) Hex `paint_hex` + triangle `draw_triangle_grid` text passes now skip widget cells, so a Toggle's bool source ("TRUE"/"FALSE") no longer prints behind the checkbox (square already had this gate from v141). (2) `TescellateApp::new` enforces a widget-fit sizing floor: square columns hosting a Slider/Button/ProgressBar bump to ≥ 160 px, host rows to ≥ 28 px, so the launch-demo sliders render legibly instead of cramped at the 64 px default. The floor runs before boot-rehydrate, so a user's saved column widths still win.
+- **Completed:** 2026-05-21T02:15:00Z
+- **Files modified:** apps/tescellate-ui/src/app.rs
+- **Commit:** `75a38bd`
