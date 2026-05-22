@@ -197,3 +197,9 @@
 - **Completed:** 2026-05-22T16:48:00Z
 - **Files modified:** apps/tescellate-ui/src/app.rs
 - **Commit:** `ab7c5df`
+
+## T-008 (sprint 16) — seed-handle drag + engine-synced cache
+- **Description:** `draw_voronoi_grid` gained a seed-handle pass — per-seed `ui.interact` draggable dot (highlighted while dragged); on drag, `apply_seed_drag` → `engine.set_voronoi_seeds` → on Ok resync `voronoi_lattice` via `synced_voronoi_lattice` + `mark_dirty` (autosave), on Err snap-back. `rebind_sheet_ids` Voronoi arm resyncs the cache from the loaded engine config (anti-drift, ADR-012). Removed the T-007 `dead_code` gate. 1 new test (`synced_voronoi_lattice_matches_engine_config`); 261 UI tests pass.
+- **Completed:** 2026-05-22T16:58:00Z
+- **Files modified:** apps/tescellate-ui/src/app.rs
+- **Commit:** `68999a0`
