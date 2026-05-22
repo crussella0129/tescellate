@@ -203,3 +203,9 @@
 - **Completed:** 2026-05-22T16:58:00Z
 - **Files modified:** apps/tescellate-ui/src/app.rs
 - **Commit:** `68999a0`
+
+## T-009 (sprint 16) — ADR-012
+- **Description:** Recorded ADR-012 in `decisions.md` (config on Sheet, engine-authoritative seeds, UI lattice as cache, set_voronoi_seeds rebuild_dag correctness, `.tscl` v2 upgrade path, scope/deferrals).
+- **Completed:** 2026-05-22T17:02:00Z
+- **Files modified:** decisions.md
+- **Commit:** `19e1162`
