@@ -238,6 +238,9 @@ impl WorkbookEngine {
             name: name.into(),
             lattice,
             extent,
+            // T-004 sets this per-kind (Voronoi → default config); for now
+            // every kind starts `None` and T-004 overrides for Voronoi.
+            lattice_config: None,
             cells: HashMap::new(),
         };
         self.workbook.sheets.insert(id, sheet);

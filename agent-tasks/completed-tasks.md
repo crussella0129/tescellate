@@ -155,3 +155,9 @@
 - **Completed:** 2026-05-21T04:45:00Z
 - **Files modified:** apps/tescellate-ui/src/grid.rs, apps/tescellate-ui/src/app.rs
 - **Commit:** `48bed76`
+
+## T-001 (sprint 16) — VoronoiConfig + LatticeConfig serde PODs
+- **Description:** Serde-stable `VoronoiConfig { seeds: Vec<[f32;2]>, bounds: [f32;4] }` + `enum LatticeConfig { Voronoi(VoronoiConfig) }` in `voronoi.rs` (no glam-serde dependency). `VoronoiConfig::to_lattice()` delegates to `VoronoiLattice::new` (reuses coincident/degenerate validation); `From<&VoronoiLattice>` for the reverse. Re-exported from tess `lib.rs`. 4 unit tests (happy, reject-coincident, lattice round-trip, JSON round-trip).
+- **Completed:** 2026-05-22T16:00:00Z
+- **Files modified:** crates/tescellate-tess/src/voronoi.rs, crates/tescellate-tess/src/lib.rs
+- **Commit:** `cb84d6c`
