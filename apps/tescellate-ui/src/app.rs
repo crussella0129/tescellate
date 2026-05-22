@@ -5925,6 +5925,40 @@ fn voronoi_address(c: VoronoiCoord) -> String {
     format!("V({})", c.0)
 }
 
+/// Inset (lattice units) kept between a dragged seed and the bounding box,
+/// so a seed can't be dragged onto the boundary where its cell degenerates.
+const VORONOI_DRAG_INSET: f32 = 2.0;
+
+/// Apply a seed-handle drag: return a copy of `seeds` with element `idx`
+/// translated by `delta` and clamped to `bounds` (`[min_x, min_y, max_x,
+/// max_y]`) minus [`VORONOI_DRAG_INSET`]. An out-of-range `idx` returns the
+/// seeds unchanged.
+///
+/// Pure (no egui) so the clamp is unit-testable. It does NOT check seed
+/// coincidence — that's the engine's `set_voronoi_seeds` job, which rejects
+/// (snap-back) on a degenerate result. Assumes 1 lattice unit == 1 screen
+/// pixel with no zoom (the Voronoi renderer applies no scale); a future
+/// zoom feature must scale `delta` before calling this.
+// Wired into `draw_voronoi_grid`'s seed-handle drag pass by T-008.
+#[allow(dead_code)]
+fn apply_seed_drag(
+    seeds: &[[f32; 2]],
+    idx: usize,
+    delta: [f32; 2],
+    bounds: [f32; 4],
+) -> Vec<[f32; 2]> {
+    let mut out = seeds.to_vec();
+    if let Some(s) = out.get_mut(idx) {
+        let min_x = bounds[0] + VORONOI_DRAG_INSET;
+        let min_y = bounds[1] + VORONOI_DRAG_INSET;
+        let max_x = bounds[2] - VORONOI_DRAG_INSET;
+        let max_y = bounds[3] - VORONOI_DRAG_INSET;
+        s[0] = (s[0] + delta[0]).clamp(min_x, max_x);
+        s[1] = (s[1] + delta[1]).clamp(min_y, max_y);
+    }
+    out
+}
+
 /// Whether `coord` is inside the currently-drawn triangle window.
 /// Mirrors `hex_in_view` — render and hit-test agree on the same bound.
 fn triangle_in_view(c: TriCoord) -> bool {
@@ -6051,6 +6085,32 @@ fn merge_hex_format_edits(prev: Vec<HexFormatEdit>, new: Vec<HexFormatEdit>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apply_seed_drag_translates_indexed_seed() {
+        let seeds = vec![[0.0, 0.0], [10.0, 10.0], [-5.0, 5.0]];
+        let out = apply_seed_drag(&seeds, 1, [3.0, -4.0], [-100.0, -100.0, 100.0, 100.0]);
+        assert_eq!(out[1], [13.0, 6.0]);
+        // Other seeds untouched.
+        assert_eq!(out[0], seeds[0]);
+        assert_eq!(out[2], seeds[2]);
+    }
+
+    #[test]
+    fn apply_seed_drag_clamps_to_bounds() {
+        let seeds = vec![[0.0, 0.0]];
+        // A huge delta is pinned to the inset boundary, never outside.
+        let out = apply_seed_drag(&seeds, 0, [9999.0, -9999.0], [-50.0, -50.0, 50.0, 50.0]);
+        assert_eq!(out[0][0], 50.0 - VORONOI_DRAG_INSET);
+        assert_eq!(out[0][1], -50.0 + VORONOI_DRAG_INSET);
+    }
+
+    #[test]
+    fn apply_seed_drag_out_of_range_idx_noop() {
+        let seeds = vec![[1.0, 2.0], [3.0, 4.0]];
+        let out = apply_seed_drag(&seeds, 9, [5.0, 5.0], [-100.0, -100.0, 100.0, 100.0]);
+        assert_eq!(out, seeds);
+    }
 
     #[test]
     fn format_number_drops_the_point_for_integers() {

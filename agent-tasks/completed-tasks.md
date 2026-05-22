@@ -185,3 +185,9 @@
 - **Completed:** 2026-05-22T16:35:00Z
 - **Files modified:** crates/tescellate-formula/src/engine.rs
 - **Commit:** `d18e431`
+
+## T-006 (sprint 16) — .tscl FORMAT_VERSION 1→2
+- **Description:** `FORMAT_VERSION = 2` + module doc version-history (v2 = sheets gained `lattice_config`; serde-default upgrade path for v1 files; bump exists so older builds reject v2 rather than dropping seeds). New `voronoi_seeds_survive_full_round_trip` test; existing v0-load (`reads_v0_as_empty_ui_state`) and v99-reject (`refuses_unknown_format_version`) tests still green.
+- **Completed:** 2026-05-22T16:42:00Z
+- **Files modified:** crates/tescellate-store/src/lib.rs
+- **Commit:** `60c2637`
