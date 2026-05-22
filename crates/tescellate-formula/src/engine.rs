@@ -2244,4 +2244,29 @@ mod tests {
         eng.workbook.sheets.get_mut(&sid).unwrap().lattice_config = None;
         assert_eq!(eng.voronoi_lattice(sid).unwrap().len(), 8);
     }
+
+    // --- Integration (Component C+D): drag → persist → reload → eval lattice ---
+
+    #[test]
+    fn drag_then_persist_round_trip() {
+        // The full path: set_voronoi_seeds → Sheet → workbook.json (save_bytes)
+        // → reload (open_bytes) → eval-time lattice reflects the dragged seeds.
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        let new = vec![[3.0, 4.0], [40.0, -8.0], [-12.0, 33.0]];
+        eng.set_voronoi_seeds(sid, new.clone()).unwrap();
+
+        let bytes = eng
+            .save_bytes(&tescellate_store::UiState::default())
+            .unwrap();
+
+        let mut reloaded = WorkbookEngine::new();
+        reloaded.open_bytes(&bytes).unwrap();
+        let lat = reloaded
+            .voronoi_lattice(sid)
+            .expect("reloaded Voronoi sheet has a lattice");
+        let got: Vec<[f32; 2]> = lat.seeds.iter().map(|s| [s.x, s.y]).collect();
+        assert_eq!(got, new, "dragged seeds must survive save → reload");
+    }
 }
