@@ -167,3 +167,9 @@
 - **Completed:** 2026-05-22T16:05:00Z
 - **Files modified:** crates/tescellate-core/src/lib.rs, crates/tescellate-formula/src/engine.rs, crates/tescellate-store/src/lib.rs
 - **Commit:** `4e0a052`
+
+## T-003 (sprint 16) — lattice_for from stored config
+- **Description:** `lattice_for` matches `(lattice, &lattice_config)`: Voronoi + `Some(Voronoi(cfg))` → `cfg.to_lattice()` (eval uses custom seeds); `None` → `for_kind` default 8 seeds. New `SetCellError::BadLatticeConfig(String)` for a corrupt config (NOT `UnsupportedLattice`). 3 unit tests (stored 3-seed config, None→default 8, corrupt→`BadLatticeConfig`).
+- **Completed:** 2026-05-22T16:12:00Z
+- **Files modified:** crates/tescellate-formula/src/engine.rs
+- **Commit:** `ad93eb2`

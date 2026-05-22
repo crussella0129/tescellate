@@ -15,7 +15,8 @@ use tescellate_core::{
     WorkbookId, WorkbookMeta,
 };
 use tescellate_tess::square::SquareCoord;
-use tescellate_tess::{LatticeConfig, LatticeHandle, LatticeKind, ParsedCoord};
+use tescellate_tess::voronoi::VoronoiLattice;
+use tescellate_tess::{LatticeConfig, LatticeHandle, LatticeKind, ParsedCoord, VoronoiConfig};
 
 pub struct WorkbookEngine {
     pub workbook: Workbook,
@@ -233,14 +234,22 @@ impl WorkbookEngine {
         extent: SheetExtent,
     ) -> SheetId {
         let id = SheetId(self.workbook.sheets.len() as u32 + 1);
+        // Voronoi sheets are born with an explicit seed config (the default
+        // 8-seed lattice) so the engine and the UI agree from boot and the
+        // first drag mutates a concrete config (ADR-011/012). Uniform tilings
+        // need no per-sheet config.
+        let lattice_config = match lattice {
+            LatticeKind::Voronoi => Some(LatticeConfig::Voronoi(VoronoiConfig::from(
+                &VoronoiLattice::default(),
+            ))),
+            _ => None,
+        };
         let sheet = Sheet {
             id,
             name: name.into(),
             lattice,
             extent,
-            // T-004 sets this per-kind (Voronoi → default config); for now
-            // every kind starts `None` and T-004 overrides for Voronoi.
-            lattice_config: None,
+            lattice_config,
             cells: HashMap::new(),
         };
         self.workbook.sheets.insert(id, sheet);
@@ -1968,5 +1977,27 @@ mod tests {
             eng.lattice_for(sid),
             Err(SetCellError::BadLatticeConfig(_))
         ));
+    }
+
+    // --- T-004: Voronoi sheets are seeded with a default config at creation ---
+
+    #[test]
+    fn add_voronoi_sheet_seeds_default_config() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        let expected = LatticeConfig::Voronoi(VoronoiConfig::from(&VoronoiLattice::default()));
+        assert_eq!(
+            eng.workbook.sheets.get(&sid).unwrap().lattice_config,
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn add_square_sheet_has_no_lattice_config() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("S", LatticeKind::Square);
+        assert_eq!(eng.workbook.sheets.get(&sid).unwrap().lattice_config, None);
     }
 }
