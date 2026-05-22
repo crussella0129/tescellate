@@ -87,8 +87,8 @@ pub struct Manifest {
     pub engines: Vec<EngineKind>,
 }
 
-/// Persist a workbook together with an opaque UI state. Writes v1 of the
-/// format. `ui` is serialized verbatim into `ui.json`; pass
+/// Persist a workbook together with an opaque UI state. Writes the current
+/// [`FORMAT_VERSION`]. `ui` is serialized verbatim into `ui.json`; pass
 /// [`UiState::default()`] when no UI state is being tracked.
 pub fn save_full<W: Write + Seek>(
     workbook: &Workbook,
@@ -291,6 +291,69 @@ mod tests {
             back.sheets.get(&sid).unwrap().lattice_config,
             Some(cfg),
             "custom Voronoi seeds must survive save_full → load_full"
+        );
+    }
+
+    #[test]
+    fn reads_v1_voronoi_without_lattice_config_key() {
+        // A genuine v1 file: a Voronoi sheet whose `workbook.json` *physically
+        // omits* the `lattice_config` key (not `null`). The v2 loader must
+        // accept it and default the field to `None`. (Serializing a current
+        // struct would emit the key, so we strip it from the JSON by hand.)
+        let sid = SheetId(1);
+        let mut sheets = HashMap::new();
+        sheets.insert(
+            sid,
+            Sheet {
+                id: sid,
+                name: "Vor".into(),
+                lattice: LatticeKind::Voronoi,
+                extent: tescellate_core::SheetExtent::Unbounded,
+                lattice_config: None,
+                cells: HashMap::new(),
+            },
+        );
+        let wb = Workbook {
+            id: WorkbookId(1),
+            meta: WorkbookMeta {
+                title: "v1".into(),
+                created_at: "2026-05-22T00:00:00Z".into(),
+                format_version: 1,
+            },
+            default_engine: EngineKind::ExcelLite,
+            sheet_order: vec![sid],
+            sheets,
+        };
+        let mut v = serde_json::to_value(&wb).unwrap();
+        // Strip `lattice_config` from the (only) sheet object so the key is
+        // physically absent in the bytes we pack.
+        {
+            let sheets_obj = v.get_mut("sheets").unwrap().as_object_mut().unwrap();
+            let sheet_val = sheets_obj.values_mut().next().unwrap();
+            let removed = sheet_val.as_object_mut().unwrap().remove("lattice_config");
+            assert!(removed.is_some(), "precondition: key was present to strip");
+        }
+        let wb_bytes = serde_json::to_vec(&v).unwrap();
+
+        let mut v1_zip = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(Cursor::new(&mut v1_zip));
+            let opts = zip::write::SimpleFileOptions::default();
+            w.start_file("manifest.json", opts).unwrap();
+            w.write_all(br#"{"format_version": 1, "engines": ["excel_lite"]}"#)
+                .unwrap();
+            w.start_file("workbook.json", opts).unwrap();
+            w.write_all(&wb_bytes).unwrap();
+            w.start_file("ui.json", opts).unwrap();
+            w.write_all(b"{}").unwrap();
+            w.finish().unwrap();
+        }
+
+        let (back, _ui) = load_full_from_bytes(&v1_zip).unwrap();
+        assert_eq!(
+            back.sheets.get(&sid).unwrap().lattice_config,
+            None,
+            "a v1 Voronoi sheet with no lattice_config key must load as None"
         );
     }
 
