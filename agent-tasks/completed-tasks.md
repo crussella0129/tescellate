@@ -191,3 +191,9 @@
 - **Completed:** 2026-05-22T16:42:00Z
 - **Files modified:** crates/tescellate-store/src/lib.rs
 - **Commit:** `60c2637`
+
+## T-007 (sprint 16) — apply_seed_drag pure helper
+- **Description:** `apply_seed_drag(seeds, idx, delta, bounds) -> Vec<[f32;2]>` translates seed `idx` by `delta`, clamps into `bounds` minus `VORONOI_DRAG_INSET`, out-of-range idx → unchanged. Pure (egui-free, no-zoom precondition documented per C-006); gated `#[allow(dead_code)]` until T-008 wires it. 3 unit tests (translate, clamp, oob noop).
+- **Completed:** 2026-05-22T16:48:00Z
+- **Files modified:** apps/tescellate-ui/src/app.rs
+- **Commit:** `ab7c5df`

@@ -4953,6 +4953,69 @@ impl TescellateApp {
             }
         }
 
+        // Seed-handle pass — a draggable dot at each Voronoi seed. Dragging a
+        // handle moves that seed; the engine rebuilds the lattice + recomputes
+        // dependents (ADR-012), then we resync the render cache. A move that
+        // would make two seeds coincident is rejected by the engine, so the
+        // handle snaps back (cache left unchanged). The handles draw last so
+        // they sit on top of the cell fills and selection stroke.
+        {
+            let seeds: Vec<[f32; 2]> = self
+                .voronoi_lattice
+                .seeds
+                .iter()
+                .map(|s| [s.x, s.y])
+                .collect();
+            let bounds = [
+                self.voronoi_lattice.bounds.min.x,
+                self.voronoi_lattice.bounds.min.y,
+                self.voronoi_lattice.bounds.max.x,
+                self.voronoi_lattice.bounds.max.y,
+            ];
+            let radius = 5.0;
+            let mut pending_drag: Option<(usize, [f32; 2])> = None;
+            for (i, s) in seeds.iter().enumerate() {
+                let center = egui::pos2(origin.x + s[0], origin.y + s[1]);
+                let handle_rect =
+                    egui::Rect::from_center_size(center, egui::vec2(2.0 * radius, 2.0 * radius));
+                let resp = ui.interact(
+                    handle_rect,
+                    ui.id().with(("vor_seed", i)),
+                    egui::Sense::drag(),
+                );
+                let dragging = resp.dragged();
+                let fill = if dragging {
+                    egui::Color32::from_rgb(70, 120, 220)
+                } else {
+                    egui::Color32::from_rgb(40, 40, 50)
+                };
+                painter.circle(
+                    center,
+                    radius,
+                    fill,
+                    egui::Stroke::new(1.5, egui::Color32::WHITE),
+                );
+                if dragging {
+                    let d = resp.drag_delta();
+                    if d != egui::Vec2::ZERO {
+                        pending_drag = Some((i, [d.x, d.y]));
+                    }
+                }
+            }
+            if let Some((i, delta)) = pending_drag {
+                let moved = apply_seed_drag(&seeds, i, delta, bounds);
+                if self
+                    .engine
+                    .set_voronoi_seeds(self.voronoi.sheet_id, moved)
+                    .is_ok()
+                {
+                    self.voronoi_lattice =
+                        synced_voronoi_lattice(&self.engine, self.voronoi.sheet_id);
+                    self.mark_dirty();
+                }
+            }
+        }
+
         // In-cell edit overlay — a small text field centred on the
         // selected cell's centroid.
         if let Some(edit) = &mut self.edit {
@@ -5126,6 +5189,10 @@ impl TescellateApp {
                     }
                     LatticeKind::Voronoi => {
                         self.voronoi.sheet_id = *sid;
+                        // Resync the render cache from the freshly-loaded
+                        // engine config so dragged/persisted seeds show up
+                        // (ADR-012 single source of truth).
+                        self.voronoi_lattice = synced_voronoi_lattice(&self.engine, *sid);
                     }
                     _ => {}
                 }
@@ -5939,8 +6006,6 @@ const VORONOI_DRAG_INSET: f32 = 2.0;
 /// (snap-back) on a degenerate result. Assumes 1 lattice unit == 1 screen
 /// pixel with no zoom (the Voronoi renderer applies no scale); a future
 /// zoom feature must scale `delta` before calling this.
-// Wired into `draw_voronoi_grid`'s seed-handle drag pass by T-008.
-#[allow(dead_code)]
 fn apply_seed_drag(
     seeds: &[[f32; 2]],
     idx: usize,
@@ -5957,6 +6022,14 @@ fn apply_seed_drag(
         s[1] = (s[1] + delta[1]).clamp(min_y, max_y);
     }
     out
+}
+
+/// The Voronoi render cache for `sid`, read from the engine (the single
+/// source of truth for seed geometry, ADR-012). Falls back to the default
+/// lattice if the sheet has no Voronoi config. Pure (no egui) so the
+/// load/post-drag resync is unit-testable.
+fn synced_voronoi_lattice(engine: &WorkbookEngine, sid: SheetId) -> VoronoiLattice {
+    engine.voronoi_lattice(sid).unwrap_or_default()
 }
 
 /// Whether `coord` is inside the currently-drawn triangle window.
@@ -6110,6 +6183,20 @@ mod tests {
         let seeds = vec![[1.0, 2.0], [3.0, 4.0]];
         let out = apply_seed_drag(&seeds, 9, [5.0, 5.0], [-100.0, -100.0, 100.0, 100.0]);
         assert_eq!(out, seeds);
+    }
+
+    #[test]
+    fn synced_voronoi_lattice_matches_engine_config() {
+        // C-005: the load/post-drag resync reflects the engine's stored seeds,
+        // not the default — the anti-drift guard for the dual-source split.
+        let mut engine = WorkbookEngine::new();
+        engine.new_workbook();
+        let sid = engine.add_sheet("V", LatticeKind::Voronoi);
+        let new = vec![[1.0, 2.0], [30.0, -4.0], [-5.0, 25.0]];
+        engine.set_voronoi_seeds(sid, new.clone()).unwrap();
+        let lat = synced_voronoi_lattice(&engine, sid);
+        let got: Vec<[f32; 2]> = lat.seeds.iter().map(|s| [s.x, s.y]).collect();
+        assert_eq!(got, new);
     }
 
     #[test]
