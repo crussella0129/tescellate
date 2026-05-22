@@ -179,3 +179,9 @@
 - **Completed:** 2026-05-22T16:18:00Z
 - **Files modified:** crates/tescellate-formula/src/engine.rs
 - **Commit:** `9220b78`
+
+## T-005 (sprint 16) — set_voronoi_seeds + voronoi_lattice getter
+- **Description:** `set_voronoi_seeds(sheet, seeds)` validates via `to_lattice` before mutating, preserves bounds, stores the new config, then resets + `rebuild_dag()` (re-resolves every cell's `:NEIGHBORS`/radius edges against the new geometry — the C-001 fix) and recomputes the sheet's cells (topo order + volatile pass), returning the changed refs. `voronoi_lattice(sheet)` getter returns the stored lattice (or default-8 if `None`), `None` for non-Voronoi. 8 unit tests incl. the deterministic Delaunay adjacency flip (V0 sum 20→30 on a seed move) proving stale-edge recompute is fixed.
+- **Completed:** 2026-05-22T16:35:00Z
+- **Files modified:** crates/tescellate-formula/src/engine.rs
+- **Commit:** `d18e431`

@@ -3,14 +3,22 @@
 //! A `.tscl` file is a zip archive with this layout:
 //!
 //! ```text
-//! manifest.json   { "format_version": 1, "engines": [...] }
+//! manifest.json   { "format_version": 2, "engines": [...] }
 //! workbook.json   serialized `Workbook`
 //! ui.json         opaque [`UiState`] JSON (added in v1)
 //! ```
 //!
-//! v0 files (manifest.format_version == 0) predate `ui.json` and load with
-//! [`UiState::default()`]. Future phases add `sheets/<id>.json` for large
-//! workbooks, `formulas/native/<hash>.rs` for cached Rust compilations, and
+//! ## Version history
+//! - **v0** — predates `ui.json`; loads with [`UiState::default()`].
+//! - **v1** — adds the opaque `ui.json` sidecar (ADR-001).
+//! - **v2** — `Workbook`'s sheets gained `lattice_config` (Voronoi seed
+//!   persistence, ADR-011/012). The field is `#[serde(default)]`, so a v1
+//!   `workbook.json` (no key) loads with `lattice_config == None` → the
+//!   default Voronoi lattice. The bump exists so *older* builds reject v2
+//!   files rather than silently dropping seed data on a round-trip.
+//!
+//! Future phases add `sheets/<id>.json` for large workbooks,
+//! `formulas/native/<hash>.rs` for cached Rust compilations, and
 //! `trust.json` for the native-formula trust manifest.
 
 use serde::{Deserialize, Serialize};
@@ -19,9 +27,10 @@ use tescellate_core::{EngineKind, Workbook};
 use thiserror::Error;
 
 /// Highest format version this build can write and read at full fidelity.
-/// v0 files are still readable for migration; reads of v0 fill in
-/// [`UiState::default()`].
-pub const FORMAT_VERSION: u32 = 1;
+/// v0/v1 files are still readable for migration; reads of v0 fill in
+/// [`UiState::default()`], and a v1 `workbook.json` loads with
+/// `lattice_config == None` via serde default.
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Opaque UI-side state ridden alongside the workbook inside a `.tscl`.
 ///
@@ -241,6 +250,48 @@ mod tests {
         let a1 = sheet.cells.get("A1").unwrap();
         assert_eq!(a1.source.as_deref(), Some("=42"));
         assert_eq!(a1.value, CellValue::Number(42.0));
+    }
+
+    #[test]
+    fn voronoi_seeds_survive_full_round_trip() {
+        use tescellate_tess::{LatticeConfig, VoronoiConfig};
+
+        let cfg = LatticeConfig::Voronoi(VoronoiConfig {
+            seeds: vec![[1.0, 2.0], [30.0, -4.0], [-5.0, 25.0]],
+            bounds: [-100.0, -100.0, 100.0, 100.0],
+        });
+        let sid = SheetId(1);
+        let mut sheets = HashMap::new();
+        sheets.insert(
+            sid,
+            Sheet {
+                id: sid,
+                name: "Vor".into(),
+                lattice: LatticeKind::Voronoi,
+                extent: tescellate_core::SheetExtent::Unbounded,
+                lattice_config: Some(cfg.clone()),
+                cells: HashMap::new(),
+            },
+        );
+        let wb = Workbook {
+            id: WorkbookId(1),
+            meta: WorkbookMeta {
+                title: "vor".into(),
+                created_at: "2026-05-22T00:00:00Z".into(),
+                format_version: 0,
+            },
+            default_engine: EngineKind::ExcelLite,
+            sheet_order: vec![sid],
+            sheets,
+        };
+
+        let bytes = save_full_to_bytes(&wb, &UiState::default()).unwrap();
+        let (back, _ui) = load_full_from_bytes(&bytes).unwrap();
+        assert_eq!(
+            back.sheets.get(&sid).unwrap().lattice_config,
+            Some(cfg),
+            "custom Voronoi seeds must survive save_full → load_full"
+        );
     }
 
     #[test]
