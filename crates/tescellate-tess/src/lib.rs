@@ -19,6 +19,8 @@ use square::{SquareCoord, SquareLattice};
 use triangle::{TriCoord, TriangleLattice};
 use voronoi::{VoronoiCoord, VoronoiLattice};
 
+pub use voronoi::{LatticeConfig, VoronoiConfig};
+
 /// String-keyed lattice dispatch. Wraps `SquareLattice` / `HexLattice` so
 /// upstream code (the workbook engine, the formula stdlib) can talk to a
 /// lattice without knowing its associated `Coord` type. Every method goes

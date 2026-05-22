@@ -151,6 +151,57 @@ impl Default for VoronoiLattice {
     }
 }
 
+/// Serde-stable, persistable description of a Voronoi lattice's geometry.
+///
+/// Plain old data (no `glam` types) so it serializes into `workbook.json`
+/// without depending on glam's `serde` feature and stays human-reviewable.
+/// `bounds` is `[min_x, min_y, max_x, max_y]`. Stored on the `Sheet`
+/// (see `tescellate-core`) so dragged seeds persist and the engine's
+/// eval-time lattice matches the UI (ADR-011 / ADR-012).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VoronoiConfig {
+    pub seeds: Vec<[f32; 2]>,
+    pub bounds: [f32; 4],
+}
+
+impl VoronoiConfig {
+    /// Build a live `VoronoiLattice` from this config. Delegates to
+    /// [`VoronoiLattice::new`], so coincident seeds / degenerate bounds
+    /// are rejected here exactly as they are at construction time.
+    pub fn to_lattice(&self) -> Result<VoronoiLattice, AddressError> {
+        let seeds = self.seeds.iter().map(|&[x, y]| Vec2::new(x, y)).collect();
+        let bounds = Rect {
+            min: Vec2::new(self.bounds[0], self.bounds[1]),
+            max: Vec2::new(self.bounds[2], self.bounds[3]),
+        };
+        VoronoiLattice::new(seeds, bounds)
+    }
+}
+
+impl From<&VoronoiLattice> for VoronoiConfig {
+    fn from(l: &VoronoiLattice) -> Self {
+        VoronoiConfig {
+            seeds: l.seeds.iter().map(|s| [s.x, s.y]).collect(),
+            bounds: [
+                l.bounds.min.x,
+                l.bounds.min.y,
+                l.bounds.max.x,
+                l.bounds.max.y,
+            ],
+        }
+    }
+}
+
+/// Per-lattice persisted configuration carried on a `Sheet`. Today only
+/// Voronoi needs one (the uniform tilings are fully described by their
+/// `LatticeKind`); new variants land here if a future lattice grows
+/// per-sheet state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LatticeConfig {
+    Voronoi(VoronoiConfig),
+}
+
 /// Parse a `V(N)` address into a `VoronoiCoord`. Whitespace inside the
 /// parens is tolerated; the seed count is bounded by `len`.
 pub(crate) fn parse_voronoi(addr: &str, len: usize) -> Result<VoronoiCoord, AddressError> {
@@ -483,5 +534,48 @@ mod tests {
     fn default_has_eight_seeds() {
         let v = VoronoiLattice::default();
         assert_eq!(v.len(), 8);
+    }
+
+    // --- T-001: VoronoiConfig / LatticeConfig ---
+
+    #[test]
+    fn config_to_lattice_happy() {
+        let cfg = VoronoiConfig {
+            seeds: vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]],
+            bounds: [-10.0, -10.0, 20.0, 20.0],
+        };
+        let lat = cfg.to_lattice().expect("valid config builds a lattice");
+        assert_eq!(lat.len(), 4);
+        assert_eq!(lat.seeds[1], Vec2::new(10.0, 0.0));
+        assert_eq!(lat.bounds.min, Vec2::new(-10.0, -10.0));
+        assert_eq!(lat.bounds.max, Vec2::new(20.0, 20.0));
+    }
+
+    #[test]
+    fn config_to_lattice_rejects_coincident() {
+        let cfg = VoronoiConfig {
+            seeds: vec![[1.0, 1.0], [1.0, 1.0]],
+            bounds: [-5.0, -5.0, 5.0, 5.0],
+        };
+        assert!(cfg.to_lattice().is_err());
+    }
+
+    #[test]
+    fn config_lattice_round_trip() {
+        let lat = small();
+        let cfg = VoronoiConfig::from(&lat);
+        let back = cfg.to_lattice().unwrap();
+        assert_eq!(back.seeds, lat.seeds);
+        assert_eq!(back.bounds.min, lat.bounds.min);
+        assert_eq!(back.bounds.max, lat.bounds.max);
+    }
+
+    #[test]
+    fn lattice_config_json_round_trip() {
+        let cfg = VoronoiConfig::from(&small());
+        let lc = LatticeConfig::Voronoi(cfg);
+        let json = serde_json::to_string(&lc).unwrap();
+        let back: LatticeConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, lc);
     }
 }
