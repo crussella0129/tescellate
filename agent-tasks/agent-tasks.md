@@ -2,7 +2,6 @@
 
 ## Sprint 16 — Voronoi seed drag + persistence (v158)
 
-- **T-002** — Add `lattice_config: Option<LatticeConfig>` to `Sheet` with serde default; update all three `core::Sheet` literal sites (tescellate-core, + engine/store literals).
 - **T-003** — `lattice_for` builds the Voronoi handle from stored config, else default; add `SetCellError::BadLatticeConfig` (tescellate-formula).
 - **T-004** — Seed `lattice_config` with the default config when a Voronoi sheet is created (tescellate-formula).
 - **T-005** — Add `set_voronoi_seeds` setter (validate → store → `rebuild_dag` → recompute sheet) and `voronoi_lattice` getter (tescellate-formula).

@@ -15,7 +15,7 @@ use tescellate_core::{
     WorkbookId, WorkbookMeta,
 };
 use tescellate_tess::square::SquareCoord;
-use tescellate_tess::{LatticeHandle, LatticeKind, ParsedCoord};
+use tescellate_tess::{LatticeConfig, LatticeHandle, LatticeKind, ParsedCoord};
 
 pub struct WorkbookEngine {
     pub workbook: Workbook,
@@ -740,7 +740,20 @@ impl WorkbookEngine {
             .sheets
             .get(&sheet)
             .ok_or(SetCellError::NoSheet(sheet))?;
-        LatticeHandle::for_kind(s.lattice).ok_or(SetCellError::UnsupportedLattice(s.lattice))
+        // Voronoi sheets carry their seed config on the Sheet (ADR-011/012):
+        // build the eval-time lattice from it so custom/dragged seeds drive
+        // evaluation. A `None` config (legacy file) falls back to the default
+        // 8-seed lattice. Uniform tilings ignore `lattice_config`.
+        match (s.lattice, &s.lattice_config) {
+            (LatticeKind::Voronoi, Some(LatticeConfig::Voronoi(cfg))) => {
+                let lat = cfg
+                    .to_lattice()
+                    .map_err(|e| SetCellError::BadLatticeConfig(format!("{e}")))?;
+                Ok(LatticeHandle::Voronoi(lat))
+            }
+            _ => LatticeHandle::for_kind(s.lattice)
+                .ok_or(SetCellError::UnsupportedLattice(s.lattice)),
+        }
     }
 }
 
@@ -870,6 +883,8 @@ pub enum SetCellError {
     Parse(String),
     #[error("lattice {0:?} not yet supported in Phase 1")]
     UnsupportedLattice(LatticeKind),
+    #[error("lattice config: {0}")]
+    BadLatticeConfig(String),
     #[error("io: {0}")]
     Io(String),
     #[error("address {0} is outside this sheet's bounds")]
@@ -1905,5 +1920,53 @@ mod tests {
             eng.get_cell(sid, "B1").unwrap().value,
             CellValue::Number(20.0)
         );
+    }
+
+    // --- T-003: lattice_for builds from stored Voronoi config ---
+
+    fn voronoi_sheet_with(eng: &mut WorkbookEngine, seeds: Vec<[f32; 2]>) -> SheetId {
+        let sid = eng.add_sheet("Vor", LatticeKind::Voronoi);
+        let cfg = tescellate_tess::VoronoiConfig {
+            seeds,
+            bounds: [-20.0, -20.0, 20.0, 20.0],
+        };
+        eng.workbook.sheets.get_mut(&sid).unwrap().lattice_config =
+            Some(LatticeConfig::Voronoi(cfg));
+        sid
+    }
+
+    #[test]
+    fn lattice_for_uses_stored_voronoi_config() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = voronoi_sheet_with(&mut eng, vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]]);
+        match eng.lattice_for(sid).unwrap() {
+            LatticeHandle::Voronoi(v) => assert_eq!(v.len(), 3),
+            _ => panic!("expected a Voronoi handle"),
+        }
+    }
+
+    #[test]
+    fn lattice_for_voronoi_none_falls_back_default() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("Vor", LatticeKind::Voronoi);
+        eng.workbook.sheets.get_mut(&sid).unwrap().lattice_config = None;
+        match eng.lattice_for(sid).unwrap() {
+            LatticeHandle::Voronoi(v) => assert_eq!(v.len(), 8),
+            _ => panic!("expected a Voronoi handle"),
+        }
+    }
+
+    #[test]
+    fn lattice_for_corrupt_config_errors() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        // Coincident seeds: a hand-edited / corrupt config.
+        let sid = voronoi_sheet_with(&mut eng, vec![[1.0, 1.0], [1.0, 1.0]]);
+        assert!(matches!(
+            eng.lattice_for(sid),
+            Err(SetCellError::BadLatticeConfig(_))
+        ));
     }
 }

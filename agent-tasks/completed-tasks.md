@@ -161,3 +161,9 @@
 - **Completed:** 2026-05-22T16:00:00Z
 - **Files modified:** crates/tescellate-tess/src/voronoi.rs, crates/tescellate-tess/src/lib.rs
 - **Commit:** `cb84d6c`
+
+## T-002 (sprint 16) — Sheet.lattice_config field
+- **Description:** `#[serde(default)] pub lattice_config: Option<LatticeConfig>` on `core::Sheet`. Fixed all three `core::Sheet` struct-literal sites (core round-trip test, `engine.rs:236` `add_sheet_with_extent` → `None` for now/T-004, `store/src/lib.rs` `sample()` helper). 2 new core tests (config round-trip + legacy-missing-key → `None`).
+- **Completed:** 2026-05-22T16:05:00Z
+- **Files modified:** crates/tescellate-core/src/lib.rs, crates/tescellate-formula/src/engine.rs, crates/tescellate-store/src/lib.rs
+- **Commit:** `4e0a052`
