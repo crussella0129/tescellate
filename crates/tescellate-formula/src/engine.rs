@@ -764,6 +764,119 @@ impl WorkbookEngine {
                 .ok_or(SetCellError::UnsupportedLattice(s.lattice)),
         }
     }
+
+    /// Replace a Voronoi sheet's seed set, re-evaluating every cell against
+    /// the new geometry. Bounds are preserved (this mutates seeds only).
+    /// Returns the cells whose values may have changed.
+    ///
+    /// Correctness (ADR-012): a seed move changes geometry, not formula
+    /// text, so the static `:NEIGHBORS`/radius DAG edges resolved at edit
+    /// time are stale. We therefore rebuild the whole DAG — re-resolving
+    /// every cell's dependencies against the *new* lattice via
+    /// [`Self::rebuild_dag`] — and then recompute, rather than fanning out
+    /// from the moved seed over the stale graph.
+    pub fn set_voronoi_seeds(
+        &mut self,
+        sheet: SheetId,
+        seeds: Vec<[f32; 2]>,
+    ) -> Result<Vec<CellRef>, SetCellError> {
+        // The target sheet must exist and be Voronoi.
+        let existing = {
+            let s = self
+                .workbook
+                .sheets
+                .get(&sheet)
+                .ok_or(SetCellError::NoSheet(sheet))?;
+            if s.lattice != LatticeKind::Voronoi {
+                return Err(SetCellError::UnsupportedLattice(s.lattice));
+            }
+            s.lattice_config.clone()
+        };
+        // Preserve the sheet's current bounds (default lattice's if unset).
+        let bounds = match existing {
+            Some(LatticeConfig::Voronoi(cfg)) => cfg.bounds,
+            _ => VoronoiConfig::from(&VoronoiLattice::default()).bounds,
+        };
+        let cfg = VoronoiConfig { seeds, bounds };
+        // Validate BEFORE mutating so a reject (coincident/degenerate) leaves
+        // the stored config untouched.
+        cfg.to_lattice()
+            .map_err(|e| SetCellError::BadLatticeConfig(format!("{e}")))?;
+        // Commit the new config.
+        self.workbook
+            .sheets
+            .get_mut(&sheet)
+            .expect("sheet existence checked above")
+            .lattice_config = Some(LatticeConfig::Voronoi(cfg));
+
+        // Re-resolve every cell's geometry-dependent dependencies against the
+        // new lattice, then recompute. `volatile` is keyed by formula source
+        // (unchanged by a seed move), so it is intentionally left intact.
+        self.dag = Dag::new();
+        self.compiled.clear();
+        #[cfg(feature = "native")]
+        self.native.clear();
+        self.rebuild_dag()?;
+
+        // Every cell on this sheet may have changed (its geometry moved), as
+        // may their downstream dependents (possibly on other sheets). Build
+        // the dirty set as the union of each sheet cell's dirty closure, in
+        // topological order, mirroring `set_cell`'s recompute + volatile pass.
+        let roots: Vec<CellRef> = self
+            .workbook
+            .sheets
+            .get(&sheet)
+            .map(|s| {
+                s.cells
+                    .keys()
+                    .map(|a| CellRef::new(sheet, a.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut dirty: Vec<CellRef> = Vec::new();
+        let mut seen: std::collections::HashSet<CellRef> = std::collections::HashSet::new();
+        for r in &roots {
+            for c in self.dag.dirty_closure(r) {
+                if seen.insert(c.clone()) {
+                    dirty.push(c);
+                }
+            }
+        }
+        let order = self.dag.topo_order(dirty.clone());
+        let mut changed = Vec::with_capacity(order.len());
+        for c in &order {
+            self.recompute(c);
+            changed.push(c.clone());
+        }
+        for c in &dirty {
+            if !order.contains(c) {
+                self.recompute(c);
+                changed.push(c.clone());
+            }
+        }
+        for c in self.volatile.clone() {
+            if !changed.contains(&c) {
+                self.recompute(&c);
+                changed.push(c);
+            }
+        }
+        Ok(changed)
+    }
+
+    /// The current Voronoi lattice for `sheet`, built from its stored config
+    /// (or the default 8-seed lattice if the config is absent). `None` for a
+    /// non-Voronoi sheet. The UI uses this to keep its render cache in sync
+    /// with the engine — the engine is the single source of truth (ADR-012).
+    pub fn voronoi_lattice(&self, sheet: SheetId) -> Option<VoronoiLattice> {
+        let s = self.workbook.sheets.get(&sheet)?;
+        if s.lattice != LatticeKind::Voronoi {
+            return None;
+        }
+        match &s.lattice_config {
+            Some(LatticeConfig::Voronoi(cfg)) => cfg.to_lattice().ok(),
+            _ => Some(VoronoiLattice::default()),
+        }
+    }
 }
 
 struct SheetEvalView<'a> {
@@ -1999,5 +2112,136 @@ mod tests {
         eng.new_workbook();
         let sid = eng.add_sheet("S", LatticeKind::Square);
         assert_eq!(eng.workbook.sheets.get(&sid).unwrap().lattice_config, None);
+    }
+
+    // --- T-005: set_voronoi_seeds + voronoi_lattice getter ---
+
+    fn stored_seeds(eng: &WorkbookEngine, sid: SheetId) -> Vec<[f32; 2]> {
+        match &eng.workbook.sheets.get(&sid).unwrap().lattice_config {
+            Some(LatticeConfig::Voronoi(cfg)) => cfg.seeds.clone(),
+            other => panic!("expected a Voronoi config, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn set_voronoi_seeds_stores_and_returns_recomputed() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        let new = vec![[0.0, 0.0], [20.0, 0.0], [0.0, 20.0]];
+        let changed = eng.set_voronoi_seeds(sid, new.clone()).unwrap();
+        assert_eq!(stored_seeds(&eng, sid), new);
+        // No formula cells yet, so `changed` may be empty — the contract is
+        // "the cells whose values may have changed", which is exercised by
+        // the neighbor-dependent test below.
+        let _ = changed;
+    }
+
+    #[test]
+    fn set_voronoi_seeds_rejects_coincident_keeps_state() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        let before = stored_seeds(&eng, sid);
+        let bad = vec![[3.0, 3.0], [3.0, 3.0], [9.0, 0.0]];
+        assert!(matches!(
+            eng.set_voronoi_seeds(sid, bad),
+            Err(SetCellError::BadLatticeConfig(_))
+        ));
+        // Rejected before mutation: config is unchanged.
+        assert_eq!(stored_seeds(&eng, sid), before);
+    }
+
+    #[test]
+    fn set_voronoi_seeds_preserves_bounds() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        let bounds_before = match &eng.workbook.sheets.get(&sid).unwrap().lattice_config {
+            Some(LatticeConfig::Voronoi(cfg)) => cfg.bounds,
+            _ => unreachable!(),
+        };
+        eng.set_voronoi_seeds(sid, vec![[0.0, 0.0], [20.0, 0.0], [0.0, 20.0]])
+            .unwrap();
+        let bounds_after = match &eng.workbook.sheets.get(&sid).unwrap().lattice_config {
+            Some(LatticeConfig::Voronoi(cfg)) => cfg.bounds,
+            _ => unreachable!(),
+        };
+        assert_eq!(bounds_before, bounds_after);
+    }
+
+    #[test]
+    fn set_voronoi_seeds_recomputes_neighbor_dependents() {
+        // Deterministic Delaunay adjacency flip. Hull triangle V0/V1/V2 plus a
+        // 4th seed. With V3 far at (50,50) it lies outside the circumcircle of
+        // triangle (0,0)(20,0)(0,20) (centre (10,10), r≈14.1), so the Delaunay
+        // diagonal is V1-V2 and V0 neighbors only {V1,V2}. Move V3 to the
+        // interior point (7,7) and the triangulation becomes three triangles
+        // sharing V3, so V0 now also neighbors V3.
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        eng.set_voronoi_seeds(
+            sid,
+            vec![[0.0, 0.0], [20.0, 0.0], [0.0, 20.0], [50.0, 50.0]],
+        )
+        .unwrap();
+        // Neighbor cells hold 10 each; V0 sums its neighbors.
+        eng.set_cell(sid, "V(1)", Some("10")).unwrap();
+        eng.set_cell(sid, "V(2)", Some("10")).unwrap();
+        eng.set_cell(sid, "V(3)", Some("10")).unwrap();
+        eng.set_cell(sid, "V(0)", Some("=SUM(NEIGHBORS(V(0)))"))
+            .unwrap();
+        // Config A: V0 neighbors {V1,V2} → 20.
+        assert_eq!(
+            eng.get_cell(sid, "V(0)").unwrap().value,
+            CellValue::Number(20.0)
+        );
+
+        // Move V3 into the interior — V0 now neighbors {V1,V2,V3}.
+        let changed = eng
+            .set_voronoi_seeds(sid, vec![[0.0, 0.0], [20.0, 0.0], [0.0, 20.0], [7.0, 7.0]])
+            .unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "V(0)").unwrap().value,
+            CellValue::Number(30.0),
+            "V0 should re-sum its new neighbor set after the seed move"
+        );
+        assert!(
+            changed.contains(&CellRef::new(sid, "V(0)".to_string())),
+            "the recomputed set should include the neighbor-dependent cell"
+        );
+    }
+
+    #[test]
+    fn voronoi_lattice_getter_matches_config() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        let seeds = vec![[0.0, 0.0], [20.0, 0.0], [0.0, 20.0]];
+        eng.set_voronoi_seeds(sid, seeds.clone()).unwrap();
+        let lat = eng
+            .voronoi_lattice(sid)
+            .expect("Voronoi sheet has a lattice");
+        assert_eq!(lat.len(), 3);
+        assert_eq!((lat.seeds[1].x, lat.seeds[1].y), (20.0, 0.0));
+    }
+
+    #[test]
+    fn voronoi_lattice_none_for_square() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("S", LatticeKind::Square);
+        assert!(eng.voronoi_lattice(sid).is_none());
+    }
+
+    #[test]
+    fn voronoi_lattice_none_config_returns_default() {
+        // A legacy-loaded Voronoi sheet whose config is absent → default 8.
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        eng.workbook.sheets.get_mut(&sid).unwrap().lattice_config = None;
+        assert_eq!(eng.voronoi_lattice(sid).unwrap().len(), 8);
     }
 }

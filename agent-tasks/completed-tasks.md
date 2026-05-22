@@ -173,3 +173,9 @@
 - **Completed:** 2026-05-22T16:12:00Z
 - **Files modified:** crates/tescellate-formula/src/engine.rs
 - **Commit:** `ad93eb2`
+
+## T-004 (sprint 16) — seed Voronoi config at sheet creation
+- **Description:** `add_sheet_with_extent` now sets `lattice_config = Some(Voronoi(VoronoiConfig::from(&VoronoiLattice::default())))` for `LatticeKind::Voronoi`, `None` otherwise — engine + UI agree from boot. 2 unit tests (Voronoi seeded with default, Square stays `None`).
+- **Completed:** 2026-05-22T16:18:00Z
+- **Files modified:** crates/tescellate-formula/src/engine.rs
+- **Commit:** `9220b78`
