@@ -4,7 +4,7 @@
 //! type skeleton; the recompute engine lands in Phase 1.
 
 use serde::{Deserialize, Serialize};
-use tescellate_tess::LatticeKind;
+use tescellate_tess::{LatticeConfig, LatticeKind};
 
 pub mod cell;
 pub mod dag;
@@ -53,6 +53,13 @@ pub struct Sheet {
     /// out-of-bounds addresses at write time.
     #[serde(default)]
     pub extent: SheetExtent,
+    /// Per-lattice persisted configuration. `None` for the uniform tilings
+    /// (square/hex/triangle/parallelogram — fully described by `lattice`)
+    /// and for legacy files predating this field. `Some(Voronoi(..))`
+    /// carries the seed set so dragged Voronoi seeds persist and the
+    /// engine's eval-time lattice matches the UI (ADR-011 / ADR-012).
+    #[serde(default)]
+    pub lattice_config: Option<LatticeConfig>,
     // Cells indexed by canonical address. Lattice-typed coord enum is a
     // Phase 2+ refactor.
     pub cells: hashbrown::HashMap<String, Cell>,
@@ -82,6 +89,7 @@ mod tests {
                         name: "Sheet1".into(),
                         lattice: LatticeKind::Square,
                         extent: SheetExtent::Unbounded,
+                        lattice_config: None,
                         cells: hashbrown::HashMap::new(),
                     },
                 );
@@ -92,5 +100,38 @@ mod tests {
         let back: Workbook = serde_json::from_str(&s).unwrap();
         assert_eq!(back.meta.title, "scratch");
         assert_eq!(back.sheets.len(), 1);
+    }
+
+    #[test]
+    fn sheet_with_lattice_config_round_trips() {
+        use tescellate_tess::{LatticeConfig, VoronoiConfig};
+        let cfg = LatticeConfig::Voronoi(VoronoiConfig {
+            seeds: vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]],
+            bounds: [-20.0, -20.0, 20.0, 20.0],
+        });
+        let sheet = Sheet {
+            id: SheetId(7),
+            name: "Vor".into(),
+            lattice: LatticeKind::Voronoi,
+            extent: SheetExtent::Unbounded,
+            lattice_config: Some(cfg.clone()),
+            cells: hashbrown::HashMap::new(),
+        };
+        let json = serde_json::to_string(&sheet).unwrap();
+        let back: Sheet = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.lattice_config, Some(cfg));
+    }
+
+    #[test]
+    fn sheet_missing_lattice_config_defaults_none() {
+        // A legacy `workbook.json` sheet object with no `lattice_config` key.
+        let legacy = r#"{
+            "id": 1,
+            "name": "Sheet1",
+            "lattice": "square",
+            "cells": {}
+        }"#;
+        let sheet: Sheet = serde_json::from_str(legacy).unwrap();
+        assert_eq!(sheet.lattice_config, None);
     }
 }

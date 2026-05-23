@@ -155,3 +155,57 @@
 - **Completed:** 2026-05-21T04:45:00Z
 - **Files modified:** apps/tescellate-ui/src/grid.rs, apps/tescellate-ui/src/app.rs
 - **Commit:** `48bed76`
+
+## T-001 (sprint 16) — VoronoiConfig + LatticeConfig serde PODs
+- **Description:** Serde-stable `VoronoiConfig { seeds: Vec<[f32;2]>, bounds: [f32;4] }` + `enum LatticeConfig { Voronoi(VoronoiConfig) }` in `voronoi.rs` (no glam-serde dependency). `VoronoiConfig::to_lattice()` delegates to `VoronoiLattice::new` (reuses coincident/degenerate validation); `From<&VoronoiLattice>` for the reverse. Re-exported from tess `lib.rs`. 4 unit tests (happy, reject-coincident, lattice round-trip, JSON round-trip).
+- **Completed:** 2026-05-22T16:00:00Z
+- **Files modified:** crates/tescellate-tess/src/voronoi.rs, crates/tescellate-tess/src/lib.rs
+- **Commit:** `cb84d6c`
+
+## T-002 (sprint 16) — Sheet.lattice_config field
+- **Description:** `#[serde(default)] pub lattice_config: Option<LatticeConfig>` on `core::Sheet`. Fixed all three `core::Sheet` struct-literal sites (core round-trip test, `engine.rs:236` `add_sheet_with_extent` → `None` for now/T-004, `store/src/lib.rs` `sample()` helper). 2 new core tests (config round-trip + legacy-missing-key → `None`).
+- **Completed:** 2026-05-22T16:05:00Z
+- **Files modified:** crates/tescellate-core/src/lib.rs, crates/tescellate-formula/src/engine.rs, crates/tescellate-store/src/lib.rs
+- **Commit:** `4e0a052`
+
+## T-003 (sprint 16) — lattice_for from stored config
+- **Description:** `lattice_for` matches `(lattice, &lattice_config)`: Voronoi + `Some(Voronoi(cfg))` → `cfg.to_lattice()` (eval uses custom seeds); `None` → `for_kind` default 8 seeds. New `SetCellError::BadLatticeConfig(String)` for a corrupt config (NOT `UnsupportedLattice`). 3 unit tests (stored 3-seed config, None→default 8, corrupt→`BadLatticeConfig`).
+- **Completed:** 2026-05-22T16:12:00Z
+- **Files modified:** crates/tescellate-formula/src/engine.rs
+- **Commit:** `ad93eb2`
+
+## T-004 (sprint 16) — seed Voronoi config at sheet creation
+- **Description:** `add_sheet_with_extent` now sets `lattice_config = Some(Voronoi(VoronoiConfig::from(&VoronoiLattice::default())))` for `LatticeKind::Voronoi`, `None` otherwise — engine + UI agree from boot. 2 unit tests (Voronoi seeded with default, Square stays `None`).
+- **Completed:** 2026-05-22T16:18:00Z
+- **Files modified:** crates/tescellate-formula/src/engine.rs
+- **Commit:** `9220b78`
+
+## T-005 (sprint 16) — set_voronoi_seeds + voronoi_lattice getter
+- **Description:** `set_voronoi_seeds(sheet, seeds)` validates via `to_lattice` before mutating, preserves bounds, stores the new config, then resets + `rebuild_dag()` (re-resolves every cell's `:NEIGHBORS`/radius edges against the new geometry — the C-001 fix) and recomputes the sheet's cells (topo order + volatile pass), returning the changed refs. `voronoi_lattice(sheet)` getter returns the stored lattice (or default-8 if `None`), `None` for non-Voronoi. 8 unit tests incl. the deterministic Delaunay adjacency flip (V0 sum 20→30 on a seed move) proving stale-edge recompute is fixed.
+- **Completed:** 2026-05-22T16:35:00Z
+- **Files modified:** crates/tescellate-formula/src/engine.rs
+- **Commit:** `d18e431`
+
+## T-006 (sprint 16) — .tscl FORMAT_VERSION 1→2
+- **Description:** `FORMAT_VERSION = 2` + module doc version-history (v2 = sheets gained `lattice_config`; serde-default upgrade path for v1 files; bump exists so older builds reject v2 rather than dropping seeds). New `voronoi_seeds_survive_full_round_trip` test; existing v0-load (`reads_v0_as_empty_ui_state`) and v99-reject (`refuses_unknown_format_version`) tests still green.
+- **Completed:** 2026-05-22T16:42:00Z
+- **Files modified:** crates/tescellate-store/src/lib.rs
+- **Commit:** `60c2637`
+
+## T-007 (sprint 16) — apply_seed_drag pure helper
+- **Description:** `apply_seed_drag(seeds, idx, delta, bounds) -> Vec<[f32;2]>` translates seed `idx` by `delta`, clamps into `bounds` minus `VORONOI_DRAG_INSET`, out-of-range idx → unchanged. Pure (egui-free, no-zoom precondition documented per C-006); gated `#[allow(dead_code)]` until T-008 wires it. 3 unit tests (translate, clamp, oob noop).
+- **Completed:** 2026-05-22T16:48:00Z
+- **Files modified:** apps/tescellate-ui/src/app.rs
+- **Commit:** `ab7c5df`
+
+## T-008 (sprint 16) — seed-handle drag + engine-synced cache
+- **Description:** `draw_voronoi_grid` gained a seed-handle pass — per-seed `ui.interact` draggable dot (highlighted while dragged); on drag, `apply_seed_drag` → `engine.set_voronoi_seeds` → on Ok resync `voronoi_lattice` via `synced_voronoi_lattice` + `mark_dirty` (autosave), on Err snap-back. `rebind_sheet_ids` Voronoi arm resyncs the cache from the loaded engine config (anti-drift, ADR-012). Removed the T-007 `dead_code` gate. 1 new test (`synced_voronoi_lattice_matches_engine_config`); 261 UI tests pass.
+- **Completed:** 2026-05-22T16:58:00Z
+- **Files modified:** apps/tescellate-ui/src/app.rs
+- **Commit:** `68999a0`
+
+## T-009 (sprint 16) — ADR-012
+- **Description:** Recorded ADR-012 in `decisions.md` (config on Sheet, engine-authoritative seeds, UI lattice as cache, set_voronoi_seeds rebuild_dag correctness, `.tscl` v2 upgrade path, scope/deferrals).
+- **Completed:** 2026-05-22T17:02:00Z
+- **Files modified:** decisions.md
+- **Commit:** `19e1162`

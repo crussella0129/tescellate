@@ -186,3 +186,42 @@ Voronoi seeds persist and the engine's eval-time lattice matches the UI.
 This is a `.tscl` format change — requires a `manifest.json` version bump
 and an upgrade path (older files → default seeds). Larger than ADR-010;
 sequenced as a separate sprint after v157.
+
+## ADR-012 — Voronoi seed config lives on the `Sheet`; engine is the single source of truth (sprint 16)
+**Date:** 2026-05-22
+**Status:** Adopted, shipping in v158.
+
+Implements the design accepted in ADR-011. The seed configuration is now a
+persisted, single-sourced part of a Voronoi sheet:
+
+- **`Sheet.lattice_config: Option<LatticeConfig>`** (`#[serde(default)]`,
+  in `tescellate-core`) carries `LatticeConfig::Voronoi(VoronoiConfig {
+  seeds: Vec<[f32;2]>, bounds: [f32;4] })`. `VoronoiConfig` is a serde-stable
+  POD in `tescellate-tess` (no glam-serde dependency, keeps `workbook.json`
+  reviewable); `to_lattice()` delegates to `VoronoiLattice::new` so the
+  ADR-009 coincident/degenerate validation is reused. Uniform tilings keep
+  `lattice_config == None`.
+- **The engine is authoritative.** `lattice_for` builds the eval-time
+  Voronoi lattice from the stored config (legacy `None` → default 8 seeds);
+  `add_sheet` seeds a Voronoi sheet's config at creation; the UI's
+  `voronoi_lattice` field is demoted to a *render cache* resynced from the
+  engine (`voronoi_lattice` getter / `synced_voronoi_lattice` helper) after
+  load and after every drag. This removes the pre-v158 dual-source split
+  where the UI and engine held independent lattices.
+- **`set_voronoi_seeds`** validates, stores the new seeds (bounds preserved),
+  then resets + `rebuild_dag()` and recomputes the sheet. The rebuild is the
+  key correctness point (plan-critic C-001): a seed move changes geometry but
+  not formula text, so the static `:NEIGHBORS`/radius DAG edges resolved at
+  edit time are stale; re-resolving every cell's deps against the new lattice
+  is what makes neighbor-dependent cells re-evaluate. A corrupt config maps
+  to a dedicated `SetCellError::BadLatticeConfig`, not `UnsupportedLattice`.
+- **`.tscl` `FORMAT_VERSION` 1→2.** Seeds ride in `workbook.json`, so no new
+  sidecar (cf. ADR-001). v1 files load with `lattice_config == None` via serde
+  default; the bump exists so *older* builds reject v2 files rather than
+  silently dropping seed data on a round-trip.
+
+Scope (this sprint): seed *drag* only. Add/delete seeds, bounds editing, and
+the px↔lattice-unit mapping under zoom (the seed-drag clamp assumes 1:1, no
+zoom — C-006) are deferred. The next sprint is the Tescellate→Carbide rename,
+which re-touches the format layer (`.tscl`→`.crbd`) — a conscious second,
+mechanical format change after this v2 schema bump.
