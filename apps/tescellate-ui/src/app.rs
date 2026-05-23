@@ -4880,14 +4880,24 @@ impl TescellateApp {
             }
         }
 
-        // Marquee drag (T-006A) — when NOT in formula mode, a main-response
+        // Marquee drag (T-006A/B) — when NOT in formula mode, a main-response
         // drag selects every cell whose centroid falls inside the screen
         // rect from press to current pointer (ADR-013 centroid-in-rect rule).
-        // Seed-handle drags take precedence — T-006B adds that gate.
+        // **Seed-handle precedence (T-006B):** a press within `SEED_HANDLE_RADIUS`
+        // of any seed centroid is treated as a seed-handle drag (handled later
+        // in the seed-handle pass) and skips the marquee.
+        const SEED_HANDLE_RADIUS: f32 = 5.0;
         if !in_formula {
             if response.drag_started() {
                 if let Some(p) = response.interact_pointer_pos() {
-                    self.voronoi_marquee_start = Some(p);
+                    let on_handle = (0..self.voronoi_lattice.len() as u32).any(|i| {
+                        let c = self.voronoi_lattice.centroid(VoronoiCoord(i));
+                        let center = egui::pos2(origin.x + c.x, origin.y + c.y);
+                        center.distance(p) <= SEED_HANDLE_RADIUS
+                    });
+                    if !on_handle {
+                        self.voronoi_marquee_start = Some(p);
+                    }
                 }
             }
             if response.dragged() {
@@ -4976,11 +4986,15 @@ impl TescellateApp {
             );
         }
 
-        // Third pass — selection stroke around the selected cell.
+        // Third pass — selection stroke around every selected cell. Uses
+        // `selection.cells()` which (after T-001) returns the rect cells +
+        // `extra`, so marquee-selected cells get outlined too (ADR-013).
         let sel_stroke = egui::Stroke::new(2.5, egui::Color32::from_rgb(70, 120, 220));
-        let selected = self.voronoi.selection.cursor;
-        let verts = self.voronoi_lattice.vertices(selected);
-        if !verts.is_empty() {
+        for coord in self.voronoi.selection.cells() {
+            let verts = self.voronoi_lattice.vertices(coord);
+            if verts.is_empty() {
+                continue;
+            }
             let mut pts: Vec<egui::Pos2> = verts
                 .iter()
                 .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
@@ -4989,6 +5003,26 @@ impl TescellateApp {
                 pts.push(first);
             }
             painter.add(egui::Shape::line(pts, sel_stroke));
+        }
+
+        // Translucent marquee rect (T-006B) — visible while a marquee drag is
+        // in progress; disappears on release (selection.extra persists).
+        if let (Some(start), Some(current)) =
+            (self.voronoi_marquee_start, response.interact_pointer_pos())
+        {
+            if response.dragged() {
+                let rect = egui::Rect::from_two_pos(start, current);
+                painter.rect_filled(
+                    rect,
+                    0.0,
+                    egui::Color32::from_rgba_premultiplied(70, 120, 220, 30),
+                );
+                painter.rect_stroke(
+                    rect,
+                    0.0,
+                    egui::Stroke::new(1.5, egui::Color32::from_rgb(70, 120, 220)),
+                );
+            }
         }
 
         // Widget pass — Button + Toggle inscribed at each widget cell's
