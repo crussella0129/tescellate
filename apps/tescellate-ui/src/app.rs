@@ -1347,17 +1347,15 @@ impl TescellateApp {
             ActiveSheet::Square => self.square.selection = Selection::all(COLS, ROWS),
             ActiveSheet::Hex => {
                 let r = HEX_VIEW_RADIUS;
-                self.hex.selection = HexSelection {
-                    anchor: HexCoord::new(-r, -r),
-                    cursor: HexCoord::new(r, r),
-                };
+                self.hex.selection =
+                    HexSelection::from_anchor_cursor(HexCoord::new(-r, -r), HexCoord::new(r, r));
             }
             ActiveSheet::Triangle => {
                 let r = TRIANGLE_RADIUS;
-                self.triangle.selection = TriangleSelection {
-                    anchor: TriCoord::new(-r, -r),
-                    cursor: TriCoord::new(r, r),
-                };
+                self.triangle.selection = TriangleSelection::from_anchor_cursor(
+                    TriCoord::new(-r, -r),
+                    TriCoord::new(r, r),
+                );
             }
             ActiveSheet::Voronoi => {}
         }
@@ -1373,10 +1371,8 @@ impl TescellateApp {
                     grid::current_region(self.square.selection.cursor, COLS, ROWS, |c, r| {
                         self.square_occupied(c, r)
                     });
-                self.square.selection = Selection {
-                    anchor: (max_c, max_r),
-                    cursor: (min_c, min_r),
-                };
+                self.square.selection =
+                    Selection::from_anchor_cursor((max_c, max_r), (min_c, min_r));
             }
             ActiveSheet::Hex => {
                 let cursor = self.hex.selection.cursor;
@@ -1385,10 +1381,10 @@ impl TescellateApp {
                         let c = HexCoord::new(q, r);
                         hex_in_view(c) && self.hex_occupied(c)
                     });
-                self.hex.selection = HexSelection {
-                    anchor: HexCoord::new(max_q, max_r),
-                    cursor: HexCoord::new(min_q, min_r),
-                };
+                self.hex.selection = HexSelection::from_anchor_cursor(
+                    HexCoord::new(max_q, max_r),
+                    HexCoord::new(min_q, min_r),
+                );
             }
             ActiveSheet::Triangle => {
                 // Triangle data-region detection lands in a later
@@ -1494,7 +1490,7 @@ impl TescellateApp {
         if self.active != ActiveSheet::Square {
             return;
         }
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let all_on = cells.iter().all(|&c| self.square_widgets.is_toggle(c));
         for cell in cells {
             self.square_widgets.set_toggle(cell, !all_on);
@@ -1508,7 +1504,7 @@ impl TescellateApp {
         if self.active != ActiveSheet::Square {
             return;
         }
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let all_on = cells.iter().all(|&c| self.square_widgets.is_slider(c));
         for cell in cells {
             self.square_widgets.set_slider_default(cell, !all_on);
@@ -1521,7 +1517,7 @@ impl TescellateApp {
         if self.active != ActiveSheet::Square {
             return;
         }
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let all_on = cells.iter().all(|&c| self.square_widgets.is_button(c));
         for cell in cells {
             self.square_widgets.set_button(cell, !all_on);
@@ -1535,7 +1531,7 @@ impl TescellateApp {
         if self.active != ActiveSheet::Square {
             return;
         }
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let all_on = cells
             .iter()
             .all(|&c| self.square_widgets.is_progress_bar(c));
@@ -1757,7 +1753,7 @@ impl TescellateApp {
     /// The square-sheet border apply — `border_sides` per cell.
     fn apply_square_border(&mut self, mode: BorderMode) {
         let bounds = self.square.selection.bounds();
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let mut edits = Vec::new();
         for cell in cells {
             let before = self.square.formats.get(cell);
@@ -1783,15 +1779,17 @@ impl TescellateApp {
     /// `hex_outer_borders` — an edge is bordered only when the hex
     /// across it is not itself selected.
     fn apply_hex_border(&mut self, mode: BorderMode) {
-        let selection = self.hex.selection;
+        let selection = self.hex.selection.clone();
         let mut edits = Vec::new();
-        for cell in selection.cells() {
+        for cell in selection.primary_cells() {
             let before = self.hex.formats.get(cell);
             let mut after = before.clone();
             after.hex_borders = match mode {
                 BorderMode::None => HexBorders::default(),
                 BorderMode::All => HexBorders::all(),
-                BorderMode::Outer => format::hex_outer_borders(cell, |c| selection.contains(c)),
+                BorderMode::Outer => {
+                    format::hex_outer_borders(cell, |c| selection.primary_contains(c))
+                }
             };
             if before == after {
                 continue;
@@ -2271,7 +2269,7 @@ impl TescellateApp {
                 // Triangle format coalescing lands in a follow-up;
                 // apply the edit directly without the same-cell drag
                 // merge logic so the basic flow still works.
-                let cells = self.triangle.selection.cells();
+                let cells = self.triangle.selection.primary_cells();
                 for cell in cells {
                     self.triangle.formats.update(cell, |f| edit(f));
                 }
@@ -2284,7 +2282,7 @@ impl TescellateApp {
     /// of same-cell format edits (a colour-picker drag) collapses into
     /// one undo step.
     fn format_square_range(&mut self, edit: impl Fn(&mut CellFormat)) {
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let mut edits = Vec::new();
         for cell in cells {
             let before = self.square.formats.get(cell);
@@ -2332,7 +2330,7 @@ impl TescellateApp {
     /// run of same-cell edits (a colour drag) coalesces into one step.
     fn format_hex_range(&mut self, edit: impl Fn(&mut CellFormat)) {
         let mut edits = Vec::new();
-        for cell in self.hex.selection.cells() {
+        for cell in self.hex.selection.primary_cells() {
             let before = self.hex.formats.get(cell);
             let mut after = before.clone();
             edit(&mut after);
@@ -2383,15 +2381,15 @@ impl TescellateApp {
     ) {
         let target = match self.active {
             ActiveSheet::Square => {
-                let cells = self.square.selection.cells();
+                let cells = self.square.selection.primary_cells();
                 toggle_target(cells.iter().map(|&c| get(&self.square.formats.get(c))))
             }
             ActiveSheet::Hex => {
-                let cells = self.hex.selection.cells();
+                let cells = self.hex.selection.primary_cells();
                 toggle_target(cells.iter().map(|&c| get(&self.hex.formats.get(c))))
             }
             ActiveSheet::Triangle => {
-                let cells = self.triangle.selection.cells();
+                let cells = self.triangle.selection.primary_cells();
                 toggle_target(cells.iter().map(|&c| get(&self.triangle.formats.get(c))))
             }
             // Voronoi sheet has no format pipeline in v150 — leave the
@@ -2835,10 +2833,8 @@ impl TescellateApp {
                 // Select the pasted block, the active cell at its top-left.
                 let end_c = (target_c + width - 1).min(COLS - 1);
                 let end_r = (target_r + height - 1).min(ROWS - 1);
-                self.square.selection = SquareSelection {
-                    anchor: (end_c, end_r),
-                    cursor: (target_c, target_r),
-                };
+                self.square.selection =
+                    SquareSelection::from_anchor_cursor((end_c, end_r), (target_c, target_r));
             }
             ActiveSheet::Hex => {
                 let cursor = self.hex.selection.cursor;
@@ -2866,10 +2862,7 @@ impl TescellateApp {
                 self.apply_edits(self.hex.sheet_id, targets);
                 // Select the pasted block, the cursor at its origin.
                 let far = HexCoord::new(cursor.q + width as i32 - 1, cursor.r + height as i32 - 1);
-                self.hex.selection = HexSelection {
-                    anchor: far,
-                    cursor,
-                };
+                self.hex.selection = HexSelection::from_anchor_cursor(far, cursor);
             }
             ActiveSheet::Triangle => {
                 let cursor = self.triangle.selection.cursor;
@@ -2900,10 +2893,7 @@ impl TescellateApp {
                     cursor.col + width as i32 - 1,
                     cursor.row + height as i32 - 1,
                 );
-                self.triangle.selection = TriangleSelection {
-                    anchor: far,
-                    cursor,
-                };
+                self.triangle.selection = TriangleSelection::from_anchor_cursor(far, cursor);
             }
             ActiveSheet::Voronoi => {}
         }

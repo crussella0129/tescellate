@@ -18,6 +18,7 @@ tescellate-formula = { path = "../../crates/tescellate-formula" }
 tescellate-store = { path = "../../crates/tescellate-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+smallvec = { version = "1", features = ["serde"] }
 base64 = "0.22"
 
 # rfd: native uses default backends (gtk3 on Linux, ComDlg32 on Windows,
