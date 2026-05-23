@@ -3370,14 +3370,17 @@ impl TescellateApp {
                             .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
                         {
                             if let Some(edit) = self.edit.as_mut() {
-                                let (drag, hl) = formula_mode::drag_start(
+                                let (new_drag, new_hl) = formula_mode::dispatch(
                                     &mut edit.buffer,
                                     &mut edit.fresh,
-                                    cell,
+                                    self.square.formula_drag,
+                                    formula_mode::Event::DragStarted(cell),
                                     |c| grid::cell_address(c.0, c.1),
                                 );
-                                self.square.formula_drag = Some(drag);
-                                self.square.formula_highlight = Some(hl);
+                                self.square.formula_drag = new_drag;
+                                if let Some(h) = new_hl {
+                                    self.square.formula_highlight = Some(h);
+                                }
                             }
                         }
                     } else if let Some(col) = self.metrics.col_header_at(col_hdr_origin, p, COLS) {
@@ -3439,20 +3442,23 @@ impl TescellateApp {
                             self.square.selection.extend_to(clamped);
                             self.fill_drag = Some(fill);
                         }
-                    } else if let Some(drag) = self.square.formula_drag {
+                    } else if self.square.formula_drag.is_some() {
                         if let Some(cell) = self
                             .metrics
                             .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
                         {
                             if let Some(edit) = self.edit.as_mut() {
-                                let hl = formula_mode::drag_extend(
+                                let (new_drag, new_hl) = formula_mode::dispatch(
                                     &mut edit.buffer,
                                     &mut edit.fresh,
-                                    &drag,
-                                    cell,
+                                    self.square.formula_drag,
+                                    formula_mode::Event::Dragged(cell),
                                     |c| grid::cell_address(c.0, c.1),
                                 );
-                                self.square.formula_highlight = Some(hl);
+                                self.square.formula_drag = new_drag;
+                                if let Some(h) = new_hl {
+                                    self.square.formula_highlight = Some(h);
+                                }
                             }
                         }
                     } else {
@@ -3504,13 +3510,17 @@ impl TescellateApp {
                     .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
                 if in_formula {
                     if let Some(edit) = self.edit.as_mut() {
-                        let hl = formula_mode::click_insert(
+                        let (new_drag, new_hl) = formula_mode::dispatch(
                             &mut edit.buffer,
                             &mut edit.fresh,
-                            cell,
+                            self.square.formula_drag,
+                            formula_mode::Event::Clicked(cell),
                             |c| grid::cell_address(c.0, c.1),
                         );
-                        self.square.formula_highlight = Some(hl);
+                        self.square.formula_drag = new_drag;
+                        if let Some(h) = new_hl {
+                            self.square.formula_highlight = Some(h);
+                        }
                     }
                 } else if let Some(fmt) = self.format_painter.take() {
                     // Format painter — paint the captured format onto the
@@ -4090,13 +4100,17 @@ impl TescellateApp {
                 .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
             if in_formula {
                 if let Some(edit) = self.edit.as_mut() {
-                    let hl = formula_mode::click_insert(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        coord,
+                        self.hex.formula_drag,
+                        formula_mode::Event::Clicked(coord),
                         hex_address,
                     );
-                    self.hex.formula_highlight = Some(hl);
+                    self.hex.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.hex.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.commit_edit();
@@ -4117,14 +4131,17 @@ impl TescellateApp {
                 .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
             if in_formula {
                 if let Some(edit) = self.edit.as_mut() {
-                    let (drag, hl) = formula_mode::drag_start(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        coord,
+                        self.hex.formula_drag,
+                        formula_mode::Event::DragStarted(coord),
                         hex_address,
                     );
-                    self.hex.formula_drag = Some(drag);
-                    self.hex.formula_highlight = Some(hl);
+                    self.hex.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.hex.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.commit_edit();
@@ -4132,16 +4149,19 @@ impl TescellateApp {
             }
         }
         if let Some(coord) = dragged_coord {
-            if let Some(drag) = self.hex.formula_drag {
+            if self.hex.formula_drag.is_some() {
                 if let Some(edit) = self.edit.as_mut() {
-                    let hl = formula_mode::drag_extend(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        &drag,
-                        coord,
+                        self.hex.formula_drag,
+                        formula_mode::Event::Dragged(coord),
                         hex_address,
                     );
-                    self.hex.formula_highlight = Some(hl);
+                    self.hex.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.hex.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.hex.selection.extend_to(coord);
@@ -4477,13 +4497,17 @@ impl TescellateApp {
                 .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
             if in_formula {
                 if let Some(edit) = self.edit.as_mut() {
-                    let hl = formula_mode::click_insert(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        coord,
+                        self.triangle.formula_drag,
+                        formula_mode::Event::Clicked(coord),
                         triangle_address,
                     );
-                    self.triangle.formula_highlight = Some(hl);
+                    self.triangle.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.triangle.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.commit_edit();
@@ -4501,14 +4525,17 @@ impl TescellateApp {
                 .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
             if in_formula {
                 if let Some(edit) = self.edit.as_mut() {
-                    let (drag, hl) = formula_mode::drag_start(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        coord,
+                        self.triangle.formula_drag,
+                        formula_mode::Event::DragStarted(coord),
                         triangle_address,
                     );
-                    self.triangle.formula_drag = Some(drag);
-                    self.triangle.formula_highlight = Some(hl);
+                    self.triangle.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.triangle.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.commit_edit();
@@ -4516,16 +4543,19 @@ impl TescellateApp {
             }
         }
         if let Some(coord) = dragged_coord {
-            if let Some(drag) = self.triangle.formula_drag {
+            if self.triangle.formula_drag.is_some() {
                 if let Some(edit) = self.edit.as_mut() {
-                    let hl = formula_mode::drag_extend(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        &drag,
-                        coord,
+                        self.triangle.formula_drag,
+                        formula_mode::Event::Dragged(coord),
                         triangle_address,
                     );
-                    self.triangle.formula_highlight = Some(hl);
+                    self.triangle.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.triangle.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.triangle.selection.extend_to(coord);
