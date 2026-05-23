@@ -170,6 +170,16 @@ impl WorkbookEngine {
             .collect();
 
         for (sheet_id, addr, source, engine_kind) in entries {
+            // Mirror set_cell's convention: only `=`-prefixed sources are
+            // formulas. Literal text/number/boolean cells (e.g. `Plains`,
+            // `42`) keep their stored value and stay out of `self.compiled`.
+            // Without this gate the parser would accept a bare ident
+            // (`Plains` → `Expr::Ident`) and a subsequent recompute would
+            // evaluate it as a missing cell-ref → `#REF` — the seed-drag
+            // regression that revealed this in v158.
+            if !source.trim_start().starts_with('=') {
+                continue;
+            }
             let lattice = self.lattice_for(sheet_id)?;
             let engine = self
                 .engines
@@ -2243,6 +2253,44 @@ mod tests {
         let sid = eng.add_sheet("V", LatticeKind::Voronoi);
         eng.workbook.sheets.get_mut(&sid).unwrap().lattice_config = None;
         assert_eq!(eng.voronoi_lattice(sid).unwrap().len(), 8);
+    }
+
+    #[test]
+    fn set_voronoi_seeds_preserves_literal_text_cells() {
+        // Regression: pre-fix, `rebuild_dag` parsed a bare ident like
+        // "Plains" as `Expr::Ident` (treated as a missing cell-ref) and the
+        // post-rebuild recompute then turned the cell into `#REF`. Literal
+        // text/number cells (no `=` prefix) must survive a seed drag.
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        eng.set_voronoi_seeds(
+            sid,
+            vec![[0.0, 0.0], [20.0, 0.0], [0.0, 20.0], [50.0, 50.0]],
+        )
+        .unwrap();
+        eng.set_cell(sid, "V(0)", Some("Plains")).unwrap();
+        eng.set_cell(sid, "V(1)", Some("Forest")).unwrap();
+        eng.set_cell(sid, "V(2)", Some("42")).unwrap();
+        assert_eq!(
+            eng.get_cell(sid, "V(0)").unwrap().value,
+            CellValue::Text("Plains".into())
+        );
+
+        eng.set_voronoi_seeds(
+            sid,
+            vec![[5.0, 5.0], [25.0, 0.0], [0.0, 25.0], [55.0, 55.0]],
+        )
+        .unwrap();
+        // The text literals must NOT have become #REF errors after the rebuild.
+        assert_eq!(
+            eng.get_cell(sid, "V(0)").unwrap().value,
+            CellValue::Text("Plains".into())
+        );
+        assert_eq!(
+            eng.get_cell(sid, "V(1)").unwrap().value,
+            CellValue::Text("Forest".into())
+        );
     }
 
     // --- Integration (Component C+D): drag → persist → reload → eval lattice ---
