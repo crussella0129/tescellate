@@ -225,3 +225,66 @@ the px↔lattice-unit mapping under zoom (the seed-drag clamp assumes 1:1, no
 zoom — C-006) are deferred. The next sprint is the Tescellate→Carbide rename,
 which re-touches the format layer (`.tscl`→`.crbd`) — a conscious second,
 mechanical format change after this v2 schema bump.
+
+## ADR-013 — Voronoi interaction parity: `Selection.extra` + screen-rect marquee + shared formula-mode dispatch (sprint 17)
+**Date:** 2026-05-23
+**Status:** Adopted, shipping in v159.
+
+Voronoi shipped (v149/v151) without the interaction-layer parity that
+square/hex/triangle have: no formula-mode click-to-insert, no range
+selection by drag, no name-box / formula-bar wiring (the Voronoi arm of
+the name box was literally `=> {}`). The root cause wasn't four bugs —
+the `formula_mode` helpers were already lattice-agnostic and just weren't
+*called* from `draw_voronoi_grid`, and `Coord` for `VoronoiCoord` is
+intentionally degenerate (rect ranges don't fit a non-grid tessellation —
+ADR-005's lattice-generic precedent assumed rect-indexed coords).
+
+This sprint:
+
+- **`Selection<C>` gains `extra: SmallVec<[C; 4]>`** as an explicit-set
+  escape hatch. `cells()` returns rect + extra (for render — the marquee
+  outlines need every selected cell); a new **`primary_cells()` /
+  `primary_contains()`** returns rect-only (the pre-v159 semantics) and
+  every existing operational consumer (copy/paste, format apply, widget
+  apply, border-edit, find filter) migrates to `primary_*` so Voronoi
+  marquee extras don't silently fan out into pipelines that aren't yet
+  multi-cell-ready. v161+ migrates those operational paths to extras as
+  each format/widget pipeline gains Voronoi support.
+- **`formula_mode::dispatch` + `event_from_response`** centralise the
+  duplicated `if is_formula_buffer { drag_started/dragged/clicked }`
+  block. Each `draw_*_grid` builds an `Event<C>` from `response.{clicked,
+  drag_started, dragged, drag_stopped}()` via the pure
+  `event_from_response` (unit-testable without an egui context — closes
+  the critic-C-002 regression gap) and feeds it to `dispatch`. Voronoi
+  joins via the same single call.
+- **Screen-rect marquee** is the unified range rule for any lattice without
+  rect-indexed coords. `cells_in_screen_rect(lattice, screen_rect, origin)`
+  iterates the lattice's cells and keeps those whose centroid maps into
+  the screen rect — built on the existing `Lattice::centroid` primitive,
+  no new geometry math. Seed-handle drags take precedence (a press within
+  5px of any seed centroid skips the marquee — the seed-handle pass
+  handles it instead).
+- **Name-box parity** — Voronoi's TextEdit name box is now wired the same
+  way square's is: displays the active `V(n)` address on selection
+  change, parses + jumps on Enter, shows an "N cells" hint when a marquee
+  is active.
+
+**Constraints honored:** square + hex + triangle full feature parity (the
+shared `dispatch` is a code-extraction refactor, behaviour unchanged);
+cross-lattice paste degrades formulas to values (selection-object rule,
+untouched); engine / DAG / store untouched (pure UI + helper sprint);
+no `app.rs` module split (function extraction inside `app.rs` +
+`formula_mode.rs`).
+
+**Cross-references:** ADR-005 (lattice-generic precedent — same "implement
+the trait, inherit the behavior" promise, now extended from
+storage/widgets/formats to interaction), ADR-009 (Voronoi geometry
+primitives — `centroid`, `cell_at`, `vertices` — used by the marquee
+rule), ADR-012 (Sheet-authoritative seed config the marquee enumerates).
+
+**Deferred to v161+:** routing the format/widget/copy-paste/conditional-
+formatting paths through the trait (today they stay one-per-lattice and
+use `primary_cells()` to ignore marquee extras); literal merge of the
+four `draw_*_grid` functions into one parameterised `draw_lattice_panel`.
+The next sprint (v160) is the Tescellate→Carbide rename, applied to the
+already-unified renderer for a smaller diff.
