@@ -5561,7 +5561,27 @@ impl eframe::App for TescellateApp {
                             ActiveSheet::Triangle => {
                                 ui.monospace(addr.clone());
                             }
-                            ActiveSheet::Voronoi => {}
+                            ActiveSheet::Voronoi => {
+                                // T-007: Voronoi name box — display the active
+                                // V(n) address; pressing Enter on a typed
+                                // address jumps the cursor there.
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut self.name_box)
+                                        .desired_width(64.0)
+                                        .font(egui::TextStyle::Monospace),
+                                );
+                                if response.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                {
+                                    if let Ok(coord) =
+                                        self.voronoi_lattice.parse_address(&self.name_box)
+                                    {
+                                        self.voronoi.selection.collapse_to(coord);
+                                    }
+                                } else if !response.has_focus() {
+                                    self.name_box = addr.clone();
+                                }
+                            }
                         }
                         match self.active {
                             ActiveSheet::Square if self.square.selection.is_range() => {
@@ -5571,6 +5591,11 @@ impl eframe::App for TescellateApp {
                             ActiveSheet::Hex if self.hex.selection.is_range() => {
                                 let (q, r) = self.hex.selection.dimensions();
                                 ui.label(egui::RichText::new(format!("{q}q × {r}r")).weak());
+                            }
+                            ActiveSheet::Voronoi if !self.voronoi.selection.extra.is_empty() => {
+                                // Marquee dimension hint: extras count + 1 (the cursor).
+                                let n = self.voronoi.selection.extra.len() + 1;
+                                ui.label(egui::RichText::new(format!("{n} cells")).weak());
                             }
                             _ => {}
                         }
