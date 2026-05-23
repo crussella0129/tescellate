@@ -102,6 +102,98 @@ pub fn is_formula_buffer(buffer: &str) -> bool {
     buffer.trim_start().starts_with('=')
 }
 
+/// A pointer event over a lattice cell, translated from raw egui flags.
+/// `Idle` covers "nothing happened this frame" — the common case during
+/// a formula edit when the user isn't interacting with the grid.
+///
+/// Each `draw_*_grid` builds this from `response.{clicked, drag_started,
+/// dragged, drag_stopped}()` via [`event_from_response`] and feeds it to
+/// [`dispatch`] (ADR-013 shared interaction helper).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Event<C: Copy> {
+    Idle,
+    Clicked(C),
+    DragStarted(C),
+    Dragged(C),
+    DragStopped,
+}
+
+/// Translate egui's per-frame response flags into a single [`Event`].
+/// Pure (no egui types in the signature) so each lattice's call-site
+/// translation is unit-testable without an egui context. Priority order
+/// (rarely simultaneous, but specified for completeness):
+/// `DragStarted` > `Dragged` > `DragStopped` > `Clicked` > `Idle`.
+///
+/// `cell = None` falls back to `Idle` for cell-bearing variants — a
+/// click that landed off any cell shouldn't fire a phantom Clicked.
+pub fn event_from_response<C: Copy>(
+    clicked: bool,
+    drag_started: bool,
+    dragged: bool,
+    drag_stopped: bool,
+    cell: Option<C>,
+) -> Event<C> {
+    if drag_started {
+        return cell.map(Event::DragStarted).unwrap_or(Event::Idle);
+    }
+    if dragged {
+        return cell.map(Event::Dragged).unwrap_or(Event::Idle);
+    }
+    if drag_stopped {
+        return Event::DragStopped;
+    }
+    if clicked {
+        return cell.map(Event::Clicked).unwrap_or(Event::Idle);
+    }
+    Event::Idle
+}
+
+/// Dispatch an [`Event`] through the formula-mode click/drag pipeline.
+/// Returns `(new_drag, new_highlight)`: the caller assigns both back into
+/// its `Sheet<C>` bundle. When the buffer isn't in formula mode (no `=`
+/// prefix) or the event is `Idle`, returns `(current_drag, None)` — leave
+/// the drag state untouched and don't mutate the buffer.
+///
+/// Centralises the `if is_formula_buffer { drag_started/dragged/clicked
+/// branches }` block that the square/hex/triangle `draw_*_grid` paths
+/// each used to inline. Voronoi now joins via the same single call.
+pub fn dispatch<C: Copy + PartialEq>(
+    buffer: &mut String,
+    fresh: &mut bool,
+    current_drag: Option<DragState<C>>,
+    event: Event<C>,
+    address: impl Fn(C) -> String,
+) -> (Option<DragState<C>>, Option<Highlight<C>>) {
+    if !is_formula_buffer(buffer) {
+        return (current_drag, None);
+    }
+    match event {
+        Event::Idle => (current_drag, None),
+        Event::DragStarted(c) => {
+            let (drag, h) = drag_start(buffer, fresh, c, address);
+            (Some(drag), Some(h))
+        }
+        Event::Dragged(c) => {
+            if let Some(drag) = current_drag {
+                let h = drag_extend(buffer, fresh, &drag, c, address);
+                (Some(drag), Some(h))
+            } else {
+                // A `dragged` event with no prior `drag_started` — treat as
+                // an in-flight extend without a drag state, fall back to a
+                // single-cell insert so the cell address still lands in the
+                // buffer rather than getting lost.
+                let h = click_insert(buffer, fresh, c, address);
+                (None, Some(h))
+            }
+        }
+        Event::DragStopped => (None, None),
+        Event::Clicked(c) => {
+            let h = click_insert(buffer, fresh, c, address);
+            (None, Some(h))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +263,146 @@ mod tests {
         assert!(!is_formula_buffer("123"));
         assert!(!is_formula_buffer("hello"));
         assert!(!is_formula_buffer(" hello"));
+    }
+
+    // --- T-002: dispatch ---
+
+    #[test]
+    fn dispatch_noop_when_not_formula() {
+        let mut buf = String::from("hello");
+        let mut fresh = false;
+        let (drag, h) = dispatch(
+            &mut buf,
+            &mut fresh,
+            None,
+            Event::Clicked((1u32, 2u32)),
+            square_addr,
+        );
+        assert_eq!(drag, None);
+        assert_eq!(h, None);
+        assert_eq!(buf, "hello");
+        assert!(!fresh);
+    }
+
+    #[test]
+    fn dispatch_drag_started_calls_drag_start() {
+        let mut buf = String::from("=SUM(");
+        let mut fresh = false;
+        let (drag, h) = dispatch(
+            &mut buf,
+            &mut fresh,
+            None,
+            Event::DragStarted((0u32, 0u32)),
+            square_addr,
+        );
+        assert!(drag.is_some());
+        assert!(h.is_some());
+        assert_eq!(buf, "=SUM(A1");
+        assert!(fresh);
+    }
+
+    #[test]
+    fn dispatch_dragged_calls_drag_extend() {
+        let mut buf = String::from("=SUM(A1");
+        let mut fresh = false;
+        let current = Some(DragState {
+            start: (0u32, 0u32),
+            buffer_anchor: "=SUM(".len(),
+        });
+        let (drag, h) = dispatch(
+            &mut buf,
+            &mut fresh,
+            current,
+            Event::Dragged((2, 3)),
+            square_addr,
+        );
+        assert!(drag.is_some());
+        assert!(h.is_some());
+        assert_eq!(buf, "=SUM(A1:C4");
+    }
+
+    #[test]
+    fn dispatch_clicked_calls_click_insert() {
+        let mut buf = String::from("=");
+        let mut fresh = false;
+        let (drag, h) = dispatch(
+            &mut buf,
+            &mut fresh,
+            None,
+            Event::Clicked((1u32, 2u32)),
+            square_addr,
+        );
+        assert_eq!(drag, None);
+        assert!(h.is_some());
+        assert_eq!(buf, "=B3");
+    }
+
+    #[test]
+    fn dispatch_drag_stopped_clears_drag() {
+        let mut buf = String::from("=SUM(A1:C4");
+        let mut fresh = false;
+        let current = Some(DragState {
+            start: (0u32, 0u32),
+            buffer_anchor: "=SUM(".len(),
+        });
+        let (drag, h) = dispatch(
+            &mut buf,
+            &mut fresh,
+            current,
+            Event::DragStopped,
+            square_addr,
+        );
+        assert_eq!(drag, None, "drag_stopped clears the in-flight drag");
+        assert_eq!(h, None);
+        assert_eq!(buf, "=SUM(A1:C4");
+    }
+
+    #[test]
+    fn dispatch_idle_returns_no_change() {
+        let mut buf = String::from("=");
+        let mut fresh = false;
+        let (drag, h) = dispatch(&mut buf, &mut fresh, None, Event::Idle, square_addr);
+        assert_eq!(drag, None);
+        assert_eq!(h, None);
+        assert_eq!(buf, "=");
+    }
+
+    // --- T-003: event_from_response ---
+
+    #[test]
+    fn event_from_response_clicked_returns_clicked() {
+        let e: Event<(u32, u32)> = event_from_response(true, false, false, false, Some((1, 2)));
+        assert_eq!(e, Event::Clicked((1, 2)));
+    }
+
+    #[test]
+    fn event_from_response_drag_started_returns_drag_started() {
+        let e: Event<(u32, u32)> = event_from_response(false, true, false, false, Some((0, 0)));
+        assert_eq!(e, Event::DragStarted((0, 0)));
+    }
+
+    #[test]
+    fn event_from_response_dragged_returns_dragged() {
+        let e: Event<(u32, u32)> = event_from_response(false, false, true, false, Some((3, 4)));
+        assert_eq!(e, Event::Dragged((3, 4)));
+    }
+
+    #[test]
+    fn event_from_response_drag_stopped_returns_drag_stopped() {
+        let e: Event<(u32, u32)> = event_from_response(false, false, false, true, None);
+        assert_eq!(e, Event::DragStopped);
+    }
+
+    #[test]
+    fn event_from_response_no_flags_returns_idle() {
+        let e: Event<(u32, u32)> = event_from_response(false, false, false, false, Some((1, 1)));
+        assert_eq!(e, Event::Idle);
+    }
+
+    #[test]
+    fn event_from_response_no_cell_under_pointer_falls_back() {
+        // Defensive: clicked=true with no cell → Idle, not a phantom Click.
+        let e: Event<(u32, u32)> = event_from_response(true, false, false, false, None);
+        assert_eq!(e, Event::Idle);
     }
 }
