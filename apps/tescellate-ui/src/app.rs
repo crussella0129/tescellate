@@ -447,6 +447,11 @@ pub struct TescellateApp {
     triangle_lattice: TriangleLattice,
     /// Geometry for the Voronoi sheet — carries seeds + bounding rect.
     voronoi_lattice: VoronoiLattice,
+    /// `Some(start_pos)` while a marquee drag is in progress on the Voronoi
+    /// panel. Cleared at `drag_stopped` (the marquee rect disappears, but the
+    /// selected cells stay outlined via `selection.extra` until the next
+    /// `collapse_to`). ADR-013.
+    voronoi_marquee_start: Option<egui::Pos2>,
     /// Which sheet is on screen.
     active: ActiveSheet,
     /// The square cursor as of the last frame — drives scroll-to-cursor.
@@ -736,6 +741,7 @@ impl TescellateApp {
             hex_lattice: HexLattice::pointy(HEX_SIZE),
             triangle_lattice: TriangleLattice::new(TRIANGLE_SIDE),
             voronoi_lattice: VoronoiLattice::default(),
+            voronoi_marquee_start: None,
             active: ActiveSheet::Square,
             prev_cursor: (0, 0),
             edit: None,
@@ -4874,6 +4880,33 @@ impl TescellateApp {
             }
         }
 
+        // Marquee drag (T-006A) — when NOT in formula mode, a main-response
+        // drag selects every cell whose centroid falls inside the screen
+        // rect from press to current pointer (ADR-013 centroid-in-rect rule).
+        // Seed-handle drags take precedence — T-006B adds that gate.
+        if !in_formula {
+            if response.drag_started() {
+                if let Some(p) = response.interact_pointer_pos() {
+                    self.voronoi_marquee_start = Some(p);
+                }
+            }
+            if response.dragged() {
+                if let (Some(start), Some(current)) =
+                    (self.voronoi_marquee_start, response.interact_pointer_pos())
+                {
+                    let rect = egui::Rect::from_two_pos(start, current);
+                    let hits = cells_in_screen_rect(&self.voronoi_lattice, rect, origin);
+                    self.voronoi.selection.extra.clear();
+                    self.voronoi.selection.extra.extend(hits);
+                }
+            }
+            if response.drag_stopped() {
+                // Marquee rect disappears; `selection.extra` persists until
+                // the next `collapse_to` (subsequent single click / arrow).
+                self.voronoi_marquee_start = None;
+            }
+        }
+
         // A click that lands on a widget cell is handled by the widget
         // pass (it owns the checkbox / button hit area), so suppress the
         // select-or-edit behaviour there. A formula-mode click is consumed
@@ -6096,8 +6129,6 @@ fn synced_voronoi_lattice(engine: &WorkbookEngine, sid: SheetId) -> VoronoiLatti
 /// lattice_centroid`) falls inside `screen_rect`. The unified marquee rule
 /// for a tessellation without rect-indexed coords (ADR-013). A degenerate
 /// rect (zero width or height) returns an empty `Vec`.
-// Wired into `draw_voronoi_grid`'s marquee pass by T-006A.
-#[allow(dead_code)]
 fn cells_in_screen_rect(
     lattice: &VoronoiLattice,
     screen_rect: egui::Rect,
