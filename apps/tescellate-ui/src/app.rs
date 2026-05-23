@@ -6092,6 +6092,30 @@ fn synced_voronoi_lattice(engine: &WorkbookEngine, sid: SheetId) -> VoronoiLatti
     engine.voronoi_lattice(sid).unwrap_or_default()
 }
 
+/// Every Voronoi cell whose centroid (in screen space, i.e. `origin +
+/// lattice_centroid`) falls inside `screen_rect`. The unified marquee rule
+/// for a tessellation without rect-indexed coords (ADR-013). A degenerate
+/// rect (zero width or height) returns an empty `Vec`.
+// Wired into `draw_voronoi_grid`'s marquee pass by T-006A.
+#[allow(dead_code)]
+fn cells_in_screen_rect(
+    lattice: &VoronoiLattice,
+    screen_rect: egui::Rect,
+    origin: egui::Pos2,
+) -> Vec<VoronoiCoord> {
+    if screen_rect.width() <= 0.0 || screen_rect.height() <= 0.0 {
+        return Vec::new();
+    }
+    (0..lattice.len() as u32)
+        .map(VoronoiCoord)
+        .filter(|&coord| {
+            let c = lattice.centroid(coord);
+            let p = egui::pos2(origin.x + c.x, origin.y + c.y);
+            screen_rect.contains(p)
+        })
+        .collect()
+}
+
 /// Whether `coord` is inside the currently-drawn triangle window.
 /// Mirrors `hex_in_view` — render and hit-test agree on the same bound.
 fn triangle_in_view(c: TriCoord) -> bool {
@@ -6243,6 +6267,51 @@ mod tests {
         let seeds = vec![[1.0, 2.0], [3.0, 4.0]];
         let out = apply_seed_drag(&seeds, 9, [5.0, 5.0], [-100.0, -100.0, 100.0, 100.0]);
         assert_eq!(out, seeds);
+    }
+
+    // --- T-005: cells_in_screen_rect (centroid-in-rect marquee) ---
+
+    fn marquee_lattice() -> VoronoiLattice {
+        use tescellate_tess::Rect;
+        let seeds = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(50.0, 0.0),
+            Point2::new(0.0, 50.0),
+            Point2::new(50.0, 50.0),
+        ];
+        let bounds = Rect {
+            min: Point2::new(-100.0, -100.0),
+            max: Point2::new(100.0, 100.0),
+        };
+        VoronoiLattice::new(seeds, bounds).unwrap()
+    }
+
+    #[test]
+    fn cells_in_screen_rect_includes_centroids_inside_rect() {
+        // origin=(100,100) → screen centroids at (100,100), (150,100),
+        // (100,150), (150,150). A thin horizontal band y∈[95..105] catches
+        // the two cells with y≈100: V(0) and V(1).
+        let lat = marquee_lattice();
+        let origin = egui::pos2(100.0, 100.0);
+        let rect = egui::Rect::from_min_max(egui::pos2(95.0, 95.0), egui::pos2(155.0, 105.0));
+        let hit = cells_in_screen_rect(&lat, rect, origin);
+        assert_eq!(hit, vec![VoronoiCoord(0), VoronoiCoord(1)]);
+    }
+
+    #[test]
+    fn cells_in_screen_rect_excludes_centroids_outside_rect() {
+        let lat = marquee_lattice();
+        let origin = egui::pos2(100.0, 100.0);
+        let rect = egui::Rect::from_min_max(egui::pos2(200.0, 200.0), egui::pos2(300.0, 300.0));
+        assert!(cells_in_screen_rect(&lat, rect, origin).is_empty());
+    }
+
+    #[test]
+    fn cells_in_screen_rect_degenerate_rect_returns_empty() {
+        let lat = marquee_lattice();
+        let origin = egui::pos2(100.0, 100.0);
+        let rect = egui::Rect::from_min_max(egui::pos2(100.0, 100.0), egui::pos2(100.0, 100.0));
+        assert!(cells_in_screen_rect(&lat, rect, origin).is_empty());
     }
 
     #[test]
