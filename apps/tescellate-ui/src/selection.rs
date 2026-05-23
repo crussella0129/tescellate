@@ -951,15 +951,21 @@ mod tests {
     }
 
     #[test]
-    fn selection_extra_persists_through_drag_end() {
-        // C-006: between drag-end and the next click, `extra` must persist
-        // (so outlines stay drawn). Simulate by populating extra and NOT
-        // calling collapse_to — the field is unchanged.
+    fn selection_extra_unchanged_by_extend_to_cursor_move() {
+        // C-008: extras survive any selection change that ISN'T a
+        // `collapse_to` — only `collapse_to` clears them (single-click
+        // semantics). `extend_to` moves the cursor but keeps extras intact
+        // so the rect outline can shift while the marquee outlines stay.
         let mut s = Selection::single((0u32, 0u32));
         s.extra.push((4, 4));
         s.extra.push((7, 7));
-        let snapshot = s.extra.clone();
-        // No collapse_to between here and the assert — extra persists.
-        assert_eq!(s.extra, snapshot);
+        let before = s.extra.clone();
+        s.extend_to((2, 2));
+        assert_eq!(s.cursor, (2, 2), "cursor moved");
+        assert_eq!(s.extra, before, "extras unchanged by extend_to");
+
+        // And only collapse_to clears them.
+        s.collapse_to((3, 3));
+        assert!(s.extra.is_empty(), "collapse_to clears extras");
     }
 }

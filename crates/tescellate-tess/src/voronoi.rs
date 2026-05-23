@@ -578,4 +578,30 @@ mod tests {
         let back: LatticeConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back, lc);
     }
+
+    // --- Sprint 17 C-005: parse_address round-trip (name-box Enter-to-jump) ---
+
+    #[test]
+    fn voronoi_parse_address_jumps_to_seed() {
+        let v = small(); // 4 seeds
+        assert_eq!(v.parse_address("V(0)").unwrap(), VoronoiCoord(0));
+        assert_eq!(v.parse_address("V(3)").unwrap(), VoronoiCoord(3));
+    }
+
+    #[test]
+    fn voronoi_parse_address_rejects_out_of_range() {
+        let v = small();
+        // 4 seeds → V(4) is out of range.
+        assert!(v.parse_address("V(4)").is_err());
+        assert!(v.parse_address("V(99)").is_err());
+    }
+
+    #[test]
+    fn voronoi_parse_address_rejects_malformed() {
+        let v = small();
+        assert!(v.parse_address("").is_err());
+        assert!(v.parse_address("A1").is_err());
+        assert!(v.parse_address("V").is_err());
+        assert!(v.parse_address("V()").is_err());
+    }
 }

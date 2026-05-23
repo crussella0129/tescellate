@@ -6405,6 +6405,20 @@ mod tests {
     }
 
     #[test]
+    fn cells_in_screen_rect_returns_non_contiguous_indices_in_order() {
+        // C-007: pick a rect that hits ONLY V(0) (centroid 100,100) and
+        // V(2) (centroid 100,150) — V(1) at 150,100 is excluded. Proves the
+        // iteration order is `0..len` (not "first N matched" or sorted).
+        let lat = marquee_lattice();
+        let origin = egui::pos2(100.0, 100.0);
+        // A narrow vertical band at x≈100 catches V(0) and V(2) but not
+        // V(1) at x=150 nor V(3) at x=150.
+        let rect = egui::Rect::from_min_max(egui::pos2(95.0, 95.0), egui::pos2(105.0, 155.0));
+        let hits = cells_in_screen_rect(&lat, rect, origin);
+        assert_eq!(hits, vec![VoronoiCoord(0), VoronoiCoord(2)]);
+    }
+
+    #[test]
     fn synced_voronoi_lattice_matches_engine_config() {
         // C-005: the load/post-drag resync reflects the engine's stored seeds,
         // not the default — the anti-drift guard for the dual-source split.

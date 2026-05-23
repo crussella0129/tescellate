@@ -285,6 +285,32 @@ mod tests {
     }
 
     #[test]
+    fn dispatch_keeps_drag_when_not_formula() {
+        // C-001: with a drag in flight and a non-formula buffer, dispatch
+        // must PRESERVE current_drag so a return-to-formula frame can
+        // continue the range, rather than silently aborting.
+        let mut buf = String::from("hello");
+        let mut fresh = false;
+        let current = Some(DragState {
+            start: (0u32, 0u32),
+            buffer_anchor: 0,
+        });
+        let (drag, h) = dispatch(
+            &mut buf,
+            &mut fresh,
+            current,
+            Event::Clicked((1u32, 2u32)),
+            square_addr,
+        );
+        assert_eq!(
+            drag, current,
+            "current_drag preserved through non-formula frame"
+        );
+        assert_eq!(h, None);
+        assert_eq!(buf, "hello");
+    }
+
+    #[test]
     fn dispatch_drag_started_calls_drag_start() {
         let mut buf = String::from("=SUM(");
         let mut fresh = false;
@@ -363,6 +389,22 @@ mod tests {
         let mut fresh = false;
         let (drag, h) = dispatch(&mut buf, &mut fresh, None, Event::Idle, square_addr);
         assert_eq!(drag, None);
+        assert_eq!(h, None);
+        assert_eq!(buf, "=");
+    }
+
+    #[test]
+    fn dispatch_idle_keeps_drag() {
+        // C-002: Idle is the common case between drag frames — current_drag
+        // must persist so the drag doesn't abort on the first quiet frame.
+        let mut buf = String::from("=");
+        let mut fresh = false;
+        let current = Some(DragState {
+            start: (0u32, 0u32),
+            buffer_anchor: 1,
+        });
+        let (drag, h) = dispatch(&mut buf, &mut fresh, current, Event::Idle, square_addr);
+        assert_eq!(drag, current, "current_drag preserved across an Idle frame");
         assert_eq!(h, None);
         assert_eq!(buf, "=");
     }
