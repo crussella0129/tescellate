@@ -4823,24 +4823,64 @@ impl TescellateApp {
         let (response, painter) = ui.allocate_painter(size, egui::Sense::click_and_drag());
         let origin = response.rect.center();
 
-        // Resolve the cell under each interaction's pointer up front so the
-        // handler bodies can call `&mut self` methods without aliasing.
-        let clicked_coord = if response.clicked() {
-            response.interact_pointer_pos().and_then(|p| {
-                let local = Point2::new(p.x - origin.x, p.y - origin.y);
-                self.voronoi_lattice.cell_at(local)
-            })
-        } else {
-            None
-        };
+        // Resolve the cell under the pointer up front so the handler bodies
+        // can call `&mut self` methods without aliasing.
+        let cell_under = response.interact_pointer_pos().and_then(|p| {
+            let local = Point2::new(p.x - origin.x, p.y - origin.y);
+            self.voronoi_lattice.cell_at(local)
+        });
+        let clicked_coord = response.clicked().then_some(cell_under).flatten();
         let doubled = response.double_clicked();
+
+        // Formula-mode dispatch — when the edit buffer starts with `=`, route
+        // click/drag through `formula_mode::dispatch` so a click inserts the
+        // cell's `V(n)` address and a drag extends a `V(a):V(b)` range, just
+        // like square/hex/triangle (ADR-013).
+        let in_formula = self
+            .edit
+            .as_ref()
+            .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
+        let formula_event = if in_formula {
+            formula_mode::event_from_response(
+                response.clicked(),
+                response.drag_started(),
+                response.dragged(),
+                response.drag_stopped(),
+                cell_under,
+            )
+        } else {
+            formula_mode::Event::Idle
+        };
+        let formula_consumed_click = in_formula
+            && matches!(
+                formula_event,
+                formula_mode::Event::Clicked(_)
+                    | formula_mode::Event::DragStarted(_)
+                    | formula_mode::Event::Dragged(_)
+            );
+        if in_formula {
+            if let Some(edit) = self.edit.as_mut() {
+                let (new_drag, new_hl) = formula_mode::dispatch(
+                    &mut edit.buffer,
+                    &mut edit.fresh,
+                    self.voronoi.formula_drag,
+                    formula_event,
+                    voronoi_address,
+                );
+                self.voronoi.formula_drag = new_drag;
+                if let Some(h) = new_hl {
+                    self.voronoi.formula_highlight = Some(h);
+                }
+            }
+        }
 
         // A click that lands on a widget cell is handled by the widget
         // pass (it owns the checkbox / button hit area), so suppress the
-        // select-or-edit behaviour there.
+        // select-or-edit behaviour there. A formula-mode click is consumed
+        // above and must NOT also collapse the selection.
         let clicked_is_widget = clicked_coord.is_some_and(|c| self.voronoi_widgets.is_widget(c));
         if let Some(coord) = clicked_coord {
-            if !clicked_is_widget {
+            if !clicked_is_widget && !formula_consumed_click {
                 self.commit_edit();
                 self.voronoi.selection.collapse_to(coord);
                 if doubled {
