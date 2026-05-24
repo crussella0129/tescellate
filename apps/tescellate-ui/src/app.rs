@@ -5051,12 +5051,15 @@ impl TescellateApp {
                 }
                 let centroid = self.voronoi_lattice.centroid(coord);
                 // Decide pop-out: handle is "visible" when cursor proximity
-                // produces a non-zero fade alpha at this seed.
+                // produces a non-zero fade alpha at this seed AND the sheet
+                // isn't frozen (T-008: frozen → no handles → no pop-out).
                 let centroid_screen = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
-                let handle_visible = match widget_cursor {
-                    Some(c) => fade_alpha((centroid_screen - c).length()) > 0,
-                    None => false,
-                };
+                let frozen = self.engine.voronoi_frozen(self.voronoi.sheet_id);
+                let handle_visible = !frozen
+                    && match widget_cursor {
+                        Some(c) => fade_alpha((centroid_screen - c).length()) > 0,
+                        None => false,
+                    };
                 let lattice_center = if handle_visible {
                     pop_out_widget_center(centroid, WIDGET_POP_OUT_OFFSET, coord, |p| {
                         self.voronoi_lattice.cell_at(p)
@@ -5110,7 +5113,11 @@ impl TescellateApp {
         // would make two seeds coincident is rejected by the engine, so the
         // handle snaps back (cache left unchanged). The handles draw last so
         // they sit on top of the cell fills and selection stroke.
-        {
+        // **T-008 (ADR-014):** skipped entirely when the sheet is frozen —
+        // no handles drawn, no `ui.interact` (so no drag possible). The
+        // widget pass also treats `handle_visible = false` while frozen.
+        let frozen = self.engine.voronoi_frozen(self.voronoi.sheet_id);
+        if !frozen {
             let seeds: Vec<[f32; 2]> = self
                 .voronoi_lattice
                 .seeds
