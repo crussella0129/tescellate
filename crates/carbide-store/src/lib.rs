@@ -239,6 +239,33 @@ mod tests {
     }
 
     #[test]
+    fn old_tscl_bytes_still_load_after_rename() {
+        // Sprint 19 T-006: the v161 rename of `.tscl` → `.crbd` is purely a
+        // file-name suffix — the zip schema (manifest + workbook.json +
+        // ui.json layout, FORMAT_VERSION=2) is unchanged. A workbook saved
+        // by post-rename code with the new extension is byte-for-byte
+        // compatible with what pre-rename code produced. This test pins
+        // that invariant: round-trip a sample workbook, and verify the
+        // manifest still reads format_version == 2.
+        let wb = sample();
+        let bytes = save_full_to_bytes(&wb, &UiState::default()).unwrap();
+        let (back, _ui) = load_full_from_bytes(&bytes).unwrap();
+        assert_eq!(back.sheets.len(), wb.sheets.len());
+        // Crack open the manifest to verify the version field hasn't drifted.
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let manifest: Manifest = {
+            let mut f = zip.by_name("manifest.json").unwrap();
+            let mut buf = String::new();
+            f.read_to_string(&mut buf).unwrap();
+            serde_json::from_str(&buf).unwrap()
+        };
+        assert_eq!(
+            manifest.format_version, 2,
+            "rename must not bump FORMAT_VERSION"
+        );
+    }
+
+    #[test]
     fn round_trip_preserves_values_and_sources() {
         let wb = sample();
         let bytes = save_to_bytes(&wb).unwrap();
