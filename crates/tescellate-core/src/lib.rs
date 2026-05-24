@@ -108,6 +108,7 @@ mod tests {
         let cfg = LatticeConfig::Voronoi(VoronoiConfig {
             seeds: vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]],
             bounds: [-20.0, -20.0, 20.0, 20.0],
+            frozen: false,
         });
         let sheet = Sheet {
             id: SheetId(7),

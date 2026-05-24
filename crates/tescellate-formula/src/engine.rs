@@ -802,12 +802,18 @@ impl WorkbookEngine {
             }
             s.lattice_config.clone()
         };
-        // Preserve the sheet's current bounds (default lattice's if unset).
-        let bounds = match existing {
-            Some(LatticeConfig::Voronoi(cfg)) => cfg.bounds,
-            _ => VoronoiConfig::from(&VoronoiLattice::default()).bounds,
+        // Preserve the sheet's current bounds + frozen flag from the
+        // existing config (default lattice's bounds + `frozen=false` if
+        // unset). Pattern-match by ref so we don't partially move.
+        let (bounds, frozen) = match &existing {
+            Some(LatticeConfig::Voronoi(cfg)) => (cfg.bounds, cfg.frozen),
+            _ => (VoronoiConfig::from(&VoronoiLattice::default()).bounds, false),
         };
-        let cfg = VoronoiConfig { seeds, bounds };
+        let cfg = VoronoiConfig {
+            seeds,
+            bounds,
+            frozen,
+        };
         // Validate BEFORE mutating so a reject (coincident/degenerate) leaves
         // the stored config untouched.
         cfg.to_lattice()
@@ -2061,6 +2067,7 @@ mod tests {
         let cfg = tescellate_tess::VoronoiConfig {
             seeds,
             bounds: [-20.0, -20.0, 20.0, 20.0],
+            frozen: false,
         };
         eng.workbook.sheets.get_mut(&sid).unwrap().lattice_config =
             Some(LatticeConfig::Voronoi(cfg));

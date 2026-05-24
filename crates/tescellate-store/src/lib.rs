@@ -259,6 +259,7 @@ mod tests {
         let cfg = LatticeConfig::Voronoi(VoronoiConfig {
             seeds: vec![[1.0, 2.0], [30.0, -4.0], [-5.0, 25.0]],
             bounds: [-100.0, -100.0, 100.0, 100.0],
+            frozen: false,
         });
         let sid = SheetId(1);
         let mut sheets = HashMap::new();
