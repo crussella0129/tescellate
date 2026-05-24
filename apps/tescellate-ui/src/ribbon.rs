@@ -104,6 +104,9 @@ pub enum RibbonAction {
     Save,
     /// Open a workbook (Ctrl+O).
     Open,
+    /// Toggle the Voronoi sheet's frozen-seeds flag (ADR-014). Locks /
+    /// unlocks the seed-handle drag + proximity-fade.
+    ToggleVoronoiFreeze,
 }
 
 /// The number formats the ribbon's combo offers, with display labels. The
@@ -182,6 +185,7 @@ const GROUP_WIDTHS: &[f32] = &[
     184.0, // Cells (Clear, Conditional…, Checkbox)
     78.0,  // Data (AutoSum)
     92.0,  // View (?, Theme)
+    138.0, // Voronoi (contextual — hidden when active sheet isn't Voronoi)
 ];
 
 /// Width reserved at the right edge for the "More ⋮" overflow menu.
@@ -522,6 +526,32 @@ fn group_view(ui: &mut egui::Ui) -> Option<RibbonAction> {
     action
 }
 
+/// Contextual Voronoi group — only rendered when the active sheet is the
+/// Voronoi tab. Holds the "Freeze Seeds" toggle (ADR-014). The button's
+/// visual state reflects the current freeze flag so the user can see at a
+/// glance whether the tessellation is locked.
+fn group_voronoi(ui: &mut egui::Ui, frozen: bool) -> Option<RibbonAction> {
+    let mut action = None;
+    let label = if frozen {
+        "Unfreeze Seeds"
+    } else {
+        "Freeze Seeds"
+    };
+    let mut btn = egui::Button::new(label);
+    if frozen {
+        // Highlight when active so the user can see the lock.
+        btn = btn.fill(egui::Color32::from_rgb(70, 120, 220));
+    }
+    if ui
+        .add(btn)
+        .on_hover_text("Lock the Voronoi tessellation (hides seed handles, suppresses drag)")
+        .clicked()
+    {
+        action = Some(RibbonAction::ToggleVoronoiFreeze);
+    }
+    action
+}
+
 /// How many of the leading groups fit on a single ribbon row of width
 /// `available`. Trailing groups beyond the count overflow into the
 /// "More ⋮" menu. Always returns at least 1 — if even the first group
@@ -559,10 +589,19 @@ pub fn ribbon(
     can_undo: bool,
     can_redo: bool,
     painter_armed: bool,
+    voronoi_active: bool,
+    voronoi_frozen: bool,
 ) -> Option<RibbonAction> {
     let mut action: Option<RibbonAction> = None;
     let avail = ui.available_width();
-    let visible = fit_count(GROUP_WIDTHS, avail);
+    // Hide the Voronoi group's width contribution when it's not visible —
+    // otherwise non-Voronoi sheets reserve space for an invisible group.
+    let widths: Vec<f32> = GROUP_WIDTHS
+        .iter()
+        .enumerate()
+        .map(|(i, &w)| if i == 10 && !voronoi_active { 0.0 } else { w })
+        .collect();
+    let visible = fit_count(&widths, avail);
 
     ui.horizontal(|ui| {
         let mut emit = |a: Option<RibbonAction>| {
@@ -588,6 +627,9 @@ pub fn ribbon(
                 7 => emit(ribbon_group(ui, "Cells", group_cells)),
                 8 => emit(ribbon_group(ui, "Data", group_data)),
                 9 => emit(ribbon_group(ui, "View", group_view)),
+                10 if voronoi_active => emit(ribbon_group(ui, "Voronoi", |ui| {
+                    group_voronoi(ui, voronoi_frozen)
+                })),
                 _ => {}
             }
         }
@@ -606,8 +648,13 @@ pub fn ribbon(
                         7 => "Cells",
                         8 => "Data",
                         9 => "View",
+                        10 if voronoi_active => "Voronoi",
                         _ => "",
                     };
+                    if title.is_empty() {
+                        // Hidden group (e.g. Voronoi on a non-Voronoi sheet).
+                        continue;
+                    }
                     ui.label(egui::RichText::new(title).strong());
                     ui.horizontal_wrapped(|ui| {
                         let a = match i {
@@ -621,6 +668,7 @@ pub fn ribbon(
                             7 => group_cells(ui),
                             8 => group_data(ui),
                             9 => group_view(ui),
+                            10 if voronoi_active => group_voronoi(ui, voronoi_frozen),
                             _ => None,
                         };
                         if let Some(a) = a {

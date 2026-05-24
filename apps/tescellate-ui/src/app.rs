@@ -1486,6 +1486,12 @@ impl TescellateApp {
             RibbonAction::OpenAbout => self.about_open = true,
             RibbonAction::Save => self.handle_save(false),
             RibbonAction::Open => self.handle_open(),
+            RibbonAction::ToggleVoronoiFreeze => {
+                let sid = self.voronoi.sheet_id;
+                let now = self.engine.voronoi_frozen(sid);
+                let _ = self.engine.set_voronoi_frozen(sid, !now);
+                self.mark_dirty();
+            }
         }
     }
 
@@ -5524,6 +5530,8 @@ impl eframe::App for TescellateApp {
                         can_undo,
                         can_redo,
                         self.format_painter.is_some(),
+                        false, // voronoi_active
+                        false, // voronoi_frozen
                     ) {
                         self.apply_ribbon(action, ctx);
                     }
@@ -5552,6 +5560,8 @@ impl eframe::App for TescellateApp {
                         can_undo,
                         can_redo,
                         self.format_painter.is_some(),
+                        false, // voronoi_active
+                        false, // voronoi_frozen
                     ) {
                         self.apply_ribbon(action, ctx);
                     }
@@ -5566,11 +5576,30 @@ impl eframe::App for TescellateApp {
                         can_undo,
                         can_redo,
                         self.format_painter.is_some(),
+                        false, // voronoi_active
+                        false, // voronoi_frozen
                     ) {
                         self.apply_ribbon(action, ctx);
                     }
                 }
-                ActiveSheet::Voronoi => {}
+                ActiveSheet::Voronoi => {
+                    // T-007: contextual Voronoi ribbon group surfaces only here.
+                    let current = CellFormat::default();
+                    let can_undo = self.history.can_undo();
+                    let can_redo = self.history.can_redo();
+                    let frozen = self.engine.voronoi_frozen(self.voronoi.sheet_id);
+                    if let Some(action) = ribbon::ribbon(
+                        ui,
+                        &current,
+                        can_undo,
+                        can_redo,
+                        self.format_painter.is_some(),
+                        true,
+                        frozen,
+                    ) {
+                        self.apply_ribbon(action, ctx);
+                    }
+                }
             });
         }
 
