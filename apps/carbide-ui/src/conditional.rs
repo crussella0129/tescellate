@@ -5,8 +5,8 @@
 //! value satisfies the condition, the rule's format is layered over the
 //! cell's own. Pure — no egui, no engine — so `cargo test` covers it.
 
-use serde::{Deserialize, Serialize};
 use carbide_core::CellValue;
+use serde::{Deserialize, Serialize};
 
 use crate::format::CellFormat;
 

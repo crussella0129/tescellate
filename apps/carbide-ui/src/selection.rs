@@ -11,10 +11,10 @@
 //! No egui and no engine here, so every method is exercised by
 //! ordinary `cargo test`.
 
-use smallvec::SmallVec;
 use carbide_core::SheetId;
 use carbide_tess::hex::HexCoord;
 use carbide_tess::triangle::TriCoord;
+use smallvec::SmallVec;
 
 use crate::format::FormatMap;
 use crate::formula_mode;

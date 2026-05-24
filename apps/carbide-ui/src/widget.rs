@@ -14,8 +14,8 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
 use carbide_core::CellValue;
+use serde::{Deserialize, Serialize};
 
 /// The kind of widget a cell renders as. Cells with no entry in
 /// [`Widgets`] render as ordinary text/number/formula cells.

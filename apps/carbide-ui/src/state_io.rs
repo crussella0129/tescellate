@@ -15,9 +15,9 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
 use carbide_tess::hex::HexCoord;
 use carbide_tess::triangle::TriCoord;
+use serde::{Deserialize, Serialize};
 
 use crate::conditional::Rule;
 use crate::format::FormatMap;
@@ -189,8 +189,7 @@ mod tests {
         hex_widgets.set_button(HexCoord::new(2, 2), true);
         let mut triangle_widgets: Widgets<TriCoord> = Widgets::default();
         triangle_widgets.set_toggle(TriCoord::new(2, -1), true);
-        let mut voronoi_widgets: Widgets<carbide_tess::voronoi::VoronoiCoord> =
-            Widgets::default();
+        let mut voronoi_widgets: Widgets<carbide_tess::voronoi::VoronoiCoord> = Widgets::default();
         voronoi_widgets.set_toggle(carbide_tess::voronoi::VoronoiCoord(5), true);
 
         let mut square_formats: FormatMap<(u32, u32)> = FormatMap::new();

@@ -3,8 +3,8 @@
 //! [`compare_values`] is the pure total order a column sort uses. No
 //! egui and no engine mutation here, so `cargo test` covers it.
 
-use std::cmp::Ordering;
 use carbide_core::CellValue;
+use std::cmp::Ordering;
 
 /// A coarse rank grouping [`CellValue`] variants for sorting: numbers
 /// first, then text, then booleans, then everything else (blank,

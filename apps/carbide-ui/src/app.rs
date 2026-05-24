@@ -7,13 +7,13 @@
 //! `carbide-tess`'s `HexLattice` as a real tessellation and is
 //! interactive too — both sheets share the pure `keymap` command layer.
 
-use eframe::egui;
 use carbide_core::{CellError, CellValue, EngineKind, SheetId};
 use carbide_formula::WorkbookEngine;
 use carbide_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
 use carbide_tess::triangle::{TriCoord, TriangleLattice};
 use carbide_tess::voronoi::{VoronoiCoord, VoronoiLattice};
 use carbide_tess::{Lattice, LatticeKind, Point2};
+use eframe::egui;
 
 use crate::clipboard::{Clipboard, CopiedCell, PasteMode, SourceLattice};
 use crate::conditional::{self, Condition, Rule};
