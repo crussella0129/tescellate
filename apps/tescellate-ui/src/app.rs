@@ -447,6 +447,11 @@ pub struct TescellateApp {
     triangle_lattice: TriangleLattice,
     /// Geometry for the Voronoi sheet — carries seeds + bounding rect.
     voronoi_lattice: VoronoiLattice,
+    /// `Some(start_pos)` while a marquee drag is in progress on the Voronoi
+    /// panel. Cleared at `drag_stopped` (the marquee rect disappears, but the
+    /// selected cells stay outlined via `selection.extra` until the next
+    /// `collapse_to`). ADR-013.
+    voronoi_marquee_start: Option<egui::Pos2>,
     /// Which sheet is on screen.
     active: ActiveSheet,
     /// The square cursor as of the last frame — drives scroll-to-cursor.
@@ -736,6 +741,7 @@ impl TescellateApp {
             hex_lattice: HexLattice::pointy(HEX_SIZE),
             triangle_lattice: TriangleLattice::new(TRIANGLE_SIDE),
             voronoi_lattice: VoronoiLattice::default(),
+            voronoi_marquee_start: None,
             active: ActiveSheet::Square,
             prev_cursor: (0, 0),
             edit: None,
@@ -1347,17 +1353,15 @@ impl TescellateApp {
             ActiveSheet::Square => self.square.selection = Selection::all(COLS, ROWS),
             ActiveSheet::Hex => {
                 let r = HEX_VIEW_RADIUS;
-                self.hex.selection = HexSelection {
-                    anchor: HexCoord::new(-r, -r),
-                    cursor: HexCoord::new(r, r),
-                };
+                self.hex.selection =
+                    HexSelection::from_anchor_cursor(HexCoord::new(-r, -r), HexCoord::new(r, r));
             }
             ActiveSheet::Triangle => {
                 let r = TRIANGLE_RADIUS;
-                self.triangle.selection = TriangleSelection {
-                    anchor: TriCoord::new(-r, -r),
-                    cursor: TriCoord::new(r, r),
-                };
+                self.triangle.selection = TriangleSelection::from_anchor_cursor(
+                    TriCoord::new(-r, -r),
+                    TriCoord::new(r, r),
+                );
             }
             ActiveSheet::Voronoi => {}
         }
@@ -1373,10 +1377,8 @@ impl TescellateApp {
                     grid::current_region(self.square.selection.cursor, COLS, ROWS, |c, r| {
                         self.square_occupied(c, r)
                     });
-                self.square.selection = Selection {
-                    anchor: (max_c, max_r),
-                    cursor: (min_c, min_r),
-                };
+                self.square.selection =
+                    Selection::from_anchor_cursor((max_c, max_r), (min_c, min_r));
             }
             ActiveSheet::Hex => {
                 let cursor = self.hex.selection.cursor;
@@ -1385,10 +1387,10 @@ impl TescellateApp {
                         let c = HexCoord::new(q, r);
                         hex_in_view(c) && self.hex_occupied(c)
                     });
-                self.hex.selection = HexSelection {
-                    anchor: HexCoord::new(max_q, max_r),
-                    cursor: HexCoord::new(min_q, min_r),
-                };
+                self.hex.selection = HexSelection::from_anchor_cursor(
+                    HexCoord::new(max_q, max_r),
+                    HexCoord::new(min_q, min_r),
+                );
             }
             ActiveSheet::Triangle => {
                 // Triangle data-region detection lands in a later
@@ -1494,7 +1496,7 @@ impl TescellateApp {
         if self.active != ActiveSheet::Square {
             return;
         }
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let all_on = cells.iter().all(|&c| self.square_widgets.is_toggle(c));
         for cell in cells {
             self.square_widgets.set_toggle(cell, !all_on);
@@ -1508,7 +1510,7 @@ impl TescellateApp {
         if self.active != ActiveSheet::Square {
             return;
         }
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let all_on = cells.iter().all(|&c| self.square_widgets.is_slider(c));
         for cell in cells {
             self.square_widgets.set_slider_default(cell, !all_on);
@@ -1521,7 +1523,7 @@ impl TescellateApp {
         if self.active != ActiveSheet::Square {
             return;
         }
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let all_on = cells.iter().all(|&c| self.square_widgets.is_button(c));
         for cell in cells {
             self.square_widgets.set_button(cell, !all_on);
@@ -1535,7 +1537,7 @@ impl TescellateApp {
         if self.active != ActiveSheet::Square {
             return;
         }
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let all_on = cells
             .iter()
             .all(|&c| self.square_widgets.is_progress_bar(c));
@@ -1757,7 +1759,7 @@ impl TescellateApp {
     /// The square-sheet border apply — `border_sides` per cell.
     fn apply_square_border(&mut self, mode: BorderMode) {
         let bounds = self.square.selection.bounds();
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let mut edits = Vec::new();
         for cell in cells {
             let before = self.square.formats.get(cell);
@@ -1783,15 +1785,17 @@ impl TescellateApp {
     /// `hex_outer_borders` — an edge is bordered only when the hex
     /// across it is not itself selected.
     fn apply_hex_border(&mut self, mode: BorderMode) {
-        let selection = self.hex.selection;
+        let selection = self.hex.selection.clone();
         let mut edits = Vec::new();
-        for cell in selection.cells() {
+        for cell in selection.primary_cells() {
             let before = self.hex.formats.get(cell);
             let mut after = before.clone();
             after.hex_borders = match mode {
                 BorderMode::None => HexBorders::default(),
                 BorderMode::All => HexBorders::all(),
-                BorderMode::Outer => format::hex_outer_borders(cell, |c| selection.contains(c)),
+                BorderMode::Outer => {
+                    format::hex_outer_borders(cell, |c| selection.primary_contains(c))
+                }
             };
             if before == after {
                 continue;
@@ -2271,7 +2275,7 @@ impl TescellateApp {
                 // Triangle format coalescing lands in a follow-up;
                 // apply the edit directly without the same-cell drag
                 // merge logic so the basic flow still works.
-                let cells = self.triangle.selection.cells();
+                let cells = self.triangle.selection.primary_cells();
                 for cell in cells {
                     self.triangle.formats.update(cell, |f| edit(f));
                 }
@@ -2284,7 +2288,7 @@ impl TescellateApp {
     /// of same-cell format edits (a colour-picker drag) collapses into
     /// one undo step.
     fn format_square_range(&mut self, edit: impl Fn(&mut CellFormat)) {
-        let cells = self.square.selection.cells();
+        let cells = self.square.selection.primary_cells();
         let mut edits = Vec::new();
         for cell in cells {
             let before = self.square.formats.get(cell);
@@ -2332,7 +2336,7 @@ impl TescellateApp {
     /// run of same-cell edits (a colour drag) coalesces into one step.
     fn format_hex_range(&mut self, edit: impl Fn(&mut CellFormat)) {
         let mut edits = Vec::new();
-        for cell in self.hex.selection.cells() {
+        for cell in self.hex.selection.primary_cells() {
             let before = self.hex.formats.get(cell);
             let mut after = before.clone();
             edit(&mut after);
@@ -2383,15 +2387,15 @@ impl TescellateApp {
     ) {
         let target = match self.active {
             ActiveSheet::Square => {
-                let cells = self.square.selection.cells();
+                let cells = self.square.selection.primary_cells();
                 toggle_target(cells.iter().map(|&c| get(&self.square.formats.get(c))))
             }
             ActiveSheet::Hex => {
-                let cells = self.hex.selection.cells();
+                let cells = self.hex.selection.primary_cells();
                 toggle_target(cells.iter().map(|&c| get(&self.hex.formats.get(c))))
             }
             ActiveSheet::Triangle => {
-                let cells = self.triangle.selection.cells();
+                let cells = self.triangle.selection.primary_cells();
                 toggle_target(cells.iter().map(|&c| get(&self.triangle.formats.get(c))))
             }
             // Voronoi sheet has no format pipeline in v150 — leave the
@@ -2835,10 +2839,8 @@ impl TescellateApp {
                 // Select the pasted block, the active cell at its top-left.
                 let end_c = (target_c + width - 1).min(COLS - 1);
                 let end_r = (target_r + height - 1).min(ROWS - 1);
-                self.square.selection = SquareSelection {
-                    anchor: (end_c, end_r),
-                    cursor: (target_c, target_r),
-                };
+                self.square.selection =
+                    SquareSelection::from_anchor_cursor((end_c, end_r), (target_c, target_r));
             }
             ActiveSheet::Hex => {
                 let cursor = self.hex.selection.cursor;
@@ -2866,10 +2868,7 @@ impl TescellateApp {
                 self.apply_edits(self.hex.sheet_id, targets);
                 // Select the pasted block, the cursor at its origin.
                 let far = HexCoord::new(cursor.q + width as i32 - 1, cursor.r + height as i32 - 1);
-                self.hex.selection = HexSelection {
-                    anchor: far,
-                    cursor,
-                };
+                self.hex.selection = HexSelection::from_anchor_cursor(far, cursor);
             }
             ActiveSheet::Triangle => {
                 let cursor = self.triangle.selection.cursor;
@@ -2900,10 +2899,7 @@ impl TescellateApp {
                     cursor.col + width as i32 - 1,
                     cursor.row + height as i32 - 1,
                 );
-                self.triangle.selection = TriangleSelection {
-                    anchor: far,
-                    cursor,
-                };
+                self.triangle.selection = TriangleSelection::from_anchor_cursor(far, cursor);
             }
             ActiveSheet::Voronoi => {}
         }
@@ -3380,14 +3376,17 @@ impl TescellateApp {
                             .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
                         {
                             if let Some(edit) = self.edit.as_mut() {
-                                let (drag, hl) = formula_mode::drag_start(
+                                let (new_drag, new_hl) = formula_mode::dispatch(
                                     &mut edit.buffer,
                                     &mut edit.fresh,
-                                    cell,
+                                    self.square.formula_drag,
+                                    formula_mode::Event::DragStarted(cell),
                                     |c| grid::cell_address(c.0, c.1),
                                 );
-                                self.square.formula_drag = Some(drag);
-                                self.square.formula_highlight = Some(hl);
+                                self.square.formula_drag = new_drag;
+                                if let Some(h) = new_hl {
+                                    self.square.formula_highlight = Some(h);
+                                }
                             }
                         }
                     } else if let Some(col) = self.metrics.col_header_at(col_hdr_origin, p, COLS) {
@@ -3449,20 +3448,23 @@ impl TescellateApp {
                             self.square.selection.extend_to(clamped);
                             self.fill_drag = Some(fill);
                         }
-                    } else if let Some(drag) = self.square.formula_drag {
+                    } else if self.square.formula_drag.is_some() {
                         if let Some(cell) = self
                             .metrics
                             .cell_at_frozen(origin, header_x, header_y, p, COLS, ROWS)
                         {
                             if let Some(edit) = self.edit.as_mut() {
-                                let hl = formula_mode::drag_extend(
+                                let (new_drag, new_hl) = formula_mode::dispatch(
                                     &mut edit.buffer,
                                     &mut edit.fresh,
-                                    &drag,
-                                    cell,
+                                    self.square.formula_drag,
+                                    formula_mode::Event::Dragged(cell),
                                     |c| grid::cell_address(c.0, c.1),
                                 );
-                                self.square.formula_highlight = Some(hl);
+                                self.square.formula_drag = new_drag;
+                                if let Some(h) = new_hl {
+                                    self.square.formula_highlight = Some(h);
+                                }
                             }
                         }
                     } else {
@@ -3514,13 +3516,17 @@ impl TescellateApp {
                     .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
                 if in_formula {
                     if let Some(edit) = self.edit.as_mut() {
-                        let hl = formula_mode::click_insert(
+                        let (new_drag, new_hl) = formula_mode::dispatch(
                             &mut edit.buffer,
                             &mut edit.fresh,
-                            cell,
+                            self.square.formula_drag,
+                            formula_mode::Event::Clicked(cell),
                             |c| grid::cell_address(c.0, c.1),
                         );
-                        self.square.formula_highlight = Some(hl);
+                        self.square.formula_drag = new_drag;
+                        if let Some(h) = new_hl {
+                            self.square.formula_highlight = Some(h);
+                        }
                     }
                 } else if let Some(fmt) = self.format_painter.take() {
                     // Format painter — paint the captured format onto the
@@ -4100,13 +4106,17 @@ impl TescellateApp {
                 .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
             if in_formula {
                 if let Some(edit) = self.edit.as_mut() {
-                    let hl = formula_mode::click_insert(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        coord,
+                        self.hex.formula_drag,
+                        formula_mode::Event::Clicked(coord),
                         hex_address,
                     );
-                    self.hex.formula_highlight = Some(hl);
+                    self.hex.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.hex.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.commit_edit();
@@ -4127,14 +4137,17 @@ impl TescellateApp {
                 .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
             if in_formula {
                 if let Some(edit) = self.edit.as_mut() {
-                    let (drag, hl) = formula_mode::drag_start(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        coord,
+                        self.hex.formula_drag,
+                        formula_mode::Event::DragStarted(coord),
                         hex_address,
                     );
-                    self.hex.formula_drag = Some(drag);
-                    self.hex.formula_highlight = Some(hl);
+                    self.hex.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.hex.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.commit_edit();
@@ -4142,16 +4155,19 @@ impl TescellateApp {
             }
         }
         if let Some(coord) = dragged_coord {
-            if let Some(drag) = self.hex.formula_drag {
+            if self.hex.formula_drag.is_some() {
                 if let Some(edit) = self.edit.as_mut() {
-                    let hl = formula_mode::drag_extend(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        &drag,
-                        coord,
+                        self.hex.formula_drag,
+                        formula_mode::Event::Dragged(coord),
                         hex_address,
                     );
-                    self.hex.formula_highlight = Some(hl);
+                    self.hex.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.hex.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.hex.selection.extend_to(coord);
@@ -4487,13 +4503,17 @@ impl TescellateApp {
                 .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
             if in_formula {
                 if let Some(edit) = self.edit.as_mut() {
-                    let hl = formula_mode::click_insert(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        coord,
+                        self.triangle.formula_drag,
+                        formula_mode::Event::Clicked(coord),
                         triangle_address,
                     );
-                    self.triangle.formula_highlight = Some(hl);
+                    self.triangle.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.triangle.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.commit_edit();
@@ -4511,14 +4531,17 @@ impl TescellateApp {
                 .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
             if in_formula {
                 if let Some(edit) = self.edit.as_mut() {
-                    let (drag, hl) = formula_mode::drag_start(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        coord,
+                        self.triangle.formula_drag,
+                        formula_mode::Event::DragStarted(coord),
                         triangle_address,
                     );
-                    self.triangle.formula_drag = Some(drag);
-                    self.triangle.formula_highlight = Some(hl);
+                    self.triangle.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.triangle.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.commit_edit();
@@ -4526,16 +4549,19 @@ impl TescellateApp {
             }
         }
         if let Some(coord) = dragged_coord {
-            if let Some(drag) = self.triangle.formula_drag {
+            if self.triangle.formula_drag.is_some() {
                 if let Some(edit) = self.edit.as_mut() {
-                    let hl = formula_mode::drag_extend(
+                    let (new_drag, new_hl) = formula_mode::dispatch(
                         &mut edit.buffer,
                         &mut edit.fresh,
-                        &drag,
-                        coord,
+                        self.triangle.formula_drag,
+                        formula_mode::Event::Dragged(coord),
                         triangle_address,
                     );
-                    self.triangle.formula_highlight = Some(hl);
+                    self.triangle.formula_drag = new_drag;
+                    if let Some(h) = new_hl {
+                        self.triangle.formula_highlight = Some(h);
+                    }
                 }
             } else {
                 self.triangle.selection.extend_to(coord);
@@ -4803,24 +4829,101 @@ impl TescellateApp {
         let (response, painter) = ui.allocate_painter(size, egui::Sense::click_and_drag());
         let origin = response.rect.center();
 
-        // Resolve the cell under each interaction's pointer up front so the
-        // handler bodies can call `&mut self` methods without aliasing.
-        let clicked_coord = if response.clicked() {
-            response.interact_pointer_pos().and_then(|p| {
-                let local = Point2::new(p.x - origin.x, p.y - origin.y);
-                self.voronoi_lattice.cell_at(local)
-            })
-        } else {
-            None
-        };
+        // Resolve the cell under the pointer up front so the handler bodies
+        // can call `&mut self` methods without aliasing.
+        let cell_under = response.interact_pointer_pos().and_then(|p| {
+            let local = Point2::new(p.x - origin.x, p.y - origin.y);
+            self.voronoi_lattice.cell_at(local)
+        });
+        let clicked_coord = response.clicked().then_some(cell_under).flatten();
         let doubled = response.double_clicked();
+
+        // Formula-mode dispatch — when the edit buffer starts with `=`, route
+        // click/drag through `formula_mode::dispatch` so a click inserts the
+        // cell's `V(n)` address and a drag extends a `V(a):V(b)` range, just
+        // like square/hex/triangle (ADR-013).
+        let in_formula = self
+            .edit
+            .as_ref()
+            .is_some_and(|e| formula_mode::is_formula_buffer(&e.buffer));
+        let formula_event = if in_formula {
+            formula_mode::event_from_response(
+                response.clicked(),
+                response.drag_started(),
+                response.dragged(),
+                response.drag_stopped(),
+                cell_under,
+            )
+        } else {
+            formula_mode::Event::Idle
+        };
+        let formula_consumed_click = in_formula
+            && matches!(
+                formula_event,
+                formula_mode::Event::Clicked(_)
+                    | formula_mode::Event::DragStarted(_)
+                    | formula_mode::Event::Dragged(_)
+            );
+        if in_formula {
+            if let Some(edit) = self.edit.as_mut() {
+                let (new_drag, new_hl) = formula_mode::dispatch(
+                    &mut edit.buffer,
+                    &mut edit.fresh,
+                    self.voronoi.formula_drag,
+                    formula_event,
+                    voronoi_address,
+                );
+                self.voronoi.formula_drag = new_drag;
+                if let Some(h) = new_hl {
+                    self.voronoi.formula_highlight = Some(h);
+                }
+            }
+        }
+
+        // Marquee drag (T-006A/B) — when NOT in formula mode, a main-response
+        // drag selects every cell whose centroid falls inside the screen
+        // rect from press to current pointer (ADR-013 centroid-in-rect rule).
+        // **Seed-handle precedence (T-006B):** a press within `SEED_HANDLE_RADIUS`
+        // of any seed centroid is treated as a seed-handle drag (handled later
+        // in the seed-handle pass) and skips the marquee.
+        const SEED_HANDLE_RADIUS: f32 = 5.0;
+        if !in_formula {
+            if response.drag_started() {
+                if let Some(p) = response.interact_pointer_pos() {
+                    let on_handle = (0..self.voronoi_lattice.len() as u32).any(|i| {
+                        let c = self.voronoi_lattice.centroid(VoronoiCoord(i));
+                        let center = egui::pos2(origin.x + c.x, origin.y + c.y);
+                        center.distance(p) <= SEED_HANDLE_RADIUS
+                    });
+                    if !on_handle {
+                        self.voronoi_marquee_start = Some(p);
+                    }
+                }
+            }
+            if response.dragged() {
+                if let (Some(start), Some(current)) =
+                    (self.voronoi_marquee_start, response.interact_pointer_pos())
+                {
+                    let rect = egui::Rect::from_two_pos(start, current);
+                    let hits = cells_in_screen_rect(&self.voronoi_lattice, rect, origin);
+                    self.voronoi.selection.extra.clear();
+                    self.voronoi.selection.extra.extend(hits);
+                }
+            }
+            if response.drag_stopped() {
+                // Marquee rect disappears; `selection.extra` persists until
+                // the next `collapse_to` (subsequent single click / arrow).
+                self.voronoi_marquee_start = None;
+            }
+        }
 
         // A click that lands on a widget cell is handled by the widget
         // pass (it owns the checkbox / button hit area), so suppress the
-        // select-or-edit behaviour there.
+        // select-or-edit behaviour there. A formula-mode click is consumed
+        // above and must NOT also collapse the selection.
         let clicked_is_widget = clicked_coord.is_some_and(|c| self.voronoi_widgets.is_widget(c));
         if let Some(coord) = clicked_coord {
-            if !clicked_is_widget {
+            if !clicked_is_widget && !formula_consumed_click {
                 self.commit_edit();
                 self.voronoi.selection.collapse_to(coord);
                 if doubled {
@@ -4883,11 +4986,15 @@ impl TescellateApp {
             );
         }
 
-        // Third pass — selection stroke around the selected cell.
+        // Third pass — selection stroke around every selected cell. Uses
+        // `selection.cells()` which (after T-001) returns the rect cells +
+        // `extra`, so marquee-selected cells get outlined too (ADR-013).
         let sel_stroke = egui::Stroke::new(2.5, egui::Color32::from_rgb(70, 120, 220));
-        let selected = self.voronoi.selection.cursor;
-        let verts = self.voronoi_lattice.vertices(selected);
-        if !verts.is_empty() {
+        for coord in self.voronoi.selection.cells() {
+            let verts = self.voronoi_lattice.vertices(coord);
+            if verts.is_empty() {
+                continue;
+            }
             let mut pts: Vec<egui::Pos2> = verts
                 .iter()
                 .map(|v| egui::pos2(origin.x + v.x, origin.y + v.y))
@@ -4896,6 +5003,26 @@ impl TescellateApp {
                 pts.push(first);
             }
             painter.add(egui::Shape::line(pts, sel_stroke));
+        }
+
+        // Translucent marquee rect (T-006B) — visible while a marquee drag is
+        // in progress; disappears on release (selection.extra persists).
+        if let (Some(start), Some(current)) =
+            (self.voronoi_marquee_start, response.interact_pointer_pos())
+        {
+            if response.dragged() {
+                let rect = egui::Rect::from_two_pos(start, current);
+                painter.rect_filled(
+                    rect,
+                    0.0,
+                    egui::Color32::from_rgba_premultiplied(70, 120, 220, 30),
+                );
+                painter.rect_stroke(
+                    rect,
+                    0.0,
+                    egui::Stroke::new(1.5, egui::Color32::from_rgb(70, 120, 220)),
+                );
+            }
         }
 
         // Widget pass — Button + Toggle inscribed at each widget cell's
@@ -5434,7 +5561,27 @@ impl eframe::App for TescellateApp {
                             ActiveSheet::Triangle => {
                                 ui.monospace(addr.clone());
                             }
-                            ActiveSheet::Voronoi => {}
+                            ActiveSheet::Voronoi => {
+                                // T-007: Voronoi name box — display the active
+                                // V(n) address; pressing Enter on a typed
+                                // address jumps the cursor there.
+                                let response = ui.add(
+                                    egui::TextEdit::singleline(&mut self.name_box)
+                                        .desired_width(64.0)
+                                        .font(egui::TextStyle::Monospace),
+                                );
+                                if response.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                {
+                                    if let Ok(coord) =
+                                        self.voronoi_lattice.parse_address(&self.name_box)
+                                    {
+                                        self.voronoi.selection.collapse_to(coord);
+                                    }
+                                } else if !response.has_focus() {
+                                    self.name_box = addr.clone();
+                                }
+                            }
                         }
                         match self.active {
                             ActiveSheet::Square if self.square.selection.is_range() => {
@@ -5444,6 +5591,11 @@ impl eframe::App for TescellateApp {
                             ActiveSheet::Hex if self.hex.selection.is_range() => {
                                 let (q, r) = self.hex.selection.dimensions();
                                 ui.label(egui::RichText::new(format!("{q}q × {r}r")).weak());
+                            }
+                            ActiveSheet::Voronoi if !self.voronoi.selection.extra.is_empty() => {
+                                // Marquee dimension hint: extras count + 1 (the cursor).
+                                let n = self.voronoi.selection.extra.len() + 1;
+                                ui.label(egui::RichText::new(format!("{n} cells")).weak());
                             }
                             _ => {}
                         }
@@ -6032,6 +6184,28 @@ fn synced_voronoi_lattice(engine: &WorkbookEngine, sid: SheetId) -> VoronoiLatti
     engine.voronoi_lattice(sid).unwrap_or_default()
 }
 
+/// Every Voronoi cell whose centroid (in screen space, i.e. `origin +
+/// lattice_centroid`) falls inside `screen_rect`. The unified marquee rule
+/// for a tessellation without rect-indexed coords (ADR-013). A degenerate
+/// rect (zero width or height) returns an empty `Vec`.
+fn cells_in_screen_rect(
+    lattice: &VoronoiLattice,
+    screen_rect: egui::Rect,
+    origin: egui::Pos2,
+) -> Vec<VoronoiCoord> {
+    if screen_rect.width() <= 0.0 || screen_rect.height() <= 0.0 {
+        return Vec::new();
+    }
+    (0..lattice.len() as u32)
+        .map(VoronoiCoord)
+        .filter(|&coord| {
+            let c = lattice.centroid(coord);
+            let p = egui::pos2(origin.x + c.x, origin.y + c.y);
+            screen_rect.contains(p)
+        })
+        .collect()
+}
+
 /// Whether `coord` is inside the currently-drawn triangle window.
 /// Mirrors `hex_in_view` — render and hit-test agree on the same bound.
 fn triangle_in_view(c: TriCoord) -> bool {
@@ -6183,6 +6357,65 @@ mod tests {
         let seeds = vec![[1.0, 2.0], [3.0, 4.0]];
         let out = apply_seed_drag(&seeds, 9, [5.0, 5.0], [-100.0, -100.0, 100.0, 100.0]);
         assert_eq!(out, seeds);
+    }
+
+    // --- T-005: cells_in_screen_rect (centroid-in-rect marquee) ---
+
+    fn marquee_lattice() -> VoronoiLattice {
+        use tescellate_tess::Rect;
+        let seeds = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(50.0, 0.0),
+            Point2::new(0.0, 50.0),
+            Point2::new(50.0, 50.0),
+        ];
+        let bounds = Rect {
+            min: Point2::new(-100.0, -100.0),
+            max: Point2::new(100.0, 100.0),
+        };
+        VoronoiLattice::new(seeds, bounds).unwrap()
+    }
+
+    #[test]
+    fn cells_in_screen_rect_includes_centroids_inside_rect() {
+        // origin=(100,100) → screen centroids at (100,100), (150,100),
+        // (100,150), (150,150). A thin horizontal band y∈[95..105] catches
+        // the two cells with y≈100: V(0) and V(1).
+        let lat = marquee_lattice();
+        let origin = egui::pos2(100.0, 100.0);
+        let rect = egui::Rect::from_min_max(egui::pos2(95.0, 95.0), egui::pos2(155.0, 105.0));
+        let hit = cells_in_screen_rect(&lat, rect, origin);
+        assert_eq!(hit, vec![VoronoiCoord(0), VoronoiCoord(1)]);
+    }
+
+    #[test]
+    fn cells_in_screen_rect_excludes_centroids_outside_rect() {
+        let lat = marquee_lattice();
+        let origin = egui::pos2(100.0, 100.0);
+        let rect = egui::Rect::from_min_max(egui::pos2(200.0, 200.0), egui::pos2(300.0, 300.0));
+        assert!(cells_in_screen_rect(&lat, rect, origin).is_empty());
+    }
+
+    #[test]
+    fn cells_in_screen_rect_degenerate_rect_returns_empty() {
+        let lat = marquee_lattice();
+        let origin = egui::pos2(100.0, 100.0);
+        let rect = egui::Rect::from_min_max(egui::pos2(100.0, 100.0), egui::pos2(100.0, 100.0));
+        assert!(cells_in_screen_rect(&lat, rect, origin).is_empty());
+    }
+
+    #[test]
+    fn cells_in_screen_rect_returns_non_contiguous_indices_in_order() {
+        // C-007: pick a rect that hits ONLY V(0) (centroid 100,100) and
+        // V(2) (centroid 100,150) — V(1) at 150,100 is excluded. Proves the
+        // iteration order is `0..len` (not "first N matched" or sorted).
+        let lat = marquee_lattice();
+        let origin = egui::pos2(100.0, 100.0);
+        // A narrow vertical band at x≈100 catches V(0) and V(2) but not
+        // V(1) at x=150 nor V(3) at x=150.
+        let rect = egui::Rect::from_min_max(egui::pos2(95.0, 95.0), egui::pos2(105.0, 155.0));
+        let hits = cells_in_screen_rect(&lat, rect, origin);
+        assert_eq!(hits, vec![VoronoiCoord(0), VoronoiCoord(2)]);
     }
 
     #[test]

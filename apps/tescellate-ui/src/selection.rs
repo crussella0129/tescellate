@@ -11,6 +11,7 @@
 //! No egui and no engine here, so every method is exercised by
 //! ordinary `cargo test`.
 
+use smallvec::SmallVec;
 use tescellate_core::SheetId;
 use tescellate_tess::hex::HexCoord;
 use tescellate_tess::triangle::TriCoord;
@@ -273,14 +274,27 @@ impl Coord for tescellate_tess::voronoi::VoronoiCoord {
     }
 }
 
-/// A rectangular cell selection — an `anchor` and a `cursor`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A rectangular cell selection — an `anchor` and a `cursor`, with an
+/// optional explicit-set `extra` escape hatch for lattices whose ranges
+/// don't fit a rect-coord model (Voronoi: marquee by screen-rect; ADR-013).
+///
+/// **Scope-cap rule (ADR-013):** `extra` is for render-only effects this
+/// sprint. Existing operation paths (copy/paste, format apply, widget
+/// apply, range-eval feeds) call [`primary_cells`](Self::primary_cells) /
+/// [`primary_contains`](Self::primary_contains) so Voronoi marquee extras
+/// don't fan out into pipelines that aren't ready yet. Render paths use
+/// [`cells`](Self::cells) / [`contains`](Self::contains), which include
+/// `extra`, so outlines highlight every selected cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection<C: Coord> {
     /// Where the selection was anchored (a plain move, or the start of a
     /// shift-extend / drag).
     pub anchor: C,
     /// The active cell — where editing happens and arrows move from.
     pub cursor: C,
+    /// Explicit-set selection escape hatch (Voronoi marquee; empty for
+    /// rect-only selections on the other lattices).
+    pub extra: SmallVec<[C; 4]>,
 }
 
 impl<C: Coord> Selection<C> {
@@ -289,13 +303,27 @@ impl<C: Coord> Selection<C> {
         Self {
             anchor: coord,
             cursor: coord,
+            extra: SmallVec::new(),
+        }
+    }
+
+    /// A rect selection with the given `anchor`/`cursor` corners and no
+    /// `extra` cells. Use this instead of the `Self { … }` literal so
+    /// callers don't need to import `smallvec` (ADR-013).
+    pub fn from_anchor_cursor(anchor: C, cursor: C) -> Self {
+        Self {
+            anchor,
+            cursor,
+            extra: SmallVec::new(),
         }
     }
 
     /// Move the whole selection to one cell — a plain arrow or click.
+    /// Clears any `extra` cells so a single click always collapses to one cell.
     pub fn collapse_to(&mut self, coord: C) {
         self.anchor = coord;
         self.cursor = coord;
+        self.extra.clear();
     }
 
     /// Move the cursor while keeping the anchor — a shift-extend or drag.
@@ -305,7 +333,7 @@ impl<C: Coord> Selection<C> {
 
     /// Whether the selection covers more than one cell.
     pub fn is_range(&self) -> bool {
-        self.anchor != self.cursor
+        self.anchor != self.cursor || !self.extra.is_empty()
     }
 
     /// Normalised `(min, max)` corners of the selected rectangle.
@@ -313,21 +341,49 @@ impl<C: Coord> Selection<C> {
         self.anchor.min_max(self.cursor)
     }
 
-    /// Whether `coord` falls inside the selected rectangle.
+    /// Whether `coord` falls inside the selected rectangle OR is in
+    /// `extra`. Render paths (selection-outline drawing) use this. Operation
+    /// paths use [`primary_contains`](Self::primary_contains) to ignore
+    /// `extra` (ADR-013 scope cap).
     pub fn contains(&self, coord: C) -> bool {
+        self.primary_contains(coord) || self.extra.contains(&coord)
+    }
+
+    /// Whether `coord` falls inside the selected rectangle ONLY (ignores
+    /// `extra`). Use this for operations that aren't yet ready to fan out
+    /// over Voronoi marquee extras: copy/paste pickups, format/widget
+    /// apply, range-eval feeds. (ADR-013.)
+    pub fn primary_contains(&self, coord: C) -> bool {
         let (min, max) = self.bounds();
         C::rect_contains(min, max, coord)
     }
 
     /// `(axis_a, axis_b)` extents of the selection — at least `(1, 1)`.
     /// For square, this is `(columns, rows)`; for hex, `(q-span, r-span)`.
+    /// Reports the rect dimensions; `extra` cells don't contribute.
     pub fn dimensions(&self) -> (u32, u32) {
         let (min, max) = self.bounds();
         C::rect_dims(min, max)
     }
 
-    /// Every cell in the selection. Row-major for square, q-then-r for hex.
+    /// Every cell in the selection, **including** any `extra` cells (in
+    /// rect order then `extra` insertion order, deduped). Render paths use
+    /// this so outlines highlight every selected cell. Operation paths use
+    /// [`primary_cells`](Self::primary_cells) (ADR-013 scope cap).
     pub fn cells(&self) -> Vec<C> {
+        let mut out = self.primary_cells();
+        for &c in &self.extra {
+            if !out.contains(&c) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    /// Every cell in the selection's rectangle (ignores `extra`). Used by
+    /// operation paths that mutate cells or feed into eval, where the
+    /// Voronoi marquee multi-cell semantics aren't yet defined. (ADR-013.)
+    pub fn primary_cells(&self) -> Vec<C> {
         let (min, max) = self.bounds();
         C::rect_cells(min, max)
     }
@@ -369,6 +425,7 @@ impl Selection<Cell> {
         Self {
             anchor: (c0, rows.saturating_sub(1)),
             cursor: (c1, 0),
+            extra: SmallVec::new(),
         }
     }
 
@@ -385,6 +442,7 @@ impl Selection<Cell> {
         Self {
             anchor: (cols.saturating_sub(1), r0),
             cursor: (0, r1),
+            extra: SmallVec::new(),
         }
     }
 
@@ -394,6 +452,7 @@ impl Selection<Cell> {
         Self {
             anchor: (cols.saturating_sub(1), rows.saturating_sub(1)),
             cursor: (0, 0),
+            extra: SmallVec::new(),
         }
     }
 }
@@ -558,6 +617,7 @@ mod tests {
         let s = Selection {
             anchor: (4u32, 6u32),
             cursor: (2u32, 1u32),
+            extra: SmallVec::new(),
         };
         assert_eq!(s.bounds(), ((2, 1), (4, 6)));
         assert_eq!(s.dimensions(), (3, 6));
@@ -570,6 +630,7 @@ mod tests {
         let s = Selection {
             anchor: (1u32, 1u32),
             cursor: (2u32, 3u32),
+            extra: SmallVec::new(),
         };
         let cells: Vec<Cell> = s.cells();
         assert_eq!(cells.len(), 6);
@@ -592,6 +653,7 @@ mod tests {
         let s = Selection {
             anchor: (0u32, 0u32),
             cursor: (1u32, 2u32),
+            extra: SmallVec::new(),
         };
         let pairs = s.fill_targets(FillDir::Down);
         assert_eq!(pairs.len(), 4);
@@ -606,6 +668,7 @@ mod tests {
         let s = Selection {
             anchor: (0u32, 0u32),
             cursor: (2u32, 1u32),
+            extra: SmallVec::new(),
         };
         let pairs = s.fill_targets(FillDir::Right);
         assert_eq!(pairs.len(), 4);
@@ -639,6 +702,7 @@ mod tests {
         let s = Selection {
             anchor: (0u32, 4u32),
             cursor: (3u32, 4u32),
+            extra: SmallVec::new(),
         };
         assert!(s.fill_targets(FillDir::Down).is_empty());
     }
@@ -661,6 +725,7 @@ mod tests {
         let s = HexSelection {
             anchor: HexCoord::new(3, 4),
             cursor: HexCoord::new(1, 0),
+            extra: SmallVec::new(),
         };
         let (min, max) = s.bounds();
         assert_eq!((min.q, min.r), (1, 0));
@@ -674,6 +739,7 @@ mod tests {
         let s = HexSelection {
             anchor: HexCoord::new(0, 0),
             cursor: HexCoord::new(1, 2),
+            extra: SmallVec::new(),
         };
         let cells = s.cells();
         assert_eq!(cells.len(), 6);
@@ -688,6 +754,7 @@ mod tests {
         let s = HexSelection {
             anchor: HexCoord::new(0, 0),
             cursor: HexCoord::new(1, 2),
+            extra: SmallVec::new(),
         };
         let pairs = s.fill_targets(FillDir::Down);
         assert_eq!(pairs.len(), 4);
@@ -700,6 +767,7 @@ mod tests {
         let s = HexSelection {
             anchor: HexCoord::new(0, 0),
             cursor: HexCoord::new(2, 1),
+            extra: SmallVec::new(),
         };
         let pairs = s.fill_targets(FillDir::Right);
         assert_eq!(pairs.len(), 4);
@@ -725,6 +793,7 @@ mod tests {
         let s = HexSelection {
             anchor: HexCoord::new(0, 4),
             cursor: HexCoord::new(3, 4),
+            extra: SmallVec::new(),
         };
         assert!(s.fill_targets(FillDir::Down).is_empty());
     }
@@ -747,6 +816,7 @@ mod tests {
         let s = TriangleSelection {
             anchor: TriCoord::new(3, 4),
             cursor: TriCoord::new(1, 0),
+            extra: SmallVec::new(),
         };
         let (min, max) = s.bounds();
         assert_eq!((min.col, min.row), (1, 0));
@@ -760,6 +830,7 @@ mod tests {
         let s = TriangleSelection {
             anchor: TriCoord::new(0, 0),
             cursor: TriCoord::new(2, 1),
+            extra: SmallVec::new(),
         };
         let cells = s.cells();
         // 3 columns × 2 rows = 6 triangle cells.
@@ -775,6 +846,7 @@ mod tests {
         let s = TriangleSelection {
             anchor: TriCoord::new(0, 0),
             cursor: TriCoord::new(1, 2),
+            extra: SmallVec::new(),
         };
         let pairs = s.fill_targets(FillDir::Down);
         assert_eq!(pairs.len(), 4);
@@ -787,6 +859,7 @@ mod tests {
         let s = TriangleSelection {
             anchor: TriCoord::new(0, 0),
             cursor: TriCoord::new(2, 1),
+            extra: SmallVec::new(),
         };
         let pairs = s.fill_targets(FillDir::Right);
         assert_eq!(pairs.len(), 4);
@@ -813,7 +886,86 @@ mod tests {
         let s = TriangleSelection {
             anchor: TriCoord::new(0, 4),
             cursor: TriCoord::new(3, 4),
+            extra: SmallVec::new(),
         };
         assert!(s.fill_targets(FillDir::Down).is_empty());
+    }
+
+    // --- T-001 (ADR-013): explicit-set `extra` escape hatch ---
+
+    #[test]
+    fn selection_default_extra_is_empty_and_cells_unchanged() {
+        let s = Selection::single((1u32, 2u32));
+        assert!(s.extra.is_empty());
+        assert_eq!(s.cells(), vec![(1, 2)]);
+        assert_eq!(s.primary_cells(), vec![(1, 2)]);
+    }
+
+    #[test]
+    fn selection_extra_adds_to_cells_dedup() {
+        // 3×3 rect (0,0)..(2,2) plus an extra at (5,5) — and one dup at (1,1)
+        // (inside the rect) that must NOT appear twice.
+        let mut s = Selection::single((0u32, 0u32));
+        s.extend_to((2u32, 2u32));
+        s.extra.push((5, 5));
+        s.extra.push((1, 1));
+        let cells = s.cells();
+        assert_eq!(cells.len(), 10, "9 rect cells + 1 unique extra");
+        assert!(cells.contains(&(5, 5)));
+        assert_eq!(cells.iter().filter(|&&c| c == (1, 1)).count(), 1);
+    }
+
+    #[test]
+    fn selection_extra_widens_contains_but_not_primary_contains() {
+        let mut s = Selection::single((0u32, 0u32));
+        s.extra.push((5, 5));
+        assert!(s.contains((5, 5)), "contains() includes extra");
+        assert!(
+            !s.primary_contains((5, 5)),
+            "primary_contains() ignores extra (ADR-013 scope cap)"
+        );
+    }
+
+    #[test]
+    fn selection_primary_cells_excludes_extra() {
+        let mut s = Selection::single((0u32, 0u32));
+        s.extend_to((1u32, 1u32));
+        s.extra.push((9, 9));
+        assert_eq!(
+            s.primary_cells().len(),
+            4,
+            "primary_cells is rect-only (2×2)"
+        );
+        assert!(!s.primary_cells().contains(&(9, 9)));
+        assert!(s.cells().contains(&(9, 9)), "cells() includes extra");
+    }
+
+    #[test]
+    fn selection_collapse_to_clears_extra() {
+        let mut s = Selection::single((0u32, 0u32));
+        s.extra.push((5, 5));
+        s.extra.push((6, 6));
+        s.collapse_to((3, 3));
+        assert!(s.extra.is_empty());
+        assert_eq!(s.cells(), vec![(3, 3)]);
+    }
+
+    #[test]
+    fn selection_extra_unchanged_by_extend_to_cursor_move() {
+        // C-008: extras survive any selection change that ISN'T a
+        // `collapse_to` — only `collapse_to` clears them (single-click
+        // semantics). `extend_to` moves the cursor but keeps extras intact
+        // so the rect outline can shift while the marquee outlines stay.
+        let mut s = Selection::single((0u32, 0u32));
+        s.extra.push((4, 4));
+        s.extra.push((7, 7));
+        let before = s.extra.clone();
+        s.extend_to((2, 2));
+        assert_eq!(s.cursor, (2, 2), "cursor moved");
+        assert_eq!(s.extra, before, "extras unchanged by extend_to");
+
+        // And only collapse_to clears them.
+        s.collapse_to((3, 3));
+        assert!(s.extra.is_empty(), "collapse_to clears extras");
     }
 }
