@@ -6274,6 +6274,44 @@ fn seed_handle_alphas(
         .collect()
 }
 
+/// Pop-out offset distance (lattice units) for a widget whose centroid
+/// would otherwise sit under a visible seed handle. Larger than the
+/// handle's 5px hit radius plus a comfort margin (ADR-014).
+#[allow(dead_code)]
+const WIDGET_POP_OUT_OFFSET: f32 = 30.0;
+
+/// When a Voronoi widget cell's seed handle is visible (cursor near), the
+/// widget moves to a side of the centroid so its click target isn't
+/// occluded by the handle (ADR-014). Tries `[+x, -x, +y, -y]` offsets at
+/// `offset` (lattice units), returns the first center where
+/// `cell_at(candidate) == Some(seed_coord)` (i.e. the candidate still
+/// falls in this cell's polygon). Falls back to `centroid` when no side
+/// has clearance.
+///
+/// **Coord space:** all positions are lattice-space. The caller maps the
+/// returned `Vec2` to screen via `egui::pos2(origin.x + result.x, origin.y
+/// + result.y)`. Precondition: 1 lattice unit == 1 screen pixel with no
+/// zoom (ADR-013 C-006); a future zoom feature must scale `offset` first.
+// Wired into the widget pass by T-004.
+#[allow(dead_code)]
+fn pop_out_widget_center<F: Fn(Point2) -> Option<VoronoiCoord>>(
+    centroid: Point2,
+    offset: f32,
+    seed_coord: VoronoiCoord,
+    cell_at: F,
+) -> Point2 {
+    let candidates = [
+        Point2::new(centroid.x + offset, centroid.y), // right
+        Point2::new(centroid.x - offset, centroid.y), // left
+        Point2::new(centroid.x, centroid.y + offset), // down
+        Point2::new(centroid.x, centroid.y - offset), // up
+    ];
+    candidates
+        .into_iter()
+        .find(|&p| cell_at(p) == Some(seed_coord))
+        .unwrap_or(centroid)
+}
+
 fn cells_in_screen_rect(
     lattice: &VoronoiLattice,
     screen_rect: egui::Rect,
@@ -6590,6 +6628,81 @@ mod tests {
             "seed 0 in ramp"
         );
         assert_eq!(alphas[2], 0, "seed 2 past outer");
+    }
+
+    // --- T-003: pop_out_widget_center (R → L → D → U → centroid fallback) ---
+
+    #[test]
+    fn pop_out_widget_center_picks_right_first() {
+        let centroid = Point2::new(100.0, 100.0);
+        let seed = VoronoiCoord(7);
+        // `cell_at` accepts only the +x candidate.
+        let cell_at = |p: Point2| {
+            if (p.x - 130.0).abs() < 0.1 && (p.y - 100.0).abs() < 0.1 {
+                Some(seed)
+            } else {
+                None
+            }
+        };
+        let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
+        assert_eq!(result, Point2::new(130.0, 100.0));
+    }
+
+    #[test]
+    fn pop_out_widget_center_falls_back_to_left() {
+        let centroid = Point2::new(100.0, 100.0);
+        let seed = VoronoiCoord(7);
+        let cell_at = |p: Point2| {
+            // Accept only -x (left).
+            if (p.x - 70.0).abs() < 0.1 && (p.y - 100.0).abs() < 0.1 {
+                Some(seed)
+            } else {
+                None
+            }
+        };
+        let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
+        assert_eq!(result, Point2::new(70.0, 100.0));
+    }
+
+    #[test]
+    fn pop_out_widget_center_falls_back_to_down() {
+        let centroid = Point2::new(100.0, 100.0);
+        let seed = VoronoiCoord(7);
+        let cell_at = |p: Point2| {
+            // Accept only +y (down).
+            if (p.x - 100.0).abs() < 0.1 && (p.y - 130.0).abs() < 0.1 {
+                Some(seed)
+            } else {
+                None
+            }
+        };
+        let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
+        assert_eq!(result, Point2::new(100.0, 130.0));
+    }
+
+    #[test]
+    fn pop_out_widget_center_falls_back_to_up() {
+        let centroid = Point2::new(100.0, 100.0);
+        let seed = VoronoiCoord(7);
+        let cell_at = |p: Point2| {
+            // Accept only -y (up).
+            if (p.x - 100.0).abs() < 0.1 && (p.y - 70.0).abs() < 0.1 {
+                Some(seed)
+            } else {
+                None
+            }
+        };
+        let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
+        assert_eq!(result, Point2::new(100.0, 70.0));
+    }
+
+    #[test]
+    fn pop_out_widget_center_falls_back_to_centroid() {
+        let centroid = Point2::new(100.0, 100.0);
+        let seed = VoronoiCoord(7);
+        let cell_at = |_p: Point2| None; // No candidate satisfies — fallback.
+        let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
+        assert_eq!(result, centroid);
     }
 
     #[test]
