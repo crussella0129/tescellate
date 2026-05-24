@@ -15,8 +15,8 @@ release-build review.
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `apps/tescellate-ui/src/app.rs` | high | `draw_grid` (line 3250) has four `for r in 0..ROWS { for c in 0..COLS }` loops: main cell paint (3650), heavy-border pass (3706), widget pass (3811 — already short-circuits via `is_widget`), and the frozen row/col header strips (3916/3936). Main + border are the hot path. |
-| `apps/tescellate-ui/src/grid.rs` | high | `GridMetrics` owns `col_left`/`row_top` (O(index) prefix sums), `col_width`/`row_height`, `cell_rect`. `clip_rect` available in `draw_grid` via `ui.clip_rect()`. Add `visible_col_range`/`visible_row_range` (incremental walks). |
+| `apps/carbide-ui/src/app.rs` | high | `draw_grid` (line 3250) has four `for r in 0..ROWS { for c in 0..COLS }` loops: main cell paint (3650), heavy-border pass (3706), widget pass (3811 — already short-circuits via `is_widget`), and the frozen row/col header strips (3916/3936). Main + border are the hot path. |
+| `apps/carbide-ui/src/grid.rs` | high | `GridMetrics` owns `col_left`/`row_top` (O(index) prefix sums), `col_width`/`row_height`, `cell_rect`. `clip_rect` available in `draw_grid` via `ui.clip_rect()`. Add `visible_col_range`/`visible_row_range` (incremental walks). |
 
 ## 3. External Sources
 None.

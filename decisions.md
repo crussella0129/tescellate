@@ -5,10 +5,10 @@
 **Status:** Adopted, shipped in v144 (PR #175).
 
 The store crate's zip layout grew a third entry, `ui.json`, alongside the
-existing `manifest.json` and `workbook.json`. `tescellate-store` exposes
+existing `manifest.json` and `workbook.json`. `carbide-store` exposes
 this as a `UiState` newtype wrapping a `serde_json::Value` — the store
 deliberately does **not** interpret the schema. The UI owns the typed
-`UiSnapshot` in `apps/tescellate-ui/src/state_io.rs` and serializes /
+`UiSnapshot` in `apps/carbide-ui/src/state_io.rs` and serializes /
 deserializes it against the opaque blob.
 
 Why opaque, not typed at the store level: the workbook engine doesn't
@@ -38,7 +38,7 @@ handling). Shipping the engine + serialization contract as its own
 review unit means sprint 1 has a stable, byte-API-tested foundation to
 wire against without churning the on-disk format mid-flight.
 
-The `TescellateApp::capture_state` / `restore_state` methods are
+The `CarbideApp::capture_state` / `restore_state` methods are
 gated `#[allow(dead_code)]` until sprint 1 calls them.
 
 ## ADR-003 — `rfd` carries `gtk3` feature on wasm32 (sprint 1)
@@ -183,7 +183,7 @@ The engine's `lattice_for` rebuilds the lattice from just `LatticeKind`
 survive eval or save/load today. Decision: generalize the `Sheet` to
 carry its lattice's full configuration (not just the kind), so dragged
 Voronoi seeds persist and the engine's eval-time lattice matches the UI.
-This is a `.tscl` format change — requires a `manifest.json` version bump
+This is a `.crbd` format change — requires a `manifest.json` version bump
 and an upgrade path (older files → default seeds). Larger than ADR-010;
 sequenced as a separate sprint after v157.
 
@@ -195,9 +195,9 @@ Implements the design accepted in ADR-011. The seed configuration is now a
 persisted, single-sourced part of a Voronoi sheet:
 
 - **`Sheet.lattice_config: Option<LatticeConfig>`** (`#[serde(default)]`,
-  in `tescellate-core`) carries `LatticeConfig::Voronoi(VoronoiConfig {
+  in `carbide-core`) carries `LatticeConfig::Voronoi(VoronoiConfig {
   seeds: Vec<[f32;2]>, bounds: [f32;4] })`. `VoronoiConfig` is a serde-stable
-  POD in `tescellate-tess` (no glam-serde dependency, keeps `workbook.json`
+  POD in `carbide-tess` (no glam-serde dependency, keeps `workbook.json`
   reviewable); `to_lattice()` delegates to `VoronoiLattice::new` so the
   ADR-009 coincident/degenerate validation is reused. Uniform tilings keep
   `lattice_config == None`.
@@ -215,7 +215,7 @@ persisted, single-sourced part of a Voronoi sheet:
   edit time are stale; re-resolving every cell's deps against the new lattice
   is what makes neighbor-dependent cells re-evaluate. A corrupt config maps
   to a dedicated `SetCellError::BadLatticeConfig`, not `UnsupportedLattice`.
-- **`.tscl` `FORMAT_VERSION` 1→2.** Seeds ride in `workbook.json`, so no new
+- **`.crbd` `FORMAT_VERSION` 1→2.** Seeds ride in `workbook.json`, so no new
   sidecar (cf. ADR-001). v1 files load with `lattice_config == None` via serde
   default; the bump exists so *older* builds reject v2 files rather than
   silently dropping seed data on a round-trip.
@@ -318,7 +318,7 @@ clearance. When the widget cell is the editing cell, pop-out is skipped
 
 **F2 — Freeze seeds (persisted on the `Sheet`).** A new
 `VoronoiConfig.frozen: bool` with `#[serde(default)]` rides in
-`workbook.json` alongside the seeds. **No `.tscl` version bump** — the v2
+`workbook.json` alongside the seeds. **No `.crbd` version bump** — the v2
 schema (ADR-012) already accepts new optional fields this way. `frozen`
 is classified as a **UI preference**, not user data: if an older v2
 reader opens a frozen workbook and re-saves without the flag, the worst
@@ -360,3 +360,46 @@ within a session). Bounds editing. Per-cell widget anchor configuration
 (pop-out direction is fully automatic in v160). Widget pop-out for
 non-Voronoi lattices (the problem doesn't exist there — no draggable
 handles to clear).
+
+## ADR-015 — Tescellate → Carbide rename + stale-app cleanup (sprint 19)
+**Date:** 2026-05-24
+**Status:** Adopted, shipping in v161.
+
+The locked carbide-rebrand direction (memory: `project_carbide_rebrand_and_native`) executed as a single sprint applied to the foundations laid by v158-v160.
+
+**Renaming:**
+- Every `tescellate-*` crate → `carbide-*` (5 crates: `core`, `tess`, `formula`, `store`, `cli`).
+- `apps/tescellate-ui` → `apps/carbide-ui`.
+- Every "Tescellate" / "tescellate" string in prose / UI / comments / docs / CI → "Carbide" / "carbide".
+- `use tescellate_X::…` → `use carbide_X::…`.
+- File extension `.tscl` → `.crbd`.
+
+**Mechanics:**
+The string sweep used `git ls-files | … | xargs perl -i -pe 's/Tescellate/Carbide/g; s/tescellate/carbide/g'`, with three explicit exclusions: (a) all of `agent-tasks/` (the historical task ledger preserves what happened pre-rename); (b) `.gitignore` (hand-edited for the dual-extension + dual-cache-path rules); (c) the three deliberately-preserved repo-URL sites (`Cargo.toml` `repository`, `CLAUDE.md` Repo identity, `apps/carbide-ui/src/app.rs` About hyperlink) — these keep pointing at `…/tescellate` until a tiny follow-up commit AFTER the user runs `gh repo rename`. After the sweep, `decisions.md`'s ADR-001 title was hand-restored to `.tscl v1` (historical), and one ADR-012 body line (`Tescellate→Carbide` referring to *this* rename) was restored from the broken `Carbide→Carbide`. Lockfiles (`Cargo.lock` + `apps/carbide-ui/Cargo.lock`) were deleted and regenerated by `cargo build`.
+
+**Dual-extension load (back-compat):**
+The on-disk zip schema (`manifest.json` + `workbook.json` + `ui.json`, `FORMAT_VERSION = 2`) is **unchanged** — only the file-name suffix flips. The UI's Open dialog accepts both `["crbd", "tscl"]`; Save defaults to `["crbd"]`. `.gitignore` ignores BOTH `*.tscl` and `*.crbd` (with `!examples/*.tscl` / `!examples/*.crbd` allowlists). The store crate's `load_full_from_bytes` is byte-driven (extension-agnostic by design), so old `.tscl` files load identically — pinned by the new `old_tscl_bytes_still_load_after_rename` test and by the committed `examples/sprint19-back-compat.tscl` artifact (used in the visual checkpoint).
+
+**No `FORMAT_VERSION` bump.** ADR-001's rule "bump on schema change" applies to the *zip schema*, not the file-name suffix. ADR-012's body explicitly anticipated this: *"the next sprint (v161) is the Tescellate→Carbide rename, which re-touches the format layer (`.tscl`→`.crbd`) — a conscious second, mechanical format change after this v2 schema bump."* Cross-references: **ADR-001** (file-format schema layering), **ADR-012** (this sprint's anticipated counterpart), **ADR-013** (selection model — untouched), **ADR-014** (Voronoi polish — untouched).
+
+**Stale-app cleanup:**
+- **Deleted `apps/desktop`** (the Electron renderer last touched 2026-05-15; superseded by `apps/carbide-ui` per ADR-013's native-first direction). Frees up the flaky `renderer typecheck + build` CI job that auth-flaked in v159.
+- **Deleted `crates/tescellate-ipc`** (the JSON-RPC server; only consumer was the Electron renderer).
+- **`carbide-cli` collapsed to a `--help` stub** — the crate stays as a structural entry point for future headless eval / validate / batch work, but for now just prints a usage message. No engine coverage lost: the deleted `crates/tescellate-cli/tests/e2e.rs` exercised `set_cell`/`get_cell`/SUM/range/DivZero/JSON-RPC framing; the first five are covered in-process by `carbide-formula::engine::tests`, and the JSON-RPC framing test is meaningless once the IPC crate is gone.
+
+**Cache-path verification (C-002):**
+Pre-sweep `grep -rE "\.tescellate[/-]" --include="*.rs"` returned no runtime cache-path strings — only `.gitignore` referenced `.tescellate-cache/`. The sweep flipped doc mentions; `.gitignore` now lists BOTH `.tescellate-cache/` and `.carbide-cache/`. No runtime migration needed.
+
+**Post-merge user-driven repo rename:**
+The GitHub repo rename (`crussella0129/tescellate` → `carbide`) is a separate human-gated step (locked via 2026-05-24 AskUserQuestion). The sequence:
+1. v161 PR merges (this sprint).
+2. User runs `gh repo rename crussella0129/tescellate carbide`.
+3. I push a tiny follow-up commit flipping the three preserved URL sites (`Cargo.toml`, `CLAUDE.md`, the About-box hyperlink) from `…/tescellate` to `…/carbide`.
+4. I fix the local remote URL: `git remote set-url origin git@github.com:crussella0129/carbide.git`.
+
+GitHub auto-redirects renamed-repo URLs indefinitely; the 404 window between merge and step 3 is theoretical. The principled rule (URLs flip AFTER the underlying repo rename) is the locked sequence.
+
+**Deferred to v162+:**
+- CSV / `.xlsx` import (calamine + csv crates) — original rebrand memo's post-rename item.
+- Remaining trait unification (format / widgets / copy-paste through `CellInteract`) — per ADR-013's deferral.
+- Behavioural changes; v161 is pure rebrand + cleanup.

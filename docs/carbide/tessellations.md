@@ -9,8 +9,8 @@ This page is the deep dive on cell-shape tessellations. The companion [addressin
 
 Source files for the parts that exist:
 
-- `crates/tescellate-tess/src/lib.rs` — the `Lattice` trait and `LatticeKind` enum.
-- `crates/tescellate-tess/src/square.rs` — the only concrete implementation today.
+- `crates/carbide-tess/src/lib.rs` — the `Lattice` trait and `LatticeKind` enum.
+- `crates/carbide-tess/src/square.rs` — the only concrete implementation today.
 - PLAN.md §3.2 — original architectural framing of the regular/irregular split.
 
 ---
@@ -269,7 +269,7 @@ Aperiodic tilings are not just mathematical curiosities. They appear in:
 - **Decorative architecture** — the Islamic geometric tradition (girih tiles) anticipates Penrose by 500 years.
 - **Procedural content generation** — game/level design where periodic repetition would be visually obvious.
 
-A Tescellate sheet on an einstein-hat tiling is a niche tool. But it's the only spreadsheet that can express it.
+A Carbide sheet on an einstein-hat tiling is a niche tool. But it's the only spreadsheet that can express it.
 
 ---
 
@@ -344,7 +344,7 @@ Rendering cost per cell is dominated by Canvas 2D `lineTo` calls, so a 10k-cell 
 
 A workbook with an irregular tessellation needs to store enough on disk that the lattice can be reconstructed on load:
 
-| Lattice | What's stored in `.tscl` |
+| Lattice | What's stored in `.crbd` |
 |---|---|
 | Square / hex / tri / parallelogram / composite | `LatticeKind` enum variant + extent params. ~50 bytes. |
 | Voronoi | `LatticeKind::Voronoi { seeds: Vec<Point2>, bounds, seed_source }`. Linear in seed count; ~16 bytes per seed. |

@@ -8,7 +8,7 @@ was required at this layer.
 
 ## Component B + C (engine + UI state)
 The integration target named in the plan as `app_save_load_cycle_preserves_full_state`
-is **deferred to sprint 1**. Reason: building a TescellateApp fixture in
+is **deferred to sprint 1**. Reason: building a CarbideApp fixture in
 a unit test requires an `eframe::CreationContext`, which in turn needs a
 running winit event loop — possible in a headless wgpu test harness but
 not justified ahead of the dialog wiring it would exercise.

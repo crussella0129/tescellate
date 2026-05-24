@@ -2,7 +2,7 @@
 
 ## 1. Sprint Goal
 
-Wire the user-facing surface for `.tscl` persistence on top of the v144
+Wire the user-facing surface for `.crbd` persistence on top of the v144
 infrastructure: **Save / SaveAs / Open** commands (Ctrl+S, Ctrl+Shift+S,
 Ctrl+O) plus a ribbon File group, both fronted by an OS-native file
 dialog on desktop and an HTML file picker / download blob on wasm.
@@ -18,12 +18,12 @@ schema rationale and ADR-001/002.)
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `apps/tescellate-ui/src/state_io.rs` | high | v144 shipped this with `UiSnapshot`, `snapshot_to_ui_state`, `ui_state_to_snapshot`, and the `vec_pair` HashMap-key adapters. Sprint 1 extends it with `autosave_to_local_storage`, `load_from_local_storage`. |
-| `apps/tescellate-ui/src/app.rs` | high | `TescellateApp::capture_state` / `restore_state` already exist (`#[allow(dead_code)]` — sprint 1 calls them and removes the attribute). Save/Open command handling lands here; needs a `pending_open_bytes: Arc<Mutex<Option<Vec<u8>>>>` field for the async open flow, plus `dirty: bool` and `last_autosave: f64` for debounce. |
-| `apps/tescellate-ui/src/keymap.rs` | high | Already surveyed: `Command` enum with 20+ variants. Add `Save`, `SaveAs`, `Open`; bind in `navigating(...)` at the same precedence as `Copy`/`Paste`. Add to NAV_KEYS list in `app.rs` to ensure egui's stock Ctrl+S/Ctrl+O bindings get shadowed. Add SHORTCUTS rows. |
-| `apps/tescellate-ui/src/ribbon.rs` | medium | Past sprints added/tuned groups; the pattern for new buttons + `RibbonAction` variants is well-established. Add a File group as the leftmost ribbon group with Save / Open buttons. |
-| `apps/tescellate-ui/Cargo.toml` | high | Add `rfd = { version = "0.14", default-features = false }` and `base64 = "0.22"`. `wasm-bindgen-futures` already there. `web-sys` needs to come in with the `Storage` + `Window` features for localStorage. |
-| `crates/tescellate-formula/src/engine.rs` | low | Read-only — `save_bytes` / `open_bytes` already exist. No changes expected. |
+| `apps/carbide-ui/src/state_io.rs` | high | v144 shipped this with `UiSnapshot`, `snapshot_to_ui_state`, `ui_state_to_snapshot`, and the `vec_pair` HashMap-key adapters. Sprint 1 extends it with `autosave_to_local_storage`, `load_from_local_storage`. |
+| `apps/carbide-ui/src/app.rs` | high | `CarbideApp::capture_state` / `restore_state` already exist (`#[allow(dead_code)]` — sprint 1 calls them and removes the attribute). Save/Open command handling lands here; needs a `pending_open_bytes: Arc<Mutex<Option<Vec<u8>>>>` field for the async open flow, plus `dirty: bool` and `last_autosave: f64` for debounce. |
+| `apps/carbide-ui/src/keymap.rs` | high | Already surveyed: `Command` enum with 20+ variants. Add `Save`, `SaveAs`, `Open`; bind in `navigating(...)` at the same precedence as `Copy`/`Paste`. Add to NAV_KEYS list in `app.rs` to ensure egui's stock Ctrl+S/Ctrl+O bindings get shadowed. Add SHORTCUTS rows. |
+| `apps/carbide-ui/src/ribbon.rs` | medium | Past sprints added/tuned groups; the pattern for new buttons + `RibbonAction` variants is well-established. Add a File group as the leftmost ribbon group with Save / Open buttons. |
+| `apps/carbide-ui/Cargo.toml` | high | Add `rfd = { version = "0.14", default-features = false }` and `base64 = "0.22"`. `wasm-bindgen-futures` already there. `web-sys` needs to come in with the `Storage` + `Window` features for localStorage. |
+| `crates/carbide-formula/src/engine.rs` | low | Read-only — `save_bytes` / `open_bytes` already exist. No changes expected. |
 
 ## 3. External Sources
 
@@ -58,7 +58,7 @@ schema rationale and ADR-001/002.)
    - Add `base64` dep.
    - In `state_io.rs`: `autosave_to_local_storage(bytes: &[u8])` (≤4 MiB cap, swallow failure) and `load_from_local_storage() -> Option<Vec<u8>>`. Both `#[cfg(target_arch = "wasm32")]`-gated, with native-side no-ops.
    - In `app.rs`: `dirty: bool` field + `mark_dirty(&mut self)` helper + central call sites at each mutation entry point (paste, set_cell, format change, widget add/remove, conditional rule edit, stage toggle, note edit). `last_autosave: f64`. Every frame: `if self.dirty && now - self.last_autosave > 2.0 { autosave; clear dirty }`.
-   - In `TescellateApp::new`: try `load_from_local_storage` first; if it yields bytes, `open_bytes` + `restore_state` on the just-loaded engine and skip the demo seeds.
+   - In `CarbideApp::new`: try `load_from_local_storage` first; if it yields bytes, `open_bytes` + `restore_state` on the just-loaded engine and skip the demo seeds.
 
 **Alternative considered** — ship both pieces as one PR. Faster to land but doubles the review surface. Rejected: each piece has independent test exposure and the autosave can be bisected to v145b if it regresses something subtle (e.g. dirty-flag wiring missing a mutation site).
 

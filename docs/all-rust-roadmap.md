@@ -1,11 +1,11 @@
-# Tescellate — The All-Rust Roadmap
+# Carbide — The All-Rust Roadmap
 
 > Goal: a single all-Rust application — unique in what it is — where the Carbide
 > formula language **transpiles to Rust** rather than only being interpreted.
 
 This is the **execution roadmap** for that goal. It is a companion to two existing docs:
 
-- [`PLAN.md`](../PLAN.md) — the canonical product architecture (what Tescellate *is*).
+- [`PLAN.md`](../PLAN.md) — the canonical product architecture (what Carbide *is*).
 - [`docs/rust-native.md`](rust-native.md) — the architectural analysis of *how Rust* the
   stack could be (the L0→L3 levels).
 
@@ -24,11 +24,11 @@ is three commitments:
 
 1. **All-Rust** — drive the stack from L0 (Electron host + TypeScript renderer) toward
    L3 (native Rust GUI, no WebView), per `rust-native.md`.
-2. **Unique** — Tescellate's identity is non-square tessellating cells + a switchable,
+2. **Unique** — Carbide's identity is non-square tessellating cells + a switchable,
    *compilable* per-cell formula language. Everything below serves that identity; none
    of it dilutes it.
 3. **Carbide transpiles** — Carbide is interpreted today (Pratt parser → AST →
-   tree-walking `eval` in `crates/tescellate-formula/src/excellite/`). Add a backend
+   tree-walking `eval` in `crates/carbide-formula/src/excellite/`). Add a backend
    that lowers Carbide → **Rust source**, compiled natively. The interpreter stays as
    the instant-feedback *preview* tier; the transpiler is the *native* tier — the exact
    two-tier model `PLAN.md` §6.2 already describes for the Rust engine, now applied to
@@ -40,7 +40,7 @@ is three commitments:
 
 | Track | What | Where it lives |
 |---|---|---|
-| **B — Carbide transpiler** | Carbide AST → Rust source → `rustc` → cached `cdylib` | `crates/tescellate-formula` (new `transpile` module, feature-gated) |
+| **B — Carbide transpiler** | Carbide AST → Rust source → `rustc` → cached `cdylib` | `crates/carbide-formula` (new `transpile` module, feature-gated) |
 | **A — UI rustification** | L0 → L1 (Tauri) → L2 (Rust/WASM renderer) → L3 (native Rust GUI) | `apps/` |
 
 **Track B goes first.** Two reasons:
@@ -106,8 +106,8 @@ A version does not merge until both gates pass. Versions are not calendar-bound.
 > property-based testing of the DAG recompute engine (incremental recompute proven
 > order-independent on random workbooks, cycle detection hardened), of the
 > tessellation lattices (geometric invariants fuzzed across square and hex), and of
-> `.tscl` persistence (save/open round-trip fidelity across random workbooks), capped
-> by an end-to-end smoke test driving the real `tescellate-core` binary over its
+> `.crbd` persistence (save/open round-trip fidelity across random workbooks), capped
+> by an end-to-end smoke test driving the real `carbide-core` binary over its
 > JSON-RPC stdio protocol, scale/stress tests that surfaced and fixed an
 > unbounded-recursion crash on pathologically deep formulas, and a cross-engine
 > differential proving the Carbide and Python formula engines agree. v18 then wrote
@@ -119,12 +119,12 @@ A version does not merge until both gates pass. Versions are not calendar-bound.
 > **Execution note (front-end rebuild, post-v18).** A physical test of the Electron app
 > confirmed the engine works but the front-end was a rough prototype. The decision:
 > rather than polish the Electron renderer or take the Tauri (L1) step, rebuild the
-> front-end directly as a pure-Rust application — `apps/tescellate-ui`, an egui/eframe
+> front-end directly as a pure-Rust application — `apps/carbide-ui`, an egui/eframe
 > app compiled to WebAssembly. This supersedes Track A (v7–v9) and `rust-native.md`'s
 > "L1 then spike L2" recommendation: egui builds the *same* codebase to both WASM and
 > native, so 100% Rust is reached now, without translation debt. A new self-paced loop
 > drives it in numbered versions; v1 scaffolded the crate — eframe and the whole engine
-> (`tescellate-core`/`tess`/`store`/`formula`) compile to `wasm32-unknown-unknown` —
+> (`carbide-core`/`tess`/`store`/`formula`) compile to `wasm32-unknown-unknown` —
 > with a working grid that renders engine-computed cell values.
 
 ### v0 — Roadmap + CI pipeline *(this version)*
@@ -136,7 +136,7 @@ A version does not merge until both gates pass. Versions are not calendar-bound.
 
 ### v1 — Transpiler skeleton + arithmetic core
 
-- New module `crates/tescellate-formula/src/transpile/` — always compiled (lightweight,
+- New module `crates/carbide-formula/src/transpile/` — always compiled (lightweight,
   pure-Rust codegen with no external-toolchain needs, so CI covers it by default).
   Transpiled code and the interpreter share the value-level primitives
   (`apply_binary_op` / `apply_unary_op`), so they are equivalent by construction.
@@ -236,4 +236,4 @@ The north star is reached when **all** hold:
 - The differential corpus is 100% green: compiled Carbide is provably equivalent to
   interpreted Carbide.
 - Tessellating cells and the switchable formula language — the things that make
-  Tescellate *unique* — are intact and unbroken.
+  Carbide *unique* — are intact and unbroken.

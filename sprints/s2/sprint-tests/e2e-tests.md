@@ -10,7 +10,7 @@
 - `e2e_hex_widget_survives_autosave`: launch wasm app, click dice, wait
   3 s, F5; verify the dice cell's last-rolled value rehydrates from
   localStorage and the button still works on the rehydrated workbook.
-- `e2e_v145_save_loads_square_widgets`: load a v145-era `.tscl` (any
+- `e2e_v145_save_loads_square_widgets`: load a v145-era `.crbd` (any
   workbook saved before this PR); verify the file's `widgets` field
   rehydrates as `square_widgets` (per the `#[serde(alias)]` we added).
 

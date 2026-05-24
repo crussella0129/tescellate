@@ -1,0 +1,20 @@
+[package]
+name = "carbide-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "`.crbd` workbook file format reader/writer. Zip archive with manifest, sheets, formula assets."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+carbide-core = { workspace = true }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+carbide-tess = { workspace = true }
+hashbrown = { workspace = true }

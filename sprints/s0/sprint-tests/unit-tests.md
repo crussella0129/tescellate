@@ -38,4 +38,4 @@ their owning tasks:
 
 ## Run summary
 - `cargo test --workspace`: ~250 test cases across all crates, all passing.
-- `cargo test --manifest-path apps/tescellate-ui/Cargo.toml --lib`: 243 passed, 0 failed.
+- `cargo test --manifest-path apps/carbide-ui/Cargo.toml --lib`: 243 passed, 0 failed.

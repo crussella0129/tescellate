@@ -23,16 +23,16 @@ Two things this sprint:
   fall through to text on non-rectangular cells. Voronoi inherits the
   same deferral (its polygons vary in size; a slider inside an irregular
   polygon is awkward).
-- **ADR-001 (sprint 0)** — `.tscl` `ui.json` schema evolution: new
+- **ADR-001 (sprint 0)** — `.crbd` `ui.json` schema evolution: new
   `UiSnapshot` field gets `#[serde(default)]`.
 
 ## 2. Existing Code Survey
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `apps/tescellate-ui/src/app.rs` | high | `draw_voronoi_grid` (from v150) needs a widget-dispatch pass + the cell-text pass needs the widget-skip gate (mirrors the v151 hex/triangle fix). `TescellateApp` gains `voronoi_widgets: Widgets<VoronoiCoord>`. capture/restore + the `new` seed. `engine_label` (line ~5862) carries the "Excelite" → "Carbide" rename. |
-| `apps/tescellate-ui/src/state_io.rs` | medium | `UiSnapshot` gains `voronoi_widgets: Widgets<VoronoiCoord>` with `#[serde(default)]`. |
-| `apps/tescellate-ui/src/widget.rs` | low | `Widgets<K>` already generic; `VoronoiCoord` satisfies the bounds. No change. |
+| `apps/carbide-ui/src/app.rs` | high | `draw_voronoi_grid` (from v150) needs a widget-dispatch pass + the cell-text pass needs the widget-skip gate (mirrors the v151 hex/triangle fix). `CarbideApp` gains `voronoi_widgets: Widgets<VoronoiCoord>`. capture/restore + the `new` seed. `engine_label` (line ~5862) carries the "Excelite" → "Carbide" rename. |
+| `apps/carbide-ui/src/state_io.rs` | medium | `UiSnapshot` gains `voronoi_widgets: Widgets<VoronoiCoord>` with `#[serde(default)]`. |
+| `apps/carbide-ui/src/widget.rs` | low | `Widgets<K>` already generic; `VoronoiCoord` satisfies the bounds. No change. |
 
 ## 3. External Sources
 None.
@@ -55,7 +55,7 @@ None.
 ## 5. Recommended Approach
 
 1. **T-901: `engine_label` rename** — `EngineKind::ExcelLite => "Carbide"`. Grep for any test/string dependency on "Excelite" and update.
-2. **T-902: `voronoi_widgets` field + UiSnapshot** — add the field to `TescellateApp` and `UiSnapshot` (`#[serde(default)]`); capture/restore round-trip.
+2. **T-902: `voronoi_widgets` field + UiSnapshot** — add the field to `CarbideApp` and `UiSnapshot` (`#[serde(default)]`); capture/restore round-trip.
 3. **T-903: Voronoi render widget dispatch** — in `draw_voronoi_grid`, add the widget-skip gate to the text pass + a Button/Toggle render pass inscribed at each widget cell's centroid.
 4. **T-904: Demo seed** — a Toggle on one Voronoi cell (e.g. `V(5)`), seeded FALSE.
 5. **T-905: Tests** — `widgets_generic_with_voronoi_coord_round_trip` + extend the snapshot round-trip fixture.

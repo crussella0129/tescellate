@@ -18,7 +18,7 @@ Finalized - DO NOT EDIT
 ## Execution Sequence
 
 ### T-501: New `voronoi.rs` module.
-- **Touches:** `crates/tescellate-tess/src/voronoi.rs` (new)
+- **Touches:** `crates/carbide-tess/src/voronoi.rs` (new)
 - **Depends on:** (none)
 - **Success criterion:** Module defines:
   - `VoronoiCoord(pub u32)` deriving `Debug + Clone + Copy + PartialEq + Eq + Hash + Serialize + Deserialize`.
@@ -27,7 +27,7 @@ Finalized - DO NOT EDIT
   - Module is referenced from `lib.rs` via `pub mod voronoi`.
 
 ### T-502: `Lattice` trait impl + Sutherland-Hodgman.
-- **Touches:** `crates/tescellate-tess/src/voronoi.rs`
+- **Touches:** `crates/carbide-tess/src/voronoi.rs`
 - **Depends on:** T-501
 - **Success criterion:** `impl Lattice for VoronoiLattice`:
   - `Coord = VoronoiCoord`.
@@ -41,12 +41,12 @@ Finalized - DO NOT EDIT
 - **Notes:** Sutherland-Hodgman: iterate over edges of the current polygon; for each edge (a, b), check both endpoints against the half-plane; emit the surviving / clipped endpoints. ~50 lines.
 
 ### T-503: `LatticeKind::Voronoi` + `LatticeHandle::Voronoi` + `ParsedCoord::Voronoi`.
-- **Touches:** `crates/tescellate-tess/src/lib.rs`
+- **Touches:** `crates/carbide-tess/src/lib.rs`
 - **Depends on:** T-502
 - **Success criterion:** All three enums gain a Voronoi variant. `LatticeHandle::for_kind(LatticeKind::Voronoi)` returns `Some(LatticeHandle::Voronoi(VoronoiLattice::default()))`. Every match in `LatticeHandle` and the canonicalisation paths handles the new variant. `lattice_distance` for Voronoi returns `Ref` (no canonical distance on a Voronoi diagram yet) — same shape as `Triangle`'s first-cut metric.
 
 ### T-504: Tests.
-- **Touches:** `crates/tescellate-tess/src/voronoi.rs` (tests submodule), `crates/tescellate-tess/src/lib.rs` (handle tests)
+- **Touches:** `crates/carbide-tess/src/voronoi.rs` (tests submodule), `crates/carbide-tess/src/lib.rs` (handle tests)
 - **Depends on:** T-502, T-503
 - **Success criterion:** Five new tests pass:
   - `voronoi_cell_at_returns_nearest_seed`

@@ -8,5 +8,5 @@
 - Compile-time + manual / E2E. `cargo build` (native + wasm) clean.
 
 ## Run summary
-- `cargo test --manifest-path apps/tescellate-ui/Cargo.toml --lib`: **249 passed, 0 failed** (1 net-new + 248 carried).
+- `cargo test --manifest-path apps/carbide-ui/Cargo.toml --lib`: **249 passed, 0 failed** (1 net-new + 248 carried).
 - `cargo test --workspace`: all green.

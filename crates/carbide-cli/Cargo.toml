@@ -1,0 +1,13 @@
+[package]
+name = "carbide-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Headless CLI for the Carbide core. Placeholder in v161 (no headless commands yet); kept as a structural entry point for future eval / validate / batch work."
+
+[[bin]]
+name = "carbide-core"
+path = "src/main.rs"

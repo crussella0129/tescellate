@@ -1,12 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/tescellate-core",
-    "crates/tescellate-tess",
-    "crates/tescellate-formula",
-    "crates/tescellate-ipc",
-    "crates/tescellate-store",
-    "crates/tescellate-cli",
+    "crates/carbide-core",
+    "crates/carbide-tess",
+    "crates/carbide-formula",
+    "crates/carbide-store",
+    "crates/carbide-cli",
 ]
 
 [workspace.package]
@@ -27,11 +26,10 @@ hashbrown = { version = "0.14", features = ["serde"] }
 glam = { version = "0.27", features = ["serde"] }
 
 # Internal crates referenced by path so the workspace is self-contained.
-tescellate-core = { path = "crates/tescellate-core" }
-tescellate-tess = { path = "crates/tescellate-tess" }
-tescellate-formula = { path = "crates/tescellate-formula" }
-tescellate-ipc = { path = "crates/tescellate-ipc" }
-tescellate-store = { path = "crates/tescellate-store" }
+carbide-core = { path = "crates/carbide-core" }
+carbide-tess = { path = "crates/carbide-tess" }
+carbide-formula = { path = "crates/carbide-formula" }
+carbide-store = { path = "crates/carbide-store" }
 
 [profile.release]
 lto = "thin"

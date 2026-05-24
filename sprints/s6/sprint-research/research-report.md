@@ -14,7 +14,7 @@ v151 follow-up.
 - **ADR-009 (sprint 5)** — `VoronoiLattice` carries `seeds` + `bounds`
   as struct state; cells are bounded against `Rect`. Sprint 6 consumes
   this without modification.
-- **ADR-001 (sprint 0)** — `.tscl` `ui.json` sidecar schema. Sprint 6
+- **ADR-001 (sprint 0)** — `.crbd` `ui.json` sidecar schema. Sprint 6
   follows the established schema-evolution pattern: any new UiSnapshot
   field gets `#[serde(default)]` so older snapshots tolerate the
   addition.
@@ -28,11 +28,11 @@ v151 follow-up.
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `apps/tescellate-ui/src/app.rs` | high | The render path. Add `voronoi_lattice: VoronoiLattice`, `voronoi: Sheet<VoronoiCoord>` fields; `ActiveSheet::Voronoi`, `CellId::Voronoi(VoronoiCoord)` variants; a `draw_voronoi_grid` function modeled on `draw_hex_grid` (vertex polygons, text overlay, selection stroke). The tab bar lives ~line 5001; add a 4th tab. update() dispatch on `self.active` ~line 4800 needs the Voronoi arm. |
-| `crates/tescellate-formula/src/engine.rs` | low | `add_sheet(name, LatticeKind::Voronoi)` already works through the sprint-5 `LatticeHandle::for_kind` path — no engine changes needed. |
-| `crates/tescellate-tess/src/voronoi.rs` | medium | The Lattice trait impl is already complete. The UI calls `centroid` (for text placement), `vertices` (for polygon paint), `cell_at` (for click hit-test) — all exist. |
-| `apps/tescellate-ui/src/selection.rs` | medium | `Sheet<C>` is generic over `Coord`; `VoronoiCoord` needs to satisfy the `Coord` bound. Already does (`Eq + Hash + Copy + Serialize` from sprint 5). |
-| `apps/tescellate-ui/src/state_io.rs` | low | `UiSnapshot` keeps its current fields; sprint 6 only adds a (deferred) `voronoi_widgets` placeholder if needed. For minimum viable Demo C, nothing extra. |
+| `apps/carbide-ui/src/app.rs` | high | The render path. Add `voronoi_lattice: VoronoiLattice`, `voronoi: Sheet<VoronoiCoord>` fields; `ActiveSheet::Voronoi`, `CellId::Voronoi(VoronoiCoord)` variants; a `draw_voronoi_grid` function modeled on `draw_hex_grid` (vertex polygons, text overlay, selection stroke). The tab bar lives ~line 5001; add a 4th tab. update() dispatch on `self.active` ~line 4800 needs the Voronoi arm. |
+| `crates/carbide-formula/src/engine.rs` | low | `add_sheet(name, LatticeKind::Voronoi)` already works through the sprint-5 `LatticeHandle::for_kind` path — no engine changes needed. |
+| `crates/carbide-tess/src/voronoi.rs` | medium | The Lattice trait impl is already complete. The UI calls `centroid` (for text placement), `vertices` (for polygon paint), `cell_at` (for click hit-test) — all exist. |
+| `apps/carbide-ui/src/selection.rs` | medium | `Sheet<C>` is generic over `Coord`; `VoronoiCoord` needs to satisfy the `Coord` bound. Already does (`Eq + Hash + Copy + Serialize` from sprint 5). |
+| `apps/carbide-ui/src/state_io.rs` | low | `UiSnapshot` keeps its current fields; sprint 6 only adds a (deferred) `voronoi_widgets` placeholder if needed. For minimum viable Demo C, nothing extra. |
 
 ## 3. External Sources
 None — pure in-repo wiring.
@@ -51,7 +51,7 @@ None — pure in-repo wiring.
 **Primary — one PR, scoped to "Demo C renders and you can interact with cells".**
 
 1. **T-601: `Coord for VoronoiCoord`** in `selection.rs`. `step_back` returns the same coord (no spatial ordering); `min_max` is `(self, self)` (single-cell range only); `rect_cells` returns `[self]`. Most methods are degenerate but compile-correct.
-2. **T-602: TescellateApp fields.** Add `voronoi_lattice: VoronoiLattice`, `voronoi: Sheet<VoronoiCoord>`. Initialise in `new` with `LatticeHandle::for_kind(LatticeKind::Voronoi).unwrap()` to get the default 8-seed config. `engine.add_sheet("Voronoi", LatticeKind::Voronoi)` returns the sheet id used by the new `Sheet<VoronoiCoord>`.
+2. **T-602: CarbideApp fields.** Add `voronoi_lattice: VoronoiLattice`, `voronoi: Sheet<VoronoiCoord>`. Initialise in `new` with `LatticeHandle::for_kind(LatticeKind::Voronoi).unwrap()` to get the default 8-seed config. `engine.add_sheet("Voronoi", LatticeKind::Voronoi)` returns the sheet id used by the new `Sheet<VoronoiCoord>`.
 3. **T-603: `ActiveSheet::Voronoi`, `CellId::Voronoi(VoronoiCoord)`** variants. Every existing match on `ActiveSheet` needs an arm; most fall through to a Voronoi-specific call (e.g. `draw_voronoi_grid` in render, `voronoi_address` for the address bar).
 4. **T-604: `draw_voronoi_grid` function.** Mirror `draw_hex_grid`'s structural pattern: allocate painter + interaction rect, resolve click position via `voronoi_lattice.cell_at`, first pass paint cell polygons, second pass text at centroid, third pass selection stroke, in-cell edit overlay.
 5. **T-605: Demo C seed cells.** Eight cells matching the default 8-seed config.

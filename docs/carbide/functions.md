@@ -1,6 +1,6 @@
 # Carbide — Function Catalog
 
-Every built-in function in the Carbide standard library, grouped by category. The implementation lives in `crates/tescellate-formula/src/excellite/funcs/`. Every function listed here is registered in `funcs::standard()` and routed through the `FunctionRegistry`.
+Every built-in function in the Carbide standard library, grouped by category. The implementation lives in `crates/carbide-formula/src/excellite/funcs/`. Every function listed here is registered in `funcs::standard()` and routed through the `FunctionRegistry`.
 
 Convention used throughout:
 

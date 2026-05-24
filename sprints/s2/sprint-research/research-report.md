@@ -8,7 +8,7 @@ called out in earlier sprint notes was "square-sheet widgets need
 generalising to hex coords first." This sprint generalises `Widgets`
 from its square-only `HashMap<(u32, u32), WidgetKind>` to a coord-generic
 `Widgets<K>`, adds a `hex_widgets: Widgets<HexCoord>` field on
-`TescellateApp`, extends the hex render pass to honour widget kinds for
+`CarbideApp`, extends the hex render pass to honour widget kinds for
 those cells, threads the new field through `UiSnapshot`, and seeds the
 demo with a Button on `H(2, 2)` (source `=RANDBETWEEN(1, 6)`) plus a
 counter cell that aggregates rolls.
@@ -20,11 +20,11 @@ small follow-up (triangle widgets) rather than a load-bearing refactor.
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `apps/tescellate-ui/src/widget.rs` | high | `Widgets` (square-only) + `WidgetKind` enum + helpers (`bool_state/source`, `slider_value/source`, `progress_fraction`). Methods: `kind`, `is_widget`, `is_toggle/slider/button/progress_bar`, `set*`, `iter`, `replace_with`. Already serializes as Vec-of-pair via `WidgetsRepr`. Sprint 2 makes the inner map generic over `K`. |
-| `apps/tescellate-ui/src/app.rs` | high | `widgets: Widgets` field on TescellateApp; many use-sites (toggle/slider/button/progress setters in `apply_ribbon`; square-grid render path dispatches `WidgetKind`). Hex render path (`draw_hex_grid`) doesn't yet render widgets. The Hex Game demo seed currently has H(0,0)=label, H(0,2)=`=SUM(NEIGHBORS(...))`, plus six resource tiles. |
-| `apps/tescellate-ui/src/state_io.rs` | medium | `UiSnapshot` carries `widgets: Widgets` (square). Sprint 2 splits this into `square_widgets` + `hex_widgets` + (deferred) `triangle_widgets`. Bumps the snapshot schema; older snapshots tolerate the rename via `#[serde(alias)]` so a v145 autosave still loads. |
-| `crates/tescellate-tess/src/hex.rs` | low | `HexCoord { q, r }` has `Serialize`/`Deserialize`/`Hash`/`Eq`. Drops cleanly into `Widgets<HexCoord>`. |
-| `apps/tescellate-ui/src/ribbon.rs` | low | Ribbon's `ToggleWidget`/`ToggleSlider`/`ToggleButton`/`ToggleProgressBar` actions today only apply to the square sheet (the `apply_ribbon` arms check `ActiveSheet::Square`). Hex needs the same path; or we leave hex widget assignment to the seed and Carbide-driven flows for now and surface a follow-up in the report. |
+| `apps/carbide-ui/src/widget.rs` | high | `Widgets` (square-only) + `WidgetKind` enum + helpers (`bool_state/source`, `slider_value/source`, `progress_fraction`). Methods: `kind`, `is_widget`, `is_toggle/slider/button/progress_bar`, `set*`, `iter`, `replace_with`. Already serializes as Vec-of-pair via `WidgetsRepr`. Sprint 2 makes the inner map generic over `K`. |
+| `apps/carbide-ui/src/app.rs` | high | `widgets: Widgets` field on CarbideApp; many use-sites (toggle/slider/button/progress setters in `apply_ribbon`; square-grid render path dispatches `WidgetKind`). Hex render path (`draw_hex_grid`) doesn't yet render widgets. The Hex Game demo seed currently has H(0,0)=label, H(0,2)=`=SUM(NEIGHBORS(...))`, plus six resource tiles. |
+| `apps/carbide-ui/src/state_io.rs` | medium | `UiSnapshot` carries `widgets: Widgets` (square). Sprint 2 splits this into `square_widgets` + `hex_widgets` + (deferred) `triangle_widgets`. Bumps the snapshot schema; older snapshots tolerate the rename via `#[serde(alias)]` so a v145 autosave still loads. |
+| `crates/carbide-tess/src/hex.rs` | low | `HexCoord { q, r }` has `Serialize`/`Deserialize`/`Hash`/`Eq`. Drops cleanly into `Widgets<HexCoord>`. |
+| `apps/carbide-ui/src/ribbon.rs` | low | Ribbon's `ToggleWidget`/`ToggleSlider`/`ToggleButton`/`ToggleProgressBar` actions today only apply to the square sheet (the `apply_ribbon` arms check `ActiveSheet::Square`). Hex needs the same path; or we leave hex widget assignment to the seed and Carbide-driven flows for now and surface a follow-up in the report. |
 
 ## 3. External Sources
 
@@ -69,7 +69,7 @@ the same `Coord` trait bounds (`Eq + Hash + Copy`).
    `WidgetsRepr` serde adapter becomes `WidgetsRepr<K>` with the same
    `serde(bound = ...)` pattern FormatMap uses. Existing methods keep
    the same names; their internal signatures change `(u32, u32)` → `K`.
-2. **T-201b — In `TescellateApp`, rename `widgets: Widgets` →
+2. **T-201b — In `CarbideApp`, rename `widgets: Widgets` →
    `square_widgets: Widgets<(u32, u32)>` and add
    `hex_widgets: Widgets<HexCoord>`.** Update every use site (~15 call
    sites in `app.rs`). The ribbon's `ToggleWidget`/`ToggleSlider`/
@@ -89,8 +89,8 @@ the same `Coord` trait bounds (`Eq + Hash + Copy`).
 4. **T-201d — Capture/restore.** Rename `UiSnapshot::widgets` to
    `square_widgets` (with `#[serde(alias = "widgets")]`); add
    `hex_widgets: Widgets<HexCoord>` field with `#[serde(default)]`.
-   Update `TescellateApp::capture_state` / `restore_state`.
-5. **T-201e — Hex Game seed.** In `TescellateApp::new`, after the
+   Update `CarbideApp::capture_state` / `restore_state`.
+5. **T-201e — Hex Game seed.** In `CarbideApp::new`, after the
    existing hex resource-tile seed:
    - Add a Roll Dice button at H(2, 2) with source `=RANDBETWEEN(1, 6)`.
    - Add a Score counter at H(2, 3) with source `=H(2, 2) + H(0, 2)` (or a similar accumulator pattern that re-evaluates on each dice roll because RANDBETWEEN is non-deterministic and `H(0, 2)` is the existing harvest sum).

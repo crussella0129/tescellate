@@ -13,11 +13,11 @@ cell-reference-return shape OFFSET / INDIRECT would require.
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `crates/tescellate-formula/src/excellite/funcs/lookup.rs` | high | Already has VLOOKUP, HLOOKUP, INDEX, MATCH, CHOOSE. Module doc comment says "XLOOKUP, OFFSET, INDIRECT come later when we have a cleaner cell-ref abstraction" — XLOOKUP itself returns values so we can land it now; only OFFSET/INDIRECT need the deferred ref-shape. Sprint 3 adds an `xlookup` function alongside the existing `vlookup`. |
-| `crates/tescellate-formula/src/excellite/funcs/stats.rs` | high | Has `STDEV`, `STDEVP`, `VAR`, `VARP`, `COVAR`, `COVARP`, `COVARS`, `MODE`, `RANK` already. Sprint 3 only adds the dotted-name aliases — same function pointers, new registry names. |
-| `crates/tescellate-formula/src/excellite/lex.rs` | medium | `lex_ident_or_ref` currently consumes `[A-Za-z]+[0-9A-Za-z_]*` for bare identifiers. The lexer must learn to accept `.UPPERCASE_RUN` continuation segments so `STDEV.P` lexes as one `Ident("STDEV.P")` rather than `Ident("STDEV") Dot Ident("P")`. Restrict the continuation to alphabetic chars after the dot to keep float-decimal parsing untouched. |
-| `crates/tescellate-formula/src/excellite/funcs/coerce.rs` | low | `compare`, `flatten`, `to_int`, `arity_range`, `arity_n` already exist. XLOOKUP needs `compare` (for match modes), `flatten` (for the column arrays), and `to_int` (for match_mode / search_mode). |
-| `crates/tescellate-formula/tests/reference_examples.rs` | medium | Where new function tests land; pattern is established (one #[test] per new function with handful of assertions). |
+| `crates/carbide-formula/src/excellite/funcs/lookup.rs` | high | Already has VLOOKUP, HLOOKUP, INDEX, MATCH, CHOOSE. Module doc comment says "XLOOKUP, OFFSET, INDIRECT come later when we have a cleaner cell-ref abstraction" — XLOOKUP itself returns values so we can land it now; only OFFSET/INDIRECT need the deferred ref-shape. Sprint 3 adds an `xlookup` function alongside the existing `vlookup`. |
+| `crates/carbide-formula/src/excellite/funcs/stats.rs` | high | Has `STDEV`, `STDEVP`, `VAR`, `VARP`, `COVAR`, `COVARP`, `COVARS`, `MODE`, `RANK` already. Sprint 3 only adds the dotted-name aliases — same function pointers, new registry names. |
+| `crates/carbide-formula/src/excellite/lex.rs` | medium | `lex_ident_or_ref` currently consumes `[A-Za-z]+[0-9A-Za-z_]*` for bare identifiers. The lexer must learn to accept `.UPPERCASE_RUN` continuation segments so `STDEV.P` lexes as one `Ident("STDEV.P")` rather than `Ident("STDEV") Dot Ident("P")`. Restrict the continuation to alphabetic chars after the dot to keep float-decimal parsing untouched. |
+| `crates/carbide-formula/src/excellite/funcs/coerce.rs` | low | `compare`, `flatten`, `to_int`, `arity_range`, `arity_n` already exist. XLOOKUP needs `compare` (for match modes), `flatten` (for the column arrays), and `to_int` (for match_mode / search_mode). |
+| `crates/carbide-formula/tests/reference_examples.rs` | medium | Where new function tests land; pattern is established (one #[test] per new function with handful of assertions). |
 
 ## 3. External Sources
 

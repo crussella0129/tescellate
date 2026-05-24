@@ -43,7 +43,7 @@ across wasm and native — the only `#[cfg]` is at the `spawn_local` vs.
 - Firefox: 5 MiB.
 - Safari: 5 MiB.
 
-Practical ceiling for autosave: 4 MiB of base64 = ~3 MiB binary. A `.tscl` with
+Practical ceiling for autosave: 4 MiB of base64 = ~3 MiB binary. A `.crbd` with
 ~10K cells of text-and-numbers compresses to well under 100 KiB, so the cap is
 only relevant for pathological workbooks; we surface a toast and skip the
 autosave when over.
@@ -56,5 +56,5 @@ Verified the dependency chain:
 - `flate2 = "*"` with `rust_backend` selects `miniz_oxide` — pure Rust.
 
 No `libz-sys`, no `bzip2-sys`. Confirmed by the existing build: `wasm32` already
-links tescellate-store's deps transitively via tescellate-core via
-tescellate-formula. (Cross-check on first build of the sprint.)
+links carbide-store's deps transitively via carbide-core via
+carbide-formula. (Cross-check on first build of the sprint.)

@@ -8,7 +8,7 @@ Finalized - DO NOT EDIT
   - **Component A — Coord plumbing**
     - T-601: `impl Coord for VoronoiCoord` in `selection.rs` (degenerate arithmetic; single-cell selection only).
   - **Component B — App-level fields + active sheet**
-    - T-602: `voronoi_lattice`, `voronoi: Sheet<VoronoiCoord>` fields on `TescellateApp`; engine.add_sheet seeds them.
+    - T-602: `voronoi_lattice`, `voronoi: Sheet<VoronoiCoord>` fields on `CarbideApp`; engine.add_sheet seeds them.
     - T-603: `ActiveSheet::Voronoi`, `CellId::Voronoi(VoronoiCoord)` variants + every match arm.
   - **Component C — Render**
     - T-604: `draw_voronoi_grid` function: polygon paint, text, selection stroke, click hit-test, in-cell edit overlay.
@@ -20,33 +20,33 @@ Finalized - DO NOT EDIT
 ## Execution Sequence
 
 ### T-601: `impl Coord for VoronoiCoord`.
-- **Touches:** `apps/tescellate-ui/src/selection.rs`
+- **Touches:** `apps/carbide-ui/src/selection.rs`
 - **Depends on:** (none)
 - **Success criterion:** Compiles. `step_back` returns self; `min_max(a, b)` returns `(a, a)` (single-cell only); `rect_cells` returns `vec![self]`; `rect_contains` is `false` (no range concept).
 - **Notes:** Selection on Voronoi is single-cell only.
 
-### T-602: TescellateApp fields.
-- **Touches:** `apps/tescellate-ui/src/app.rs`
+### T-602: CarbideApp fields.
+- **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-601
 - **Success criterion:** `voronoi_lattice: VoronoiLattice` + `voronoi: Sheet<VoronoiCoord>` fields exist; initialised in `new` after the Triangle sheet is created. `engine.add_sheet("Voronoi", LatticeKind::Voronoi)` returns the sheet id used by `Sheet<VoronoiCoord>`.
 
 ### T-603: `ActiveSheet::Voronoi` + `CellId::Voronoi`.
-- **Touches:** `apps/tescellate-ui/src/app.rs`
+- **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-602
 - **Success criterion:** Both enums gain a Voronoi variant. Every `match self.active` site has a Voronoi arm (pass-through to `draw_voronoi_grid` in render; no-op for square-grid-specific paths like fill drag). Build clean.
 
 ### T-604: `draw_voronoi_grid`.
-- **Touches:** `apps/tescellate-ui/src/app.rs`
+- **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-602, T-603
 - **Success criterion:** New `draw_voronoi_grid` method renders polygons + text + selection stroke. Click hit-test via `voronoi_lattice.cell_at(local)`. In-cell edit overlay sized to a small rect at the centroid.
 
 ### T-605: Demo C seed cells.
-- **Touches:** `apps/tescellate-ui/src/app.rs`
+- **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-602
 - **Success criterion:** Eight `engine.set_cell(voronoi_sheet, "V(N)", Some(...))` calls populate `V(0)..V(7)` with demo values. Build clean.
 
 ### T-606: Tab bar + dispatch.
-- **Touches:** `apps/tescellate-ui/src/app.rs`
+- **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-603, T-604
 - **Success criterion:** A 4th "Voronoi" tab appears in the tab bar; clicking it sets `self.active = ActiveSheet::Voronoi` and routes render to `draw_voronoi_grid`.
 

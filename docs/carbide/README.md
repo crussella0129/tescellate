@@ -1,6 +1,6 @@
 # Carbide
 
-**Carbide** is the formula language of [Tescellate](../../README.md) — a DAG-evaluated spreadsheet whose cells aren't stuck being squares. It looks like Excel from across the room: write `=SUM(A1:A10)` and it does what you'd expect. Up close it's something more — a small, lexically-scoped functional language with first-class lambdas, recursive bindings, dynamic arrays, and a roadmap that explicitly anticipates non-rectangular cell tilings.
+**Carbide** is the formula language of [Carbide](../../README.md) — a DAG-evaluated spreadsheet whose cells aren't stuck being squares. It looks like Excel from across the room: write `=SUM(A1:A10)` and it does what you'd expect. Up close it's something more — a small, lexically-scoped functional language with first-class lambdas, recursive bindings, dynamic arrays, and a roadmap that explicitly anticipates non-rectangular cell tilings.
 
 This document set is the **foundation** of Carbide's specification: it pins down what the language is *today*, the way the way the spec is going to grow as new tessellations land, and the contract between the language and the formula engines (Excel-lite, Python, Rust) that implement it. It is written before the next major architecture move — non-rectangular cell tilings (hex, triangle, Voronoi, drawn) — so that those tilings can be designed against a stable language baseline rather than chasing a moving target.
 
@@ -21,7 +21,7 @@ Outside the Carbide language proper but in the same v0.2 doc series:
 
 | | | |
 |---|---|---|
-| 7. | [**../rust-native.md**](../rust-native.md) | The architectural question: could Tescellate be written entirely in Rust, including the renderer? Four levels (L0 today, L1 Tauri host, L2 Rust→WASM renderer, L3 native Rust GUI) with subsystem-by-subsystem mappings, tooling-maturity tables, migration-effort estimates, and an honest tradeoff list. Lives outside `docs/carbide/` because it covers the whole app architecture, not just the language.
+| 7. | [**../rust-native.md**](../rust-native.md) | The architectural question: could Carbide be written entirely in Rust, including the renderer? Four levels (L0 today, L1 Tauri host, L2 Rust→WASM renderer, L3 native Rust GUI) with subsystem-by-subsystem mappings, tooling-maturity tables, migration-effort estimates, and an honest tradeoff list. Lives outside `docs/carbide/` because it covers the whole app architecture, not just the language.
 
 ## Design principles
 
@@ -83,4 +83,4 @@ And the analytical operations a data scientist actually wants:
 =PERCENTILE(A1:A10, 0.5)                                        ≡ MEDIAN(A1:A10)
 ```
 
-Everything you see above is a runnable test case in `crates/tescellate-formula/src/excellite/funcs/lambda_funcs.rs#tests`. The pattern is intentional: the language's spec and its test suite share the same examples.
+Everything you see above is a runnable test case in `crates/carbide-formula/src/excellite/funcs/lambda_funcs.rs#tests`. The pattern is intentional: the language's spec and its test suite share the same examples.

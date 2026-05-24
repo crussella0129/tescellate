@@ -37,4 +37,4 @@ Finalized - DO NOT EDIT
 - **Status:** possible (manual).
 - `e2e_hex_dice_button_rolls`: launch the app (native or wasm), switch to Hex Game sheet, click the dice button at H(2,2), verify H(2,2) value changes to a new integer in [1, 6]. Click again — verify it rolls a different value at least once over 5 clicks.
 - `e2e_hex_widget_survives_autosave`: launch wasm app, click dice, wait 3 s, F5; verify the rolled value rehydrates (widget metadata survives via hex_widgets in UiSnapshot).
-- `e2e_v145_save_loads_square_widgets`: open a v145-era `.tscl` file (or carry one from CI); verify the file's `widgets` field rehydrates as `square_widgets` (via `#[serde(alias)]`).
+- `e2e_v145_save_loads_square_widgets`: open a v145-era `.crbd` file (or carry one from CI); verify the file's `widgets` field rehydrates as `square_widgets` (via `#[serde(alias)]`).

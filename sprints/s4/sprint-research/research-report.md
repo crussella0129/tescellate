@@ -14,16 +14,16 @@ Pure follow-up sprint — no new lattice, no new schema work, no new deps.
 
 - **ADR-005 (sprint 2)** — `Widgets<K>` lattice-generic pattern. Sprint 4 instantiates the third coord type (`TriCoord`), closing the explicit follow-up noted in that ADR.
 - **ADR-006 (sprint 2)** — Hex widgets ship Button + Toggle; Slider / ProgressBar deferred because the per-cell footprint is too small. Triangle has the same constraint (56-side equilateral, similar inscribed-rect area), so sprint 4 inherits the same deferral.
-- **ADR-001 (sprint 0)** — `.tscl` `ui.json` sidecar schema. Adding `triangle_widgets` to `UiSnapshot` is the established schema-evolution pattern: new field with `#[serde(default)]` so older snapshots tolerate the addition.
+- **ADR-001 (sprint 0)** — `.crbd` `ui.json` sidecar schema. Adding `triangle_widgets` to `UiSnapshot` is the established schema-evolution pattern: new field with `#[serde(default)]` so older snapshots tolerate the addition.
 
 ## 2. Existing Code Survey
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `apps/tescellate-ui/src/app.rs` | high | Has `square_widgets: Widgets<(u32, u32)>` (sprint 0) and `hex_widgets: Widgets<HexCoord>` (sprint 2). Sprint 4 adds `triangle_widgets: Widgets<TriCoord>` in the same shape. Render path lives in `draw_triangle_grid` around line 4220; insert the widget dispatch right before the in-cell edit overlay (line 4482), mirroring the hex pass added in sprint 2. |
-| `apps/tescellate-ui/src/state_io.rs` | medium | `UiSnapshot` carries `square_widgets` + `hex_widgets` already. Add `triangle_widgets: Widgets<TriCoord>` with `#[serde(default)]` (no alias needed — this field is brand new, older snapshots default to empty). |
-| `apps/tescellate-ui/src/widget.rs` | low | `Widgets<K>` is already coord-generic from sprint 2; `TriCoord` already has the required derives (`Eq + Hash + Copy + Serialize`). No changes here. |
-| `crates/tescellate-tess/src/triangle.rs` | low | `TriangleLattice::centroid(coord)` and `TriCoord::new` already exist. `triangle_in_view` is the visibility predicate. |
+| `apps/carbide-ui/src/app.rs` | high | Has `square_widgets: Widgets<(u32, u32)>` (sprint 0) and `hex_widgets: Widgets<HexCoord>` (sprint 2). Sprint 4 adds `triangle_widgets: Widgets<TriCoord>` in the same shape. Render path lives in `draw_triangle_grid` around line 4220; insert the widget dispatch right before the in-cell edit overlay (line 4482), mirroring the hex pass added in sprint 2. |
+| `apps/carbide-ui/src/state_io.rs` | medium | `UiSnapshot` carries `square_widgets` + `hex_widgets` already. Add `triangle_widgets: Widgets<TriCoord>` with `#[serde(default)]` (no alias needed — this field is brand new, older snapshots default to empty). |
+| `apps/carbide-ui/src/widget.rs` | low | `Widgets<K>` is already coord-generic from sprint 2; `TriCoord` already has the required derives (`Eq + Hash + Copy + Serialize`). No changes here. |
+| `crates/carbide-tess/src/triangle.rs` | low | `TriangleLattice::centroid(coord)` and `TriCoord::new` already exist. `triangle_in_view` is the visibility predicate. |
 
 ## 3. External Sources
 None — pure in-repo extension.
@@ -40,7 +40,7 @@ None — pure in-repo extension.
 **Primary — one focused commit, mirroring the sprint 2 hex pattern.**
 
 1. **T-401: `triangle_widgets` field + plumbing.** Add
-   `triangle_widgets: Widgets<TriCoord>` to `TescellateApp`. Initialize
+   `triangle_widgets: Widgets<TriCoord>` to `CarbideApp`. Initialize
    `Widgets::default()` in `new`. Update `capture_state` and
    `restore_state` to round-trip the field. Update `UiSnapshot` to
    carry `triangle_widgets: Widgets<TriCoord>` with

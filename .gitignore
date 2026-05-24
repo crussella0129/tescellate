@@ -7,6 +7,7 @@ Cargo.lock.bak
 
 # Native formula compile cache
 .tescellate-cache/
+.carbide-cache/
 
 # Node / Electron / Vite
 node_modules/
@@ -38,9 +39,11 @@ Thumbs.db
 coverage/
 .nyc_output/
 
-# Local workbooks for testing
+# Local workbooks for testing (dual-extension per ADR-015 back-compat)
 *.tscl
 !examples/*.tscl
+*.crbd
+!examples/*.crbd
 
 # OS junk
 desktop.ini

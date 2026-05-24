@@ -25,9 +25,9 @@ Pure polish sprint — no lattice, schema, or engine change.
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `apps/tescellate-ui/src/app.rs` | high | `paint_hex` calls `hex_cell_text` unconditionally; `draw_triangle_grid` text-pass likewise. `TescellateApp::new` is where the col/row min-size bumps land (after the struct binds). |
-| `apps/tescellate-ui/src/grid.rs` | low | `set_col_width` / `set_row_height` already clamp to per-axis minimums. |
-| `apps/tescellate-ui/src/widget.rs` | low | `Widgets<K>::iter()` drives the sizing-floor walk. |
+| `apps/carbide-ui/src/app.rs` | high | `paint_hex` calls `hex_cell_text` unconditionally; `draw_triangle_grid` text-pass likewise. `CarbideApp::new` is where the col/row min-size bumps land (after the struct binds). |
+| `apps/carbide-ui/src/grid.rs` | low | `set_col_width` / `set_row_height` already clamp to per-axis minimums. |
+| `apps/carbide-ui/src/widget.rs` | low | `Widgets<K>::iter()` drives the sizing-floor walk. |
 
 ## 3. External Sources
 None.
@@ -50,7 +50,7 @@ None.
 
 1. **T-801: Hex text-pass widget skip** in `paint_hex`.
 2. **T-802: Triangle text-pass widget skip** in `draw_triangle_grid`.
-3. **T-803: Square widget cell sizing floor** in `TescellateApp::new` — Slider/Button/ProgressBar host columns ≥ 160 px, host rows ≥ 28 px; Toggle stays default.
+3. **T-803: Square widget cell sizing floor** in `CarbideApp::new` — Slider/Button/ProgressBar host columns ≥ 160 px, host rows ≥ 28 px; Toggle stays default.
 4. **T-804: CI gate + PR `webui-v151-widget-polish`.**
 
 **Alternative considered — float the slider rect over the column** instead of enforcing the cell minimum. Rejected: breaks the widgets-live-in-cells model the user explicitly wants preserved.

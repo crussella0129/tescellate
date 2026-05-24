@@ -43,7 +43,7 @@ Finalized - DO NOT EDIT
 ## Integration Tests
 
 ### Component B (Save/Open flow)
-- `save_then_open_round_trips_state_via_bytes`: build a stub TescellateApp or equivalent fixture, mutate state (set a widget, toggle stage mode), call the bytes-producing inner of Save, pass those bytes into the bytes-consuming inner of Open on a fresh app, assert state matches. (This is the same test the sprint 0 plan called out as "deferred" — sprint 1 ships it if a winit-free fixture works; otherwise the byte-API + state_io round-trips from v144 stand in.)
+- `save_then_open_round_trips_state_via_bytes`: build a stub CarbideApp or equivalent fixture, mutate state (set a widget, toggle stage mode), call the bytes-producing inner of Save, pass those bytes into the bytes-consuming inner of Open on a fresh app, assert state matches. (This is the same test the sprint 0 plan called out as "deferred" — sprint 1 ships it if a winit-free fixture works; otherwise the byte-API + state_io round-trips from v144 stand in.)
 
 ### Component C (autosave + rehydrate)
 - Native-side stub via the no-op autosave path: verify the dirty-flag/debounce logic in isolation (covered by T-102d unit tests).
@@ -52,9 +52,9 @@ Finalized - DO NOT EDIT
 ## End-to-End Tests
 
 - **Status:** possible (manual)
-- `e2e_browser_save_open_roundtrip`: build wasm, serve, open app in browser, change a slider, Ctrl+S → download a `.tscl`, refresh, Ctrl+O → pick downloaded file, verify slider state restored.
+- `e2e_browser_save_open_roundtrip`: build wasm, serve, open app in browser, change a slider, Ctrl+S → download a `.crbd`, refresh, Ctrl+O → pick downloaded file, verify slider state restored.
 - `e2e_browser_autosave_survives_refresh`: edit a cell, wait > 2s, F5, verify cell value restored from localStorage.
-- `e2e_native_save_open_roundtrip`: `cargo run --manifest-path apps/tescellate-ui/Cargo.toml`, Ctrl+S → native dialog → write to disk; reopen; Ctrl+O → native dialog → restore.
+- `e2e_native_save_open_roundtrip`: `cargo run --manifest-path apps/carbide-ui/Cargo.toml`, Ctrl+S → native dialog → write to disk; reopen; Ctrl+O → native dialog → restore.
 
 Manual E2E is acceptable for this sprint; the unit + integration tests
 prove the bytes layer round-trips and the dialog is mostly a thin

@@ -18,7 +18,7 @@
 None.
 
 ## Technical Debt Identified
-- `TescellateApp::capture_state` / `restore_state` are dead code until
+- `CarbideApp::capture_state` / `restore_state` are dead code until
   sprint 1 wires the dialog flow. They're marked `#[allow(dead_code)]`
   with an inline comment naming the follow-up; removing the attribute
   is the lint that will catch sprint 1 forgetting to wire them.

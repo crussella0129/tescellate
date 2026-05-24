@@ -4,11 +4,11 @@ This page is the reference for the dynamic type system: what values exist, how t
 
 Source files:
 
-- `CellValue` + `Array` + `CarbideFn`: `crates/tescellate-core/src/value.rs`
-- `CellError`: `crates/tescellate-core/src/cell.rs`
-- `Env` (lexical environment): `crates/tescellate-core/src/env.rs`
-- Coercion: `crates/tescellate-formula/src/excellite/funcs/coerce.rs`
-- Spill: `crates/tescellate-formula/src/engine.rs::compute_spill_for`
+- `CellValue` + `Array` + `CarbideFn`: `crates/carbide-core/src/value.rs`
+- `CellError`: `crates/carbide-core/src/cell.rs`
+- `Env` (lexical environment): `crates/carbide-core/src/env.rs`
+- Coercion: `crates/carbide-formula/src/excellite/funcs/coerce.rs`
+- Spill: `crates/carbide-formula/src/engine.rs::compute_spill_for`
 
 ## `CellValue`
 
@@ -106,7 +106,7 @@ pub struct Lambda {
 
 **Calling**: `Lambda::call(args: Vec<CellValue>, outer: &dyn EvalCtx)` enforces arity, builds an `Env` with the args bound by name (chained to `captured`), wraps `outer` in a `ScopedCtx`, and recursively `eval`s the body. The same call path is shared by direct `Apply`, by the `Call → Var fallback` for LET-bound names, and by every higher-order helper (`MAP`, `REDUCE`, `BYROW`, `BYCOL`, `SCAN`, `MAKEARRAY`).
 
-**Where lambdas live**: in cell values transiently (because formula results can be functions) and in `Env` bindings (because `LET(f, LAMBDA(…), …)` binds `f` to the lambda). The `Lambda` type lives in `tescellate-formula`, not core; that's why core exposes the trait object `CarbideFn` and not the concrete type.
+**Where lambdas live**: in cell values transiently (because formula results can be functions) and in `Env` bindings (because `LET(f, LAMBDA(…), …)` binds `f` to the lambda). The `Lambda` type lives in `carbide-formula`, not core; that's why core exposes the trait object `CarbideFn` and not the concrete type.
 
 ## Equality and persistence
 
@@ -128,7 +128,7 @@ The full equality table on `CellValue`:
 
 (Excel's comparison operators, by contrast, do cross-type numeric coercion — see [Comparison rules](#comparison-rules). Internal `PartialEq` and user-visible `=` / `<>` are separate concerns.)
 
-**Persistence**: `CellValue` round-trips through `.tscl` zip files via custom serde. Every variant survives a save/load *except* `Function`, which serialises to `{"kind":"function","value":{"label":"λ(x) → …"}}` and deserialises as `CellError::StaleFunction`. Lambdas can't be carried across processes — their bodies are AST nodes and their captured envs may reference engine-specific values — but the cell's source string (e.g., `=LAMBDA(x, x+1)`) is preserved, and `engine::rebuild_dag` re-evaluates every cell with a source after a load, which restores live `Function` values. The user sees `#STALE!` only if the engine for that formula isn't compiled into the build that's opening the file.
+**Persistence**: `CellValue` round-trips through `.crbd` zip files via custom serde. Every variant survives a save/load *except* `Function`, which serialises to `{"kind":"function","value":{"label":"λ(x) → …"}}` and deserialises as `CellError::StaleFunction`. Lambdas can't be carried across processes — their bodies are AST nodes and their captured envs may reference engine-specific values — but the cell's source string (e.g., `=LAMBDA(x, x+1)`) is preserved, and `engine::rebuild_dag` re-evaluates every cell with a source after a load, which restores live `Function` values. The user sees `#STALE!` only if the engine for that formula isn't compiled into the build that's opening the file.
 
 ## Coercion
 
@@ -228,7 +228,7 @@ pub enum CellError {
 | `Compile(s)` | `#COMPILE!` | Reserved for Phase 4 native-Rust compilation errors. Not produced today. |
 | `Timeout` | `#TIMEOUT!` | Reserved for Phase 4 execution-budget enforcement. Not produced today. |
 | `Spill` | `#SPILL!` | A cell's array result tried to spill into an already-occupied cell. See [Spill](#spill). |
-| `StaleFunction` | `#STALE!` | A `Function` value was deserialised from `.tscl` and hasn't been re-evaluated yet. Transient: rebuild_dag clears it. |
+| `StaleFunction` | `#STALE!` | A `Function` value was deserialised from `.crbd` and hasn't been re-evaluated yet. Transient: rebuild_dag clears it. |
 
 The `EvalError` type used internally (`EvalError::Ref`, `EvalError::Value`, `EvalError::BadArity { name, want, got }`, etc.) is converted to `CellError` via `excellite::eval::eval_error_to_cell_error` when stored on a cell. Parse errors (`ParseError`) and out-of-bounds writes (`SetCellError::OutOfBounds`) bypass that path and are stored as `CellError::Lang` and `CellError::Ref` respectively.
 
