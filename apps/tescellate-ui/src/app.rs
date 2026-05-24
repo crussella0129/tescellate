@@ -6366,6 +6366,39 @@ fn pop_out_widget_center<F: Fn(Point2) -> Option<VoronoiCoord>>(
         .unwrap_or(centroid)
 }
 
+/// Pick the next Voronoi cell for an Enter-advance traversal (ADR-014 F3).
+/// Filters `candidates` to those that are NOT `current` (defensive — a
+/// well-formed `Lattice::neighbors` never returns self, but we exclude it
+/// anyway) and NOT in `history`. From the survivors, picks the one whose
+/// centroid is closest to `current_centroid` (Euclidean distance); ties
+/// break by lowest `VoronoiCoord` index for determinism. Returns `None`
+/// when no candidate qualifies — Enter stops at that point.
+///
+/// Pure (no engine, no egui) so the history-traversal decision is
+/// unit-testable. The caller assembles `(coord, centroid)` pairs from
+/// `Lattice::neighbors(current)` + `Lattice::centroid(neighbor)`.
+// Wired into `voronoi_advance` by T-010.
+#[allow(dead_code)]
+fn pick_next_voronoi(
+    current: VoronoiCoord,
+    current_centroid: Point2,
+    candidates: &[(VoronoiCoord, Point2)],
+    history: &[VoronoiCoord],
+) -> Option<VoronoiCoord> {
+    candidates
+        .iter()
+        .filter(|(c, _)| *c != current && !history.contains(c))
+        .min_by(|(a_c, a_p), (b_c, b_p)| {
+            let da = (*a_p - current_centroid).length_squared();
+            let db = (*b_p - current_centroid).length_squared();
+            // Tie-break by lowest index when distances are equal.
+            da.partial_cmp(&db)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a_c.0.cmp(&b_c.0))
+        })
+        .map(|(c, _)| *c)
+}
+
 fn cells_in_screen_rect(
     lattice: &VoronoiLattice,
     screen_rect: egui::Rect,
@@ -6748,6 +6781,82 @@ mod tests {
         };
         let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
         assert_eq!(result, Point2::new(100.0, 70.0));
+    }
+
+    // --- T-009: pick_next_voronoi (history + closest-centroid + tie-break) ---
+
+    #[test]
+    fn pick_next_voronoi_all_in_history_returns_none() {
+        let current = VoronoiCoord(0);
+        let current_centroid = Point2::new(0.0, 0.0);
+        let candidates = vec![
+            (VoronoiCoord(1), Point2::new(10.0, 0.0)),
+            (VoronoiCoord(2), Point2::new(0.0, 10.0)),
+        ];
+        let history = vec![VoronoiCoord(1), VoronoiCoord(2)];
+        let pick = pick_next_voronoi(current, current_centroid, &candidates, &history);
+        assert_eq!(pick, None);
+    }
+
+    #[test]
+    fn pick_next_voronoi_single_candidate_returns_it() {
+        let current = VoronoiCoord(0);
+        let current_centroid = Point2::new(0.0, 0.0);
+        let candidates = vec![
+            (VoronoiCoord(1), Point2::new(10.0, 0.0)),
+            (VoronoiCoord(2), Point2::new(0.0, 10.0)),
+        ];
+        let history = vec![VoronoiCoord(2)]; // only V(1) qualifies
+        let pick = pick_next_voronoi(current, current_centroid, &candidates, &history);
+        assert_eq!(pick, Some(VoronoiCoord(1)));
+    }
+
+    #[test]
+    fn pick_next_voronoi_closest_centroid_wins() {
+        // 3 candidates, all unvisited; pick the geographically-closest.
+        let current = VoronoiCoord(0);
+        let current_centroid = Point2::new(0.0, 0.0);
+        let candidates = vec![
+            (VoronoiCoord(1), Point2::new(100.0, 0.0)), // dist 100
+            (VoronoiCoord(2), Point2::new(5.0, 0.0)),   // dist 5 ← closest
+            (VoronoiCoord(3), Point2::new(20.0, 0.0)),  // dist 20
+        ];
+        let pick = pick_next_voronoi(current, current_centroid, &candidates, &[]);
+        assert_eq!(pick, Some(VoronoiCoord(2)));
+    }
+
+    #[test]
+    fn pick_next_voronoi_tie_break_lowest_index() {
+        // Two candidates equidistant from current; lowest index wins.
+        let current = VoronoiCoord(0);
+        let current_centroid = Point2::new(0.0, 0.0);
+        let candidates = vec![
+            (VoronoiCoord(5), Point2::new(10.0, 0.0)),  // dist 10
+            (VoronoiCoord(2), Point2::new(0.0, 10.0)),  // dist 10 ← lower idx
+            (VoronoiCoord(7), Point2::new(-10.0, 0.0)), // dist 10
+        ];
+        let pick = pick_next_voronoi(current, current_centroid, &candidates, &[]);
+        assert_eq!(pick, Some(VoronoiCoord(2)));
+    }
+
+    #[test]
+    fn pick_next_voronoi_empty_candidates_returns_none() {
+        let pick = pick_next_voronoi(VoronoiCoord(0), Point2::new(0.0, 0.0), &[], &[]);
+        assert_eq!(pick, None);
+    }
+
+    #[test]
+    fn pick_next_voronoi_excludes_current_from_candidates() {
+        // C-004 defensive: if Lattice::neighbors mistakenly returns self,
+        // pick_next_voronoi must NOT select it.
+        let current = VoronoiCoord(0);
+        let current_centroid = Point2::new(0.0, 0.0);
+        let candidates = vec![
+            (current, current_centroid), // self — must be excluded
+            (VoronoiCoord(1), Point2::new(50.0, 0.0)),
+        ];
+        let pick = pick_next_voronoi(current, current_centroid, &candidates, &[]);
+        assert_eq!(pick, Some(VoronoiCoord(1)));
     }
 
     #[test]
