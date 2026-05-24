@@ -452,6 +452,11 @@ pub struct TescellateApp {
     /// selected cells stay outlined via `selection.extra` until the next
     /// `collapse_to`). ADR-013.
     voronoi_marquee_start: Option<egui::Pos2>,
+    /// Recently-visited Voronoi cells, used by Enter-advance (ADR-014 F3).
+    /// Capped at `N-1` where `N` = current seed count. Cleared on primary
+    /// cell-select click (T-010 C-009) and on workbook reload / seed-count
+    /// change (T-010 C-005 — see `rebind_sheet_ids`).
+    voronoi_visit_history: std::collections::VecDeque<VoronoiCoord>,
     /// Which sheet is on screen.
     active: ActiveSheet,
     /// The square cursor as of the last frame — drives scroll-to-cursor.
@@ -742,6 +747,7 @@ impl TescellateApp {
             triangle_lattice: TriangleLattice::new(TRIANGLE_SIDE),
             voronoi_lattice: VoronoiLattice::default(),
             voronoi_marquee_start: None,
+            voronoi_visit_history: std::collections::VecDeque::new(),
             active: ActiveSheet::Square,
             prev_cursor: (0, 0),
             edit: None,
@@ -1486,6 +1492,12 @@ impl TescellateApp {
             RibbonAction::OpenAbout => self.about_open = true,
             RibbonAction::Save => self.handle_save(false),
             RibbonAction::Open => self.handle_open(),
+            RibbonAction::ToggleVoronoiFreeze => {
+                let sid = self.voronoi.sheet_id;
+                let now = self.engine.voronoi_frozen(sid);
+                let _ = self.engine.set_voronoi_frozen(sid, !now);
+                self.mark_dirty();
+            }
         }
     }
 
@@ -2415,7 +2427,21 @@ impl TescellateApp {
             }
             ActiveSheet::Hex => self.move_hex_selection(dir),
             ActiveSheet::Triangle => self.move_triangle_selection(dir),
-            ActiveSheet::Voronoi => {}
+            ActiveSheet::Voronoi => self.voronoi_advance(),
+        }
+    }
+
+    /// Advance the Voronoi cursor to a Delaunay neighbor not in the recent
+    /// visit history, picking by closest centroid (lowest-index tie-break).
+    /// Updates `voronoi_visit_history` (bounded at `N-1`). No-op when no
+    /// candidate qualifies — Enter stops (ADR-014 F3).
+    fn voronoi_advance(&mut self) {
+        let current = self.voronoi.selection.cursor;
+        let sid = self.voronoi.sheet_id;
+        if let Some(next) =
+            voronoi_advance_step(&self.engine, sid, current, &mut self.voronoi_visit_history)
+        {
+            self.voronoi.selection.collapse_to(next);
         }
     }
 
@@ -4926,6 +4952,10 @@ impl TescellateApp {
             if !clicked_is_widget && !formula_consumed_click {
                 self.commit_edit();
                 self.voronoi.selection.collapse_to(coord);
+                // T-010 (C-009): a primary cell-select click restarts the
+                // Enter-advance traversal — clear the visit history so a
+                // fresh Enter sequence can visit cells from here.
+                self.voronoi_visit_history.clear();
                 if doubled {
                     let buffer = self.voronoi_cell_source(coord);
                     self.edit = Some(EditState {
@@ -5027,8 +5057,12 @@ impl TescellateApp {
 
         // Widget pass — Button + Toggle inscribed at each widget cell's
         // centroid. Slider/ProgressBar fall through to text (ADR-006).
+        // **T-004 (ADR-014):** when the seed handle is visible at this seed
+        // (cursor near), the widget pops out to a side so the click area
+        // isn't occluded by the handle.
         if !self.voronoi_widgets.is_empty() {
             let editing_coord = self.edit.as_ref().map(|_| self.voronoi.selection.cursor);
+            let widget_cursor = response.hover_pos();
             let mut vor_edits: Vec<(VoronoiCoord, Option<String>)> = Vec::new();
             for (coord, kind) in self
                 .voronoi_widgets
@@ -5040,7 +5074,24 @@ impl TescellateApp {
                     continue;
                 }
                 let centroid = self.voronoi_lattice.centroid(coord);
-                let center = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+                // Decide pop-out: handle is "visible" when cursor proximity
+                // produces a non-zero fade alpha at this seed AND the sheet
+                // isn't frozen (T-008: frozen → no handles → no pop-out).
+                let centroid_screen = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+                let frozen = self.engine.voronoi_frozen(self.voronoi.sheet_id);
+                let handle_visible = !frozen
+                    && match widget_cursor {
+                        Some(c) => fade_alpha((centroid_screen - c).length()) > 0,
+                        None => false,
+                    };
+                let lattice_center = if handle_visible {
+                    pop_out_widget_center(centroid, WIDGET_POP_OUT_OFFSET, coord, |p| {
+                        self.voronoi_lattice.cell_at(p)
+                    })
+                } else {
+                    centroid
+                };
+                let center = egui::pos2(origin.x + lattice_center.x, origin.y + lattice_center.y);
                 let rect = egui::Rect::from_center_size(center, egui::vec2(120.0, 24.0));
                 let addr = voronoi_address(coord);
                 match kind {
@@ -5086,7 +5137,11 @@ impl TescellateApp {
         // would make two seeds coincident is rejected by the engine, so the
         // handle snaps back (cache left unchanged). The handles draw last so
         // they sit on top of the cell fills and selection stroke.
-        {
+        // **T-008 (ADR-014):** skipped entirely when the sheet is frozen —
+        // no handles drawn, no `ui.interact` (so no drag possible). The
+        // widget pass also treats `handle_visible = false` while frozen.
+        let frozen = self.engine.voronoi_frozen(self.voronoi.sheet_id);
+        if !frozen {
             let seeds: Vec<[f32; 2]> = self
                 .voronoi_lattice
                 .seeds
@@ -5100,29 +5155,57 @@ impl TescellateApp {
                 self.voronoi_lattice.bounds.max.y,
             ];
             let radius = 5.0;
+            // First pass: interact to learn which handle (if any) is being
+            // dragged this frame. We need this BEFORE drawing so the
+            // dragged>fade>no-hover priority can be computed (ADR-014).
+            let seeds_screen: Vec<egui::Pos2> = seeds
+                .iter()
+                .map(|s| egui::pos2(origin.x + s[0], origin.y + s[1]))
+                .collect();
+            let handle_responses: Vec<egui::Response> = seeds_screen
+                .iter()
+                .enumerate()
+                .map(|(i, &center)| {
+                    let handle_rect = egui::Rect::from_center_size(
+                        center,
+                        egui::vec2(2.0 * radius, 2.0 * radius),
+                    );
+                    ui.interact(
+                        handle_rect,
+                        ui.id().with(("vor_seed", i)),
+                        egui::Sense::drag(),
+                    )
+                })
+                .collect();
+            let dragging_index = handle_responses.iter().position(|r| r.dragged());
+            let cursor_pos = response.hover_pos();
+            let alphas = seed_handle_alphas(cursor_pos, &seeds_screen, dragging_index);
+
             let mut pending_drag: Option<(usize, [f32; 2])> = None;
-            for (i, s) in seeds.iter().enumerate() {
-                let center = egui::pos2(origin.x + s[0], origin.y + s[1]);
-                let handle_rect =
-                    egui::Rect::from_center_size(center, egui::vec2(2.0 * radius, 2.0 * radius));
-                let resp = ui.interact(
-                    handle_rect,
-                    ui.id().with(("vor_seed", i)),
-                    egui::Sense::drag(),
-                );
-                let dragging = resp.dragged();
-                let fill = if dragging {
-                    egui::Color32::from_rgb(70, 120, 220)
+            for (i, center) in seeds_screen.iter().copied().enumerate() {
+                let alpha = alphas[i];
+                if alpha == 0 {
+                    // Skip rendering entirely when invisible — keeps the
+                    // hit area alive (the ui.interact above already ran)
+                    // but no drawing cost.
                 } else {
-                    egui::Color32::from_rgb(40, 40, 50)
-                };
-                painter.circle(
-                    center,
-                    radius,
-                    fill,
-                    egui::Stroke::new(1.5, egui::Color32::WHITE),
-                );
-                if dragging {
+                    let fill = if Some(i) == dragging_index {
+                        egui::Color32::from_rgba_premultiplied(70, 120, 220, alpha)
+                    } else {
+                        egui::Color32::from_rgba_premultiplied(40, 40, 50, alpha)
+                    };
+                    painter.circle(
+                        center,
+                        radius,
+                        fill,
+                        egui::Stroke::new(
+                            1.5,
+                            egui::Color32::from_rgba_premultiplied(255, 255, 255, alpha),
+                        ),
+                    );
+                }
+                let resp = &handle_responses[i];
+                if resp.dragged() {
                     let d = resp.drag_delta();
                     if d != egui::Vec2::ZERO {
                         pending_drag = Some((i, [d.x, d.y]));
@@ -5320,6 +5403,9 @@ impl TescellateApp {
                         // engine config so dragged/persisted seeds show up
                         // (ADR-012 single source of truth).
                         self.voronoi_lattice = synced_voronoi_lattice(&self.engine, *sid);
+                        // T-010 (C-005): the seed count may have changed —
+                        // clear the visit history to avoid stale OOR refs.
+                        self.voronoi_visit_history.clear();
                     }
                     _ => {}
                 }
@@ -5478,6 +5564,8 @@ impl eframe::App for TescellateApp {
                         can_undo,
                         can_redo,
                         self.format_painter.is_some(),
+                        false, // voronoi_active
+                        false, // voronoi_frozen
                     ) {
                         self.apply_ribbon(action, ctx);
                     }
@@ -5506,6 +5594,8 @@ impl eframe::App for TescellateApp {
                         can_undo,
                         can_redo,
                         self.format_painter.is_some(),
+                        false, // voronoi_active
+                        false, // voronoi_frozen
                     ) {
                         self.apply_ribbon(action, ctx);
                     }
@@ -5520,11 +5610,30 @@ impl eframe::App for TescellateApp {
                         can_undo,
                         can_redo,
                         self.format_painter.is_some(),
+                        false, // voronoi_active
+                        false, // voronoi_frozen
                     ) {
                         self.apply_ribbon(action, ctx);
                     }
                 }
-                ActiveSheet::Voronoi => {}
+                ActiveSheet::Voronoi => {
+                    // T-007: contextual Voronoi ribbon group surfaces only here.
+                    let current = CellFormat::default();
+                    let can_undo = self.history.can_undo();
+                    let can_redo = self.history.can_redo();
+                    let frozen = self.engine.voronoi_frozen(self.voronoi.sheet_id);
+                    if let Some(action) = ribbon::ribbon(
+                        ui,
+                        &current,
+                        can_undo,
+                        can_redo,
+                        self.format_painter.is_some(),
+                        true,
+                        frozen,
+                    ) {
+                        self.apply_ribbon(action, ctx);
+                    }
+                }
             });
         }
 
@@ -6188,6 +6297,169 @@ fn synced_voronoi_lattice(engine: &WorkbookEngine, sid: SheetId) -> VoronoiLatti
 /// lattice_centroid`) falls inside `screen_rect`. The unified marquee rule
 /// for a tessellation without rect-indexed coords (ADR-013). A degenerate
 /// rect (zero width or height) returns an empty `Vec`.
+/// Voronoi seed-handle proximity fade thresholds (ADR-014, lattice units).
+/// Within `INNER` of the cursor the handle is fully opaque; past `OUTER`
+/// it's invisible; between the two it fades linearly.
+const SEED_FADE_INNER: f32 = 40.0;
+#[allow(dead_code)]
+const SEED_FADE_OUTER: f32 = 80.0;
+/// Maximum alpha for the seed-handle fill (below 255 so the dot reads as
+/// a marker rather than a fully-opaque blob over cell content).
+#[allow(dead_code)]
+const SEED_FADE_MAX_ALPHA: u8 = 225;
+
+/// Distance-to-alpha mapping for the seed-handle proximity fade (ADR-014).
+/// Piecewise: `[<=INNER] = MAX`, `[>=OUTER] = 0`, linear in between. Pure
+/// (no egui types) so the per-frame per-seed decision is unit-testable
+/// without a render context.
+fn fade_alpha(distance: f32) -> u8 {
+    if distance <= SEED_FADE_INNER {
+        SEED_FADE_MAX_ALPHA
+    } else if distance >= SEED_FADE_OUTER {
+        0
+    } else {
+        ((SEED_FADE_OUTER - distance) / (SEED_FADE_OUTER - SEED_FADE_INNER)
+            * SEED_FADE_MAX_ALPHA as f32) as u8
+    }
+}
+
+/// Per-frame per-seed alpha for the Voronoi handle proximity fade
+/// (ADR-014 / C-008 partial). Priority order: **dragged > fade > no-hover.**
+///
+/// - Any seed at `dragging_index` always gets full opacity (the user is
+///   actively interacting with it, mustn't disappear if the pointer leaves
+///   the panel mid-drag).
+/// - Otherwise, with a cursor present, each seed's alpha is
+///   `fade_alpha(distance(seed, cursor))`.
+/// - With no cursor and no drag, every seed is invisible (alpha `0`).
+///
+/// Pure (no egui types beyond `Pos2`) so the per-frame decision is
+/// unit-testable without a render context.
+fn seed_handle_alphas(
+    cursor: Option<egui::Pos2>,
+    seeds_screen: &[egui::Pos2],
+    dragging_index: Option<usize>,
+) -> Vec<u8> {
+    seeds_screen
+        .iter()
+        .enumerate()
+        .map(|(i, seed)| {
+            if Some(i) == dragging_index {
+                SEED_FADE_MAX_ALPHA
+            } else if let Some(c) = cursor {
+                fade_alpha((*seed - c).length())
+            } else {
+                0
+            }
+        })
+        .collect()
+}
+
+/// Pop-out offset distance (lattice units) for a widget whose centroid
+/// would otherwise sit under a visible seed handle. Larger than the
+/// handle's 5px hit radius plus a comfort margin (ADR-014).
+#[allow(dead_code)]
+const WIDGET_POP_OUT_OFFSET: f32 = 30.0;
+
+/// When a Voronoi widget cell's seed handle is visible (cursor near), the
+/// widget moves to a side of the centroid so its click target isn't
+/// occluded by the handle (ADR-014). Tries `[+x, -x, +y, -y]` offsets at
+/// `offset` (lattice units), returns the first center where
+/// `cell_at(candidate) == Some(seed_coord)` (i.e. the candidate still
+/// falls in this cell's polygon). Falls back to `centroid` when no side
+/// has clearance.
+///
+/// **Coord space:** all positions are lattice-space. The caller maps the
+/// returned `Vec2` to screen via `egui::pos2(origin.x + result.x, origin.y
+/// + result.y)`. Precondition: 1 lattice unit == 1 screen pixel with no
+/// zoom (ADR-013 C-006); a future zoom feature must scale `offset` first.
+// Wired into the widget pass by T-004.
+#[allow(dead_code)]
+fn pop_out_widget_center<F: Fn(Point2) -> Option<VoronoiCoord>>(
+    centroid: Point2,
+    offset: f32,
+    seed_coord: VoronoiCoord,
+    cell_at: F,
+) -> Point2 {
+    let candidates = [
+        Point2::new(centroid.x + offset, centroid.y), // right
+        Point2::new(centroid.x - offset, centroid.y), // left
+        Point2::new(centroid.x, centroid.y + offset), // down
+        Point2::new(centroid.x, centroid.y - offset), // up
+    ];
+    candidates
+        .into_iter()
+        .find(|&p| cell_at(p) == Some(seed_coord))
+        .unwrap_or(centroid)
+}
+
+/// Pick the next Voronoi cell for an Enter-advance traversal (ADR-014 F3).
+/// Filters `candidates` to those that are NOT `current` (defensive — a
+/// well-formed `Lattice::neighbors` never returns self, but we exclude it
+/// anyway) and NOT in `history`. From the survivors, picks the one whose
+/// centroid is closest to `current_centroid` (Euclidean distance); ties
+/// break by lowest `VoronoiCoord` index for determinism. Returns `None`
+/// when no candidate qualifies — Enter stops at that point.
+///
+/// Pure (no engine, no egui) so the history-traversal decision is
+/// unit-testable. The caller assembles `(coord, centroid)` pairs from
+/// `Lattice::neighbors(current)` + `Lattice::centroid(neighbor)`.
+fn pick_next_voronoi(
+    current: VoronoiCoord,
+    current_centroid: Point2,
+    candidates: &[(VoronoiCoord, Point2)],
+    history: &[VoronoiCoord],
+) -> Option<VoronoiCoord> {
+    candidates
+        .iter()
+        .filter(|(c, _)| *c != current && !history.contains(c))
+        .min_by(|(a_c, a_p), (b_c, b_p)| {
+            let da = (*a_p - current_centroid).length_squared();
+            let db = (*b_p - current_centroid).length_squared();
+            // Tie-break by lowest index when distances are equal.
+            da.partial_cmp(&db)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a_c.0.cmp(&b_c.0))
+        })
+        .map(|(c, _)| *c)
+}
+
+/// Apply one Voronoi Enter-advance step (ADR-014 F3). Pure-over-engine
+/// so the history mutation + bounded-queue cap is testable with just a
+/// `WorkbookEngine` (no full `TescellateApp`). Returns the next cursor
+/// `VoronoiCoord` to collapse to, or `None` if Enter should stop.
+/// Mutates `history` in place: on a successful pick, pushes `current`
+/// onto the back and pops the front while length > `N-1`.
+///
+/// Defensive: returns `None` (and leaves history untouched) if `current`
+/// is out of range for the current lattice — e.g. after a workbook reload
+/// to a smaller seed set before `rebind_sheet_ids` clears the history.
+fn voronoi_advance_step(
+    engine: &WorkbookEngine,
+    sheet: SheetId,
+    current: VoronoiCoord,
+    history: &mut std::collections::VecDeque<VoronoiCoord>,
+) -> Option<VoronoiCoord> {
+    let lattice = engine.voronoi_lattice(sheet)?;
+    if (current.0 as usize) >= lattice.len() {
+        return None;
+    }
+    let current_centroid = lattice.centroid(current);
+    let candidates: Vec<(VoronoiCoord, Point2)> = lattice
+        .neighbors(current)
+        .into_iter()
+        .map(|(_dir, c)| (c, lattice.centroid(c)))
+        .collect();
+    let history_vec: Vec<VoronoiCoord> = history.iter().copied().collect();
+    let pick = pick_next_voronoi(current, current_centroid, &candidates, &history_vec)?;
+    let cap = lattice.len().saturating_sub(1);
+    history.push_back(current);
+    while history.len() > cap {
+        history.pop_front();
+    }
+    Some(pick)
+}
+
 fn cells_in_screen_rect(
     lattice: &VoronoiLattice,
     screen_rect: egui::Rect,
@@ -6416,6 +6688,342 @@ mod tests {
         let rect = egui::Rect::from_min_max(egui::pos2(95.0, 95.0), egui::pos2(105.0, 155.0));
         let hits = cells_in_screen_rect(&lat, rect, origin);
         assert_eq!(hits, vec![VoronoiCoord(0), VoronoiCoord(2)]);
+    }
+
+    // --- T-001: fade_alpha (proximity-fade thresholds) ---
+
+    #[test]
+    fn fade_alpha_zero_distance_is_full() {
+        assert_eq!(fade_alpha(0.0), SEED_FADE_MAX_ALPHA);
+    }
+
+    #[test]
+    fn fade_alpha_inner_threshold_is_full() {
+        assert_eq!(fade_alpha(SEED_FADE_INNER), SEED_FADE_MAX_ALPHA);
+    }
+
+    #[test]
+    fn fade_alpha_outer_threshold_is_zero() {
+        assert_eq!(fade_alpha(SEED_FADE_OUTER), 0);
+    }
+
+    #[test]
+    fn fade_alpha_midpoint_is_half() {
+        let mid = (SEED_FADE_INNER + SEED_FADE_OUTER) / 2.0; // 60.0
+        let got = fade_alpha(mid) as i16;
+        let target = (SEED_FADE_MAX_ALPHA as i16) / 2; // 112
+        assert!(
+            (got - target).abs() <= 2,
+            "got {got}, expected within ±2 of {target}"
+        );
+    }
+
+    #[test]
+    fn fade_alpha_past_outer_is_zero() {
+        assert_eq!(fade_alpha(150.0), 0);
+        assert_eq!(fade_alpha(10_000.0), 0);
+    }
+
+    #[test]
+    fn fade_alpha_negative_distance_clamps_to_full() {
+        // Defensive: a hypothetical caller passing a negative distance
+        // (signed delta etc.) still gets full opacity, not a wraparound.
+        assert_eq!(fade_alpha(-5.0), SEED_FADE_MAX_ALPHA);
+        assert_eq!(fade_alpha(-1000.0), SEED_FADE_MAX_ALPHA);
+    }
+
+    // --- T-002: seed_handle_alphas (priority order: dragged > fade > no-hover) ---
+
+    #[test]
+    fn seed_handle_alphas_no_hover_returns_all_zero() {
+        let seeds = vec![
+            egui::pos2(0.0, 0.0),
+            egui::pos2(50.0, 0.0),
+            egui::pos2(100.0, 0.0),
+        ];
+        let alphas = seed_handle_alphas(None, &seeds, None);
+        assert_eq!(alphas, vec![0u8, 0, 0]);
+    }
+
+    #[test]
+    fn seed_handle_alphas_dragging_overrides_fade() {
+        // No hover, but seed 2 is being dragged → that seed is fully opaque
+        // regardless. Others honor the no-hover rule (= 0). C-007: explicit
+        // 0-assertions for the non-dragged seeds so a regression that gave
+        // dragged-state opacity to ALL seeds would be caught.
+        let seeds = vec![
+            egui::pos2(0.0, 0.0),
+            egui::pos2(50.0, 0.0),
+            egui::pos2(500.0, 500.0),
+        ];
+        let alphas = seed_handle_alphas(None, &seeds, Some(2));
+        assert_eq!(alphas[0], 0, "seed 0 not dragged + no hover → 0");
+        assert_eq!(alphas[1], 0, "seed 1 not dragged + no hover → 0");
+        assert_eq!(
+            alphas[2], SEED_FADE_MAX_ALPHA,
+            "seed 2 is dragged → full opacity"
+        );
+    }
+
+    #[test]
+    fn seed_handle_alphas_inner_threshold_full() {
+        // Cursor sitting on seed 1 → seed 1 fully opaque, seed 0 distant
+        // but within outer (50px → in the ramp), seed 2 past outer.
+        let seeds = vec![
+            egui::pos2(0.0, 0.0),
+            egui::pos2(50.0, 0.0),
+            egui::pos2(200.0, 0.0),
+        ];
+        let alphas = seed_handle_alphas(Some(egui::pos2(50.0, 0.0)), &seeds, None);
+        assert_eq!(alphas[1], SEED_FADE_MAX_ALPHA, "seed at cursor is full");
+        assert!(
+            alphas[0] > 0 && alphas[0] < SEED_FADE_MAX_ALPHA,
+            "seed 0 in ramp"
+        );
+        assert_eq!(alphas[2], 0, "seed 2 past outer");
+    }
+
+    // --- T-003: pop_out_widget_center (R → L → D → U → centroid fallback) ---
+
+    #[test]
+    fn pop_out_widget_center_picks_right_first() {
+        let centroid = Point2::new(100.0, 100.0);
+        let seed = VoronoiCoord(7);
+        // `cell_at` accepts only the +x candidate.
+        let cell_at = |p: Point2| {
+            if (p.x - 130.0).abs() < 0.1 && (p.y - 100.0).abs() < 0.1 {
+                Some(seed)
+            } else {
+                None
+            }
+        };
+        let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
+        assert_eq!(result, Point2::new(130.0, 100.0));
+    }
+
+    #[test]
+    fn pop_out_widget_center_falls_back_to_left() {
+        let centroid = Point2::new(100.0, 100.0);
+        let seed = VoronoiCoord(7);
+        let cell_at = |p: Point2| {
+            // Accept only -x (left).
+            if (p.x - 70.0).abs() < 0.1 && (p.y - 100.0).abs() < 0.1 {
+                Some(seed)
+            } else {
+                None
+            }
+        };
+        let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
+        assert_eq!(result, Point2::new(70.0, 100.0));
+    }
+
+    #[test]
+    fn pop_out_widget_center_falls_back_to_down() {
+        let centroid = Point2::new(100.0, 100.0);
+        let seed = VoronoiCoord(7);
+        let cell_at = |p: Point2| {
+            // Accept only +y (down).
+            if (p.x - 100.0).abs() < 0.1 && (p.y - 130.0).abs() < 0.1 {
+                Some(seed)
+            } else {
+                None
+            }
+        };
+        let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
+        assert_eq!(result, Point2::new(100.0, 130.0));
+    }
+
+    #[test]
+    fn pop_out_widget_center_falls_back_to_up() {
+        let centroid = Point2::new(100.0, 100.0);
+        let seed = VoronoiCoord(7);
+        let cell_at = |p: Point2| {
+            // Accept only -y (up).
+            if (p.x - 100.0).abs() < 0.1 && (p.y - 70.0).abs() < 0.1 {
+                Some(seed)
+            } else {
+                None
+            }
+        };
+        let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
+        assert_eq!(result, Point2::new(100.0, 70.0));
+    }
+
+    // --- T-009: pick_next_voronoi (history + closest-centroid + tie-break) ---
+
+    #[test]
+    fn pick_next_voronoi_all_in_history_returns_none() {
+        let current = VoronoiCoord(0);
+        let current_centroid = Point2::new(0.0, 0.0);
+        let candidates = vec![
+            (VoronoiCoord(1), Point2::new(10.0, 0.0)),
+            (VoronoiCoord(2), Point2::new(0.0, 10.0)),
+        ];
+        let history = vec![VoronoiCoord(1), VoronoiCoord(2)];
+        let pick = pick_next_voronoi(current, current_centroid, &candidates, &history);
+        assert_eq!(pick, None);
+    }
+
+    #[test]
+    fn pick_next_voronoi_single_candidate_returns_it() {
+        let current = VoronoiCoord(0);
+        let current_centroid = Point2::new(0.0, 0.0);
+        let candidates = vec![
+            (VoronoiCoord(1), Point2::new(10.0, 0.0)),
+            (VoronoiCoord(2), Point2::new(0.0, 10.0)),
+        ];
+        let history = vec![VoronoiCoord(2)]; // only V(1) qualifies
+        let pick = pick_next_voronoi(current, current_centroid, &candidates, &history);
+        assert_eq!(pick, Some(VoronoiCoord(1)));
+    }
+
+    #[test]
+    fn pick_next_voronoi_closest_centroid_wins() {
+        // 3 candidates, all unvisited; pick the geographically-closest.
+        let current = VoronoiCoord(0);
+        let current_centroid = Point2::new(0.0, 0.0);
+        let candidates = vec![
+            (VoronoiCoord(1), Point2::new(100.0, 0.0)), // dist 100
+            (VoronoiCoord(2), Point2::new(5.0, 0.0)),   // dist 5 ← closest
+            (VoronoiCoord(3), Point2::new(20.0, 0.0)),  // dist 20
+        ];
+        let pick = pick_next_voronoi(current, current_centroid, &candidates, &[]);
+        assert_eq!(pick, Some(VoronoiCoord(2)));
+    }
+
+    #[test]
+    fn pick_next_voronoi_tie_break_lowest_index() {
+        // Two candidates equidistant from current; lowest index wins.
+        let current = VoronoiCoord(0);
+        let current_centroid = Point2::new(0.0, 0.0);
+        let candidates = vec![
+            (VoronoiCoord(5), Point2::new(10.0, 0.0)),  // dist 10
+            (VoronoiCoord(2), Point2::new(0.0, 10.0)),  // dist 10 ← lower idx
+            (VoronoiCoord(7), Point2::new(-10.0, 0.0)), // dist 10
+        ];
+        let pick = pick_next_voronoi(current, current_centroid, &candidates, &[]);
+        assert_eq!(pick, Some(VoronoiCoord(2)));
+    }
+
+    #[test]
+    fn pick_next_voronoi_empty_candidates_returns_none() {
+        let pick = pick_next_voronoi(VoronoiCoord(0), Point2::new(0.0, 0.0), &[], &[]);
+        assert_eq!(pick, None);
+    }
+
+    #[test]
+    fn pick_next_voronoi_excludes_current_from_candidates() {
+        // C-004 defensive: if Lattice::neighbors mistakenly returns self,
+        // pick_next_voronoi must NOT select it.
+        let current = VoronoiCoord(0);
+        let current_centroid = Point2::new(0.0, 0.0);
+        let candidates = vec![
+            (current, current_centroid), // self — must be excluded
+            (VoronoiCoord(1), Point2::new(50.0, 0.0)),
+        ];
+        let pick = pick_next_voronoi(current, current_centroid, &candidates, &[]);
+        assert_eq!(pick, Some(VoronoiCoord(1)));
+    }
+
+    #[test]
+    fn pop_out_widget_center_falls_back_to_centroid() {
+        let centroid = Point2::new(100.0, 100.0);
+        let seed = VoronoiCoord(7);
+        let cell_at = |_p: Point2| None; // No candidate satisfies — fallback.
+        let result = pop_out_widget_center(centroid, 30.0, seed, cell_at);
+        assert_eq!(result, centroid);
+    }
+
+    #[test]
+    fn seed_handle_alphas_outer_threshold_zero() {
+        // Cursor far from every seed → all alphas zero.
+        let seeds = vec![egui::pos2(0.0, 0.0), egui::pos2(50.0, 0.0)];
+        let alphas = seed_handle_alphas(Some(egui::pos2(1000.0, 1000.0)), &seeds, None);
+        assert_eq!(alphas, vec![0u8, 0]);
+    }
+
+    // --- T-010 integration: voronoi_advance_step (history cap + drag-aware) ---
+
+    #[test]
+    fn voronoi_advance_history_caps_at_n_minus_1() {
+        // Default 8-seed Voronoi: stepping repeatedly grows history up to
+        // capacity 7, then Enter stops (at most after N visits).
+        let mut engine = WorkbookEngine::new();
+        engine.new_workbook();
+        let sid = engine.add_sheet("V", LatticeKind::Voronoi);
+        let n = engine.voronoi_lattice(sid).unwrap().len();
+        let cap = n.saturating_sub(1);
+        let mut history: std::collections::VecDeque<VoronoiCoord> =
+            std::collections::VecDeque::new();
+        let mut cursor = VoronoiCoord(0);
+        let mut steps = 0;
+        // At most N steps before Enter must stop (visit each cell at most once).
+        for _ in 0..(n + 2) {
+            match voronoi_advance_step(&engine, sid, cursor, &mut history) {
+                Some(next) => {
+                    assert!(
+                        history.len() <= cap,
+                        "history exceeded cap {cap} at step {steps}"
+                    );
+                    cursor = next;
+                    steps += 1;
+                }
+                None => break,
+            }
+        }
+        assert!(steps <= n, "Enter visited more than N={n} cells");
+        // After exhaustion, one more step must be a no-op (already at None).
+        assert_eq!(
+            voronoi_advance_step(&engine, sid, cursor, &mut history),
+            None,
+            "post-exhaustion step must stay None"
+        );
+    }
+
+    #[test]
+    fn voronoi_advance_after_seed_drag_uses_new_centroids() {
+        // C-010: dragging a seed mid-traversal must re-evaluate the
+        // closest-centroid tie-break against the NEW positions.
+        // **C-006 (geometry): keep V(0) off the V(1)-V(2) collinear axis**
+        // (push it down 1 px) so the Delaunay triangulation is unambiguous.
+        // V(0)=(0,-1) is strictly inside the hull triangle V(1)=(40,0),
+        // V(2)=(-40,0), V(3)=(0,40) — all four are connected in the
+        // Delaunay graph. From V(0), distances to V(1)/V(2)/V(3) are ≈40
+        // each (V(1)/V(2): √(40²+1²)≈40.012; V(3): 41) — V(1) and V(2)
+        // are essentially tied with V(3) marginally farther. Tie-break by
+        // lowest index → V(1).
+        let mut engine = WorkbookEngine::new();
+        engine.new_workbook();
+        let sid = engine.add_sheet("V", LatticeKind::Voronoi);
+        engine
+            .set_voronoi_seeds(
+                sid,
+                vec![[0.0, -1.0], [40.0, 0.0], [-40.0, 0.0], [0.0, 40.0]],
+            )
+            .unwrap();
+        let mut history: std::collections::VecDeque<VoronoiCoord> =
+            std::collections::VecDeque::new();
+        let first = voronoi_advance_step(&engine, sid, VoronoiCoord(0), &mut history);
+        assert_eq!(first, Some(VoronoiCoord(1)));
+
+        // Drag: move V(1) far right (500, 0) and V(2) close to V(1) at
+        // (450, 1). V(0) stays at (0,-1) and V(3) at (0,40). V(2) is
+        // interior to the hull triangle V(0)-V(1)-V(3); the y-offsets on
+        // V(0) and V(2) keep the triangulation unambiguous.
+        // From V(1)=(500,0): V(0)=(0,-1) is in history; V(2)=(450,1) is at
+        // dist ≈50; V(3)=(0,40) is at dist ≈501.6. V(2) wins.
+        engine
+            .set_voronoi_seeds(
+                sid,
+                vec![[0.0, -1.0], [500.0, 0.0], [450.0, 1.0], [0.0, 40.0]],
+            )
+            .unwrap();
+        let second = voronoi_advance_step(&engine, sid, VoronoiCoord(1), &mut history);
+        assert_eq!(
+            second,
+            Some(VoronoiCoord(2)),
+            "post-drag advance must use new centroids; V(2) is now the closest unvisited neighbor of V(1)"
+        );
     }
 
     #[test]

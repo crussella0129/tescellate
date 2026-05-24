@@ -162,6 +162,15 @@ impl Default for VoronoiLattice {
 pub struct VoronoiConfig {
     pub seeds: Vec<[f32; 2]>,
     pub bounds: [f32; 4],
+    /// UI-only freeze flag (ADR-014): when `true`, the UI hides the seed
+    /// handles and suppresses drag/marquee/widget-pop-out. Persisted on
+    /// the Sheet so the locked state survives save/reopen, but the
+    /// *engine* ignores it (geometry, eval, neighbors don't change).
+    /// `#[serde(default)]` so pre-sprint v2 files load with `frozen: false`
+    /// (the field didn't exist before; ADR-012 v2 schema accepts
+    /// new optional fields this way — no `.tscl` version bump).
+    #[serde(default)]
+    pub frozen: bool,
 }
 
 impl VoronoiConfig {
@@ -188,6 +197,9 @@ impl From<&VoronoiLattice> for VoronoiConfig {
                 l.bounds.max.x,
                 l.bounds.max.y,
             ],
+            // `VoronoiLattice` is purely geometric (ADR-009) — the freeze
+            // flag is a UI semantic that lives on `VoronoiConfig` only.
+            frozen: false,
         }
     }
 }
@@ -543,6 +555,7 @@ mod tests {
         let cfg = VoronoiConfig {
             seeds: vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0], [10.0, 10.0]],
             bounds: [-10.0, -10.0, 20.0, 20.0],
+            frozen: false,
         };
         let lat = cfg.to_lattice().expect("valid config builds a lattice");
         assert_eq!(lat.len(), 4);
@@ -556,6 +569,7 @@ mod tests {
         let cfg = VoronoiConfig {
             seeds: vec![[1.0, 1.0], [1.0, 1.0]],
             bounds: [-5.0, -5.0, 5.0, 5.0],
+            frozen: false,
         };
         assert!(cfg.to_lattice().is_err());
     }
@@ -577,6 +591,39 @@ mod tests {
         let json = serde_json::to_string(&lc).unwrap();
         let back: LatticeConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back, lc);
+    }
+
+    // --- T-005 (sprint 18, ADR-014): VoronoiConfig.frozen serde + default ---
+
+    #[test]
+    fn voronoi_config_frozen_default_is_false() {
+        let lat = VoronoiLattice::default();
+        let cfg = VoronoiConfig::from(&lat);
+        assert!(
+            !cfg.frozen,
+            "From<&VoronoiLattice> defaults frozen to false"
+        );
+    }
+
+    #[test]
+    fn voronoi_config_frozen_round_trip() {
+        let mut cfg = VoronoiConfig::from(&small());
+        cfg.frozen = true;
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: VoronoiConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.frozen, "frozen survives serde round-trip");
+    }
+
+    #[test]
+    fn voronoi_config_frozen_missing_key_loads_false() {
+        // Pre-v160 v2 files won't have the `frozen` key — serde-default
+        // must yield `false` (ADR-012 upgrade path for new optional fields).
+        let json = r#"{
+            "seeds": [[0.0, 0.0], [10.0, 0.0]],
+            "bounds": [-5.0, -5.0, 15.0, 15.0]
+        }"#;
+        let cfg: VoronoiConfig = serde_json::from_str(json).unwrap();
+        assert!(!cfg.frozen);
     }
 
     // --- Sprint 17 C-005: parse_address round-trip (name-box Enter-to-jump) ---
