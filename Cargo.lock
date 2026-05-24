@@ -402,14 +402,6 @@ checksum = "61c41af27dd6d1e27b1b16b489db798443478cef1f06a660c96db617ba5de3b1"
 [[package]]
 name = "tescellate-cli"
 version = "0.0.0"
-dependencies = [
- "serde",
- "serde_json",
- "tescellate-core",
- "tescellate-formula",
- "tescellate-ipc",
- "tescellate-tess",
-]
 
 [[package]]
 name = "tescellate-core"
@@ -435,16 +427,6 @@ dependencies = [
  "tescellate-core",
  "tescellate-store",
  "tescellate-tess",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "tescellate-ipc"
-version = "0.0.0"
-dependencies = [
- "serde",
- "serde_json",
- "tescellate-core",
  "thiserror 1.0.69",
 ]
 

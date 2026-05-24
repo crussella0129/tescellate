@@ -6,22 +6,8 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Headless driver for the Tescellate core. Spawned by Electron; also usable standalone for tests and scripting."
+description = "Headless CLI for the Tescellate core. Placeholder in v161 (no headless commands yet); kept as a structural entry point for future eval / validate / batch work."
 
 [[bin]]
 name = "tescellate-core"
 path = "src/main.rs"
-
-[dependencies]
-serde = { workspace = true }
-serde_json = { workspace = true }
-tescellate-core = { workspace = true }
-tescellate-formula = { workspace = true }
-tescellate-ipc = { workspace = true }
-tescellate-tess = { workspace = true }
-
-[dev-dependencies]
-# The end-to-end test (tests/e2e.rs) drives the binary over JSON-RPC and
-# parses its responses. Integration-test crates only see the package's
-# library and its dev-dependencies, so serde_json is declared here too.
-serde_json = { workspace = true }

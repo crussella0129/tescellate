@@ -4,7 +4,6 @@ members = [
     "crates/tescellate-core",
     "crates/tescellate-tess",
     "crates/tescellate-formula",
-    "crates/tescellate-ipc",
     "crates/tescellate-store",
     "crates/tescellate-cli",
 ]
@@ -30,7 +29,6 @@ glam = { version = "0.27", features = ["serde"] }
 tescellate-core = { path = "crates/tescellate-core" }
 tescellate-tess = { path = "crates/tescellate-tess" }
 tescellate-formula = { path = "crates/tescellate-formula" }
-tescellate-ipc = { path = "crates/tescellate-ipc" }
 tescellate-store = { path = "crates/tescellate-store" }
 
 [profile.release]
