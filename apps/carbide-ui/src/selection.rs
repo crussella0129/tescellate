@@ -12,9 +12,9 @@
 //! ordinary `cargo test`.
 
 use smallvec::SmallVec;
-use tescellate_core::SheetId;
-use tescellate_tess::hex::HexCoord;
-use tescellate_tess::triangle::TriCoord;
+use carbide_core::SheetId;
+use carbide_tess::hex::HexCoord;
+use carbide_tess::triangle::TriCoord;
 
 use crate::format::FormatMap;
 use crate::formula_mode;
@@ -239,11 +239,11 @@ impl Coord for TriCoord {
     }
 }
 
-/// `Coord` impl for [`tescellate_tess::voronoi::VoronoiCoord`] —
+/// `Coord` impl for [`carbide_tess::voronoi::VoronoiCoord`] —
 /// Voronoi cells aren't arranged in a grid, so most rectangle-shaped
 /// operations are degenerate. Sprint 6 ships single-cell selection
 /// only; range selection on Voronoi waits for a real use case.
-impl Coord for tescellate_tess::voronoi::VoronoiCoord {
+impl Coord for carbide_tess::voronoi::VoronoiCoord {
     fn min_max(self, _other: Self) -> (Self, Self) {
         // No spatial ordering on seed indices — every "range" is just
         // the single anchor cell.
@@ -478,7 +478,7 @@ pub type TriangleSelection = Selection<TriCoord>;
 /// v117 unified the selection model, this unifies *the state every
 /// sheet carries with it*, so adding a triangle sheet later means
 /// instantiating `Sheet<TriangleCoord>` rather than spreading another
-/// dozen parallel fields across `TescellateApp`.
+/// dozen parallel fields across `CarbideApp`.
 ///
 /// Notes, format-edit coalescing timestamps, and rendering-only state
 /// (column widths, scroll position) intentionally stay outside the

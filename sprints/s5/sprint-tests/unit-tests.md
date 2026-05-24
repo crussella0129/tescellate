@@ -15,5 +15,5 @@
 - `voronoi_handle_neighbors_returns_other_seeds`: every-other-seed first-cut adjacency returns 7 entries for the default 8-seed config. **pass**
 
 ## Run summary
-- `cargo test -p tescellate-tess`: 57 passed, 0 failed (10 net-new this sprint).
+- `cargo test -p carbide-tess`: 57 passed, 0 failed (10 net-new this sprint).
 - `cargo test --workspace`: 23 result sections, all green.

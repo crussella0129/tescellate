@@ -12,11 +12,11 @@ mod common;
 
 use std::sync::Arc;
 
-use tescellate_formula::excellite::eval::eval;
-use tescellate_formula::excellite::parse::parse;
-use tescellate_formula::transpile::native::compile_program;
-use tescellate_formula::transpile::rt::CellValue;
-use tescellate_formula::transpile::MapCtx;
+use carbide_formula::excellite::eval::eval;
+use carbide_formula::excellite::parse::parse;
+use carbide_formula::transpile::native::compile_program;
+use carbide_formula::transpile::rt::CellValue;
+use carbide_formula::transpile::MapCtx;
 
 #[test]
 fn natively_compiled_carbide_matches_interpreter() {

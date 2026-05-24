@@ -156,7 +156,7 @@ impl Default for VoronoiLattice {
 /// Plain old data (no `glam` types) so it serializes into `workbook.json`
 /// without depending on glam's `serde` feature and stays human-reviewable.
 /// `bounds` is `[min_x, min_y, max_x, max_y]`. Stored on the `Sheet`
-/// (see `tescellate-core`) so dragged seeds persist and the engine's
+/// (see `carbide-core`) so dragged seeds persist and the engine's
 /// eval-time lattice matches the UI (ADR-011 / ADR-012).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoronoiConfig {

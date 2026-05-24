@@ -1,18 +1,18 @@
 # Carbide — Addressing
 
-This page is where Carbide's language design closes the loop with Tescellate's tessellating cell shapes. It documents the current (square) addressing in full and sketches what changes when hex, triangle, parallelogram, Voronoi, and drawn tilings arrive. Those tilings will affect this page far more than they affect any other page in this docs set; everywhere else, the language stays the same.
+This page is where Carbide's language design closes the loop with Carbide's tessellating cell shapes. It documents the current (square) addressing in full and sketches what changes when hex, triangle, parallelogram, Voronoi, and drawn tilings arrive. Those tilings will affect this page far more than they affect any other page in this docs set; everywhere else, the language stays the same.
 
 For the deeper dive on what each tessellation *is* — the math, rendering, implementation cross-cuts, the einstein hat tile, Penrose, and other aperiodic territory — see [tessellations.md](tessellations.md). This page focuses on the *syntax* the user types into the formula bar; that page focuses on the *structure* of the underlying tilings.
 
 Source files:
 
-- Square lattice: `crates/tescellate-tess/src/square.rs`
-- `Lattice` trait: `crates/tescellate-tess/src/lib.rs`
+- Square lattice: `crates/carbide-tess/src/square.rs`
+- `Lattice` trait: `crates/carbide-tess/src/lib.rs`
 - Address parser at the formula level: parser emits `Expr::CellRef(String)` / `Expr::Range(String, String)` opaquely; the lattice resolves the strings at eval time.
 
 ## The contract
 
-Every Carbide address is a **string** at the AST level. The parser doesn't know what lattice the sheet uses; it sees `A1` or `H(2,-3)` or `V<a1b2>` or `T(4,2,▲)` and emits `Expr::CellRef("A1")`. The lattice on the sheet (`Sheet.lattice` → a `LatticeKind`-dispatched `Lattice` impl in `tescellate-tess`) is what owns:
+Every Carbide address is a **string** at the AST level. The parser doesn't know what lattice the sheet uses; it sees `A1` or `H(2,-3)` or `V<a1b2>` or `T(4,2,▲)` and emits `Expr::CellRef("A1")`. The lattice on the sheet (`Sheet.lattice` → a `LatticeKind`-dispatched `Lattice` impl in `carbide-tess`) is what owns:
 
 1. **Parsing**: `Lattice::parse_address(s) -> Result<Self::Coord, AddressError>` turns the user-typed string into the lattice's natural coordinate type.
 2. **Formatting**: `Lattice::address(c) -> String` produces the canonical string form (used as the storage key in `Sheet.cells`).
@@ -24,7 +24,7 @@ This contract is what lets the docs you're reading right now stay almost complet
 
 ## Square — what exists today
 
-`crates/tescellate-tess/src/square.rs`. Excel-compatible.
+`crates/carbide-tess/src/square.rs`. Excel-compatible.
 
 ### Syntax
 
@@ -70,7 +70,7 @@ Negative coords can exist internally (e.g., viewport math during scroll) but hav
 
 The roadmap (PLAN.md §11) lands these lattices in order. Each entry below sketches:
 
-- **Coord type** — the natural representation in `tescellate-tess`.
+- **Coord type** — the natural representation in `carbide-tess`.
 - **Address syntax** — what users type and see.
 - **Neighbor count** — how many cells share an edge.
 - **Range semantics** — what `A:B` means.

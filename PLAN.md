@@ -1,4 +1,4 @@
-# Tescellate — Long-Term Architecture Plan
+# Carbide — Long-Term Architecture Plan
 
 > A DAG-evaluated spreadsheet where cells are not stuck being squares.
 
@@ -6,7 +6,7 @@ This document is the canonical design. It is intentionally written for the **lon
 
 For language-level reference (the formula language is named **Carbide**), see [`docs/carbide/`](docs/carbide/README.md) — grammar, types, the ~90-function catalog, addressing schemes (current + planned per-lattice), and the engine-interop contract.
 
-For the architectural question of whether Tescellate could be written entirely in Rust (renderer included), see [`docs/rust-native.md`](docs/rust-native.md) — a four-level analysis from "Electron today" through "native Rust GUI, no WebView" with subsystem-by-subsystem migration mapping and tooling-maturity notes.
+For the architectural question of whether Carbide could be written entirely in Rust (renderer included), see [`docs/rust-native.md`](docs/rust-native.md) — a four-level analysis from "Electron today" through "native Rust GUI, no WebView" with subsystem-by-subsystem migration mapping and tooling-maturity notes.
 
 For the **execution roadmap** toward an all-Rust application with a Carbide→Rust transpiler — the ordered, version-by-version plan that sequences and supersedes the Phase 4 (`rustnative`) and Phase 5 (Tauri) work below — see [`docs/all-rust-roadmap.md`](docs/all-rust-roadmap.md).
 
@@ -14,7 +14,7 @@ For the **execution roadmap** toward an all-Rust application with a Carbide→Ru
 
 ## 1. Vision
 
-Tescellate is a spreadsheet whose cells can be **any tessellating shape**: squares, parallelograms (rhombi), equilateral triangles, regular hexagons, mixed (semi-regular Archimedean) tilings, and — eventually — user-defined periodic tilings.
+Carbide is a spreadsheet whose cells can be **any tessellating shape**: squares, parallelograms (rhombi), equilateral triangles, regular hexagons, mixed (semi-regular Archimedean) tilings, and — eventually — user-defined periodic tilings.
 
 The reason this is interesting is not aesthetic; different tilings encode **different neighbor relations and adjacency arithmetic**, which makes them natural canvases for problems that fight against rectangular grids:
 
@@ -60,17 +60,17 @@ On top of the geometry, formulas can be written in **multiple languages** with a
 └───────────────────────────┼────────────────────────────────────┘
                             │ stdio / length-prefixed JSON-RPC
 ┌───────────────────────────┴────────────────────────────────────┐
-│  tescellate-core (Rust, single binary)                         │
+│  carbide-core (Rust, single binary)                         │
 │   ┌──────────────────────────────────────────────────────────┐ │
-│   │  tescellate-ipc      JSON-RPC server                     │ │
-│   │  tescellate-core     Workbook / Sheet / Cell / DAG       │ │
-│   │  tescellate-tess     Tessellation lattices + geometry    │ │
-│   │  tescellate-formula  FormulaEngine trait + engines:      │ │
+│   │  carbide-ipc      JSON-RPC server                     │ │
+│   │  carbide-core     Workbook / Sheet / Cell / DAG       │ │
+│   │  carbide-tess     Tessellation lattices + geometry    │ │
+│   │  carbide-formula  FormulaEngine trait + engines:      │ │
 │   │     - excellite      (built-in)                          │ │
 │   │     - python         (PyO3, embedded CPython)            │ │
 │   │     - rhai           (sandboxed scripting)               │ │
 │   │     - rustnative     (rustc + libloading, cached)        │ │
-│   │  tescellate-store    .tscl file format (zip)             │ │
+│   │  carbide-store    .tscl file format (zip)             │ │
 │   └──────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -90,7 +90,7 @@ The novel part. Designed as a layered abstraction so adding a new tiling is a ma
 ### 3.1 The `Lattice` trait
 
 ```rust
-// tescellate-tess/src/lib.rs (sketch)
+// carbide-tess/src/lib.rs (sketch)
 pub trait Lattice {
     type Coord: Eq + Hash + Copy + Serialize + DeserializeOwned;
 
@@ -118,7 +118,7 @@ pub trait Lattice {
 
 ### 3.2 Two families of tiling: regular and irregular
 
-Tescellate exposes two top-level tessellation **families**, each with its own creation UI and runtime properties. Both implement the `Lattice` trait, so the rest of the system (DAG, formulas, persistence) is family-agnostic.
+Carbide exposes two top-level tessellation **families**, each with its own creation UI and runtime properties. Both implement the `Lattice` trait, so the rest of the system (DAG, formulas, persistence) is family-agnostic.
 
 > See [`docs/carbide/tessellations.md`](docs/carbide/tessellations.md) for the deep dive — Voronoi seed-addressing under float drift, draw-and-validate tileability, the einstein hat / spectre aperiodic monotiles, and the implementation + UX cross-cuts. The text below is the architectural framing; that file is the practitioner's reference.
 
@@ -205,7 +205,7 @@ A natural worry with "formula-based tilings" is that every `cell_at(p)` would ru
 
 Where a formula language *does* meet the geometry layer is in **range queries inside formulas**: `NEIGHBORS(C5)` or `RADIUS(C5, 3)` ask the lattice for its topology, but those are bounded operations called from the formula engine, not the renderer.
 
-Implementations land in `tescellate-tess`:
+Implementations land in `carbide-tess`:
 
 | `LatticeSpec` | Coord | Neighbors | Address | Phase |
 |---|---|---|---|---|
@@ -236,7 +236,7 @@ Each `Lattice` implementation owns its `Region` types. The formula layer sees `R
 
 ### 3.5 Geometry library
 
-Pure Rust, no graphics dependencies in `tescellate-tess` — it returns vertex lists and the renderer in the frontend draws. This keeps the core embeddable in non-GUI contexts (CLI, server, tests).
+Pure Rust, no graphics dependencies in `carbide-tess` — it returns vertex lists and the renderer in the frontend draws. This keeps the core embeddable in non-GUI contexts (CLI, server, tests).
 
 ---
 
@@ -254,7 +254,7 @@ pub struct Workbook {
 pub struct Sheet {
     pub id: SheetId,
     pub name: String,
-    pub lattice: LatticeKind,                // enum dispatched to tescellate-tess
+    pub lattice: LatticeKind,                // enum dispatched to carbide-tess
     pub cells: HashMap<CellCoord, Cell>,     // sparse
     pub style: SheetStyle,
 }
@@ -348,7 +348,7 @@ pub trait FormulaEngine: Send + Sync {
 
 ### 6.2 Engine implementations
 
-**Excel-lite** (`tescellate-formula::excellite`)
+**Excel-lite** (`carbide-formula::excellite`)
 - Hand-written Pratt parser → AST → tree-walking evaluator.
 - Long-term goal: **feature parity with Excel, Google Sheets, and OpenOffice Calc** — hundreds of functions across math/trig, statistics, logical, text, date/time, lookup, dynamic-array, financial, information, and database categories. Built incrementally; the architecture below makes adding a function a 10-line change rather than a redesign.
 
@@ -408,9 +408,9 @@ pub fn register(r: &mut FunctionRegistry) {
 }
 ```
 
-A single `FunctionRegistry` per engine holds the lookup table. The Excel-lite engine constructs one at startup from `funcs::math::register`, `funcs::text::register`, etc. Per-lattice extensions (`NEIGHBORS(cell)`, `RADIUS(cell, n)`) plug into the same registry from `tescellate-tess`.
+A single `FunctionRegistry` per engine holds the lookup table. The Excel-lite engine constructs one at startup from `funcs::math::register`, `funcs::text::register`, etc. Per-lattice extensions (`NEIGHBORS(cell)`, `RADIUS(cell, n)`) plug into the same registry from `carbide-tess`.
 
-**Python** (`tescellate-formula::python`)
+**Python** (`carbide-formula::python`)
 - One embedded CPython 3.12+ interpreter per core process, via PyO3.
 - Each formula body is a function `def __formula__(ctx): ...` compiled with `Py_CompileString` and cached per source-hash.
 - `ctx` exposes:
@@ -419,18 +419,18 @@ A single `FunctionRegistry` per engine holds the lookup table. The Excel-lite en
   - `ctx.lattice` → introspection of the active tiling, neighbor queries.
 - **GIL is the bottleneck.** Parallel cell eval falls back to single-threaded for Python-engine cells; non-Python cells in the same layer can still parallelize. Long-term: per-formula sub-interpreters when Python 3.12+ PEP 684 is stable enough to embed.
 
-**Rhai** (`tescellate-formula::rhai`)
+**Rhai** (`carbide-formula::rhai`)
 - Sandboxed scripting, Rust-like syntax. Used as the **preview tier for the Rust engine**.
 - Exposes the same `ctx` API as native Rust (where possible) so source promotes cleanly.
 
-**Rust native** (`tescellate-formula::rustnative`)
+**Rust native** (`carbide-formula::rustnative`)
 - The same formula source as Rhai (subject to a documented compatible subset). User clicks "Compile native" on a cell (or workbook setting "auto-promote on idle").
 - The engine:
   1. Generates a temp crate `formula_<hash>` with a `#[no_mangle] pub extern "Rust" fn __formula__(ctx: &Ctx) -> Value` entry point and `cdylib` crate-type.
   2. Invokes `rustc` (or `cargo build --release`) in a background tokio task.
   3. On success, `libloading::Library::new(...)` and store handle in an `LRU<Hash, Library>`.
   4. On failure, surface compiler diagnostics on the cell.
-- Cache directory: `~/.tescellate/cache/native/<arch>/<rustc-version>/<formula-hash>.dylib|.so|.dll`.
+- Cache directory: `~/.carbide/cache/native/<arch>/<rustc-version>/<formula-hash>.dylib|.so|.dll`.
 - The UI surfaces compile status: a tiny progress chip on the cell, a compile log panel.
 - **Security**: native compiled formulas run in-process; the workbook stores a trust manifest of approved formula hashes. Opening a workbook with un-trusted native formulas falls back to Rhai preview until the user approves.
 
@@ -537,7 +537,7 @@ my_workbook.tscl
 ## 10. Repository layout
 
 ```
-tescellate/
+carbide/
 ├── PLAN.md
 ├── CLAUDE.md
 ├── README.md
@@ -546,17 +546,17 @@ tescellate/
 ├── .gitignore
 ├── Cargo.toml                  # workspace
 ├── crates/
-│   ├── tescellate-core/
-│   ├── tescellate-tess/
-│   ├── tescellate-formula/
+│   ├── carbide-core/
+│   ├── carbide-tess/
+│   ├── carbide-formula/
 │   │   ├── src/lib.rs
 │   │   ├── src/excellite/
 │   │   ├── src/python/         # feature = "python"
 │   │   ├── src/rhai/           # feature = "rhai"
 │   │   └── src/rustnative/     # feature = "rustnative"
-│   ├── tescellate-ipc/
-│   ├── tescellate-store/
-│   └── tescellate-cli/         # headless driver, for tests and scripting
+│   ├── carbide-ipc/
+│   ├── carbide-store/
+│   └── carbide-cli/         # headless driver, for tests and scripting
 └── apps/
     └── desktop/
         ├── package.json
@@ -586,7 +586,7 @@ Each phase ends in something demonstrable. Phases are not calendar-bound.
 - Electron app skeleton: window opens, renderer talks to main, main spawns Rust core, core answers a `ping`.
 
 ### Phase 1 — Square grid MVP
-- Square lattice in `tescellate-tess`.
+- Square lattice in `carbide-tess`.
 - Excel-lite engine: arithmetic, references, ranges, ~30 functions including `SUM`, `AVG`, `IF`, `COUNT`, `INDEX`, `MATCH`.
 - DAG engine + recompute.
 - Renderer draws the square grid + selection + formula bar.

@@ -7,7 +7,7 @@ use super::FunctionRegistry;
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::{Array, CellValue};
+use carbide_core::{Array, CellValue};
 
 fn one_str(name: &str, args: &[Expr], ctx: &dyn EvalCtx) -> Result<String, EvalError> {
     arity_n(name, args, 1)?;

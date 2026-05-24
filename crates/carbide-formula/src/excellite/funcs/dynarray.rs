@@ -9,7 +9,7 @@ use super::FunctionRegistry;
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::{Array, CellValue};
+use carbide_core::{Array, CellValue};
 
 /// UNIQUE(array) — returns distinct values in first-seen order.
 pub fn unique(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
@@ -341,7 +341,7 @@ fn eval_lambda(
     name: &str,
     arg: &Expr,
     ctx: &dyn EvalCtx,
-) -> Result<std::sync::Arc<dyn tescellate_core::CarbideFn>, EvalError> {
+) -> Result<std::sync::Arc<dyn carbide_core::CarbideFn>, EvalError> {
     match eval(arg, ctx)? {
         CellValue::Function(arc) => Ok(arc),
         other => Err(EvalError::Value(format!(
@@ -352,7 +352,7 @@ fn eval_lambda(
 
 fn as_lambda<'a>(
     name: &str,
-    arc: &'a std::sync::Arc<dyn tescellate_core::CarbideFn>,
+    arc: &'a std::sync::Arc<dyn carbide_core::CarbideFn>,
 ) -> Result<&'a Lambda, EvalError> {
     arc.as_any()
         .downcast_ref::<Lambda>()

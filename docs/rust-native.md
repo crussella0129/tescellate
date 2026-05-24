@@ -1,6 +1,6 @@
-# Tescellate — The All-Rust Path
+# Carbide — The All-Rust Path
 
-> Could Tescellate be written entirely in Rust? Yes. Should it? Mostly. When? Mostly Phase 5; the rest is research.
+> Could Carbide be written entirely in Rust? Yes. Should it? Mostly. When? Mostly Phase 5; the rest is research.
 
 This document is a deliberate one-off. The Carbide language docs in [`docs/carbide/`](carbide/README.md) describe how things are. This doc describes how things *could* be — specifically, the architectural question of pushing Rust further up the stack until everything below Electron itself (and maybe Electron too) is replaced.
 
@@ -32,12 +32,12 @@ Every crate under `crates/` is pure Rust:
 
 | Crate | Lines | What it owns |
 |---|---|---|
-| `tescellate-core` | ~600 | `Workbook`, `Sheet`, `Cell`, `CellValue`, `Array`, `Env`, `Dag`, the persistence types. |
-| `tescellate-tess` | ~200 | The `Lattice` trait and the `SquareLattice` impl. |
-| `tescellate-formula` | ~4,200 | The Carbide engine — lexer, Pratt parser, evaluator, `Lambda`, the function registry, ~90 standard-library functions, the `WorkbookEngine` orchestrator, spill rendering. |
-| `tescellate-ipc` | ~120 | LSP-style framed JSON-RPC server (just framing — the dispatch is in `cli`). |
-| `tescellate-store` | ~200 | The `.tscl` zip-archive reader/writer. |
-| `tescellate-cli` | ~250 | The `tescellate-core` binary that Electron spawns. Dispatches JSON-RPC. |
+| `carbide-core` | ~600 | `Workbook`, `Sheet`, `Cell`, `CellValue`, `Array`, `Env`, `Dag`, the persistence types. |
+| `carbide-tess` | ~200 | The `Lattice` trait and the `SquareLattice` impl. |
+| `carbide-formula` | ~4,200 | The Carbide engine — lexer, Pratt parser, evaluator, `Lambda`, the function registry, ~90 standard-library functions, the `WorkbookEngine` orchestrator, spill rendering. |
+| `carbide-ipc` | ~120 | LSP-style framed JSON-RPC server (just framing — the dispatch is in `cli`). |
+| `carbide-store` | ~200 | The `.tscl` zip-archive reader/writer. |
+| `carbide-cli` | ~250 | The `carbide-core` binary that Electron spawns. Dispatches JSON-RPC. |
 
 All cell logic, every formula, every value, every coordinate system, every snapshot, every save/load operation — entirely Rust. There is nothing about the *language* or the *spreadsheet model* that isn't already in Rust.
 
@@ -50,7 +50,7 @@ Two thin shells:
 | File | Lines | What it does |
 |---|---|---|
 | `main.ts` | ~190 | Spawns the Rust binary, multiplexes JSON-RPC frames, owns the `BrowserWindow`, builds the native menu, wires File→New/Open/Save dialogs. |
-| `preload.ts` | ~30 | `contextBridge` exposing a typed `window.tescellate.coreRequest()` to the renderer. |
+| `preload.ts` | ~30 | `contextBridge` exposing a typed `window.carbide.coreRequest()` to the renderer. |
 
 About 220 lines of Node.js glue. This is the part the Tauri port (L1, below) replaces wholesale.
 
@@ -62,7 +62,7 @@ About 220 lines of Node.js glue. This is the part the Tauri port (L1, below) rep
 | `components/GridCanvas.tsx` | ~290 | The Canvas 2D grid renderer. Draws cells, the active ring, the rectangular selection hull, headers, values. Handles mouseDown/Move/Up for drag-select and onKeyDown for type-to-edit. |
 | `components/FormulaBar.tsx` | ~80 | Controlled `<input>` with the engine chip, address chip, spill-source tag. |
 | `components/WizardModal.tsx` | ~210 | The new-workbook wizard. Tessellation cards, extent inputs (which round-trip through `formula.eval` for arithmetic), name. |
-| `ipc.ts` | ~80 | Typed wrapper over `window.tescellate.coreRequest`. |
+| `ipc.ts` | ~80 | Typed wrapper over `window.carbide.coreRequest`. |
 | `address.ts` | ~40 | Square `A1`/`AB42` formatting + parsing, mirrored from the Rust side. |
 | `types.ts`, `styles.css`, `main.tsx`, `global.d.ts` | ~370 | TypeScript scaffolding, dark-theme CSS, React entry point. |
 
@@ -87,12 +87,12 @@ About 1,360 lines of renderer code. This is the work L2 / L3 would replace.
 └─────────────────┼────────────────────────────┘
                   │ stdio JSON-RPC frames
 ┌─────────────────┴────────────────────────────┐
-│ tescellate-core (Rust binary, ~7.2k lines)   │
+│ carbide-core (Rust binary, ~7.2k lines)   │
 └──────────────────────────────────────────────┘
 ```
 
 - **Pros**: Battle-tested everything. HMR via Vite (sub-second iteration on UI changes). Mature DevTools. CSS, fonts, accessibility, animations all work out of the box.
-- **Cons**: Bundle size (~150 MB compressed Electron app). Two language runtimes. Three IPC hops (renderer → main → core binary). Boundary serialization (every cell snapshot round-trips through JSON twice). Two type systems that have to be kept manually in sync (`tescellate-formula::CellSnapshot` mirrored by `ipc.ts::CellSnapshot`).
+- **Cons**: Bundle size (~150 MB compressed Electron app). Two language runtimes. Three IPC hops (renderer → main → core binary). Boundary serialization (every cell snapshot round-trips through JSON twice). Two type systems that have to be kept manually in sync (`carbide-formula::CellSnapshot` mirrored by `ipc.ts::CellSnapshot`).
 - **Maintenance cost**: ~10% of every feature change touches both sides of the boundary. Drag-select took two passes mostly because of TS-side event-ordering bugs that Rust would have caught at the type level.
 
 ### L1 — Tauri host (PLAN.md Phase 5)
@@ -109,14 +109,14 @@ About 1,360 lines of renderer code. This is the work L2 / L3 would replace.
 │                   │ tauri.invoke('name', …)   │
 │  ┌────────────────┴───────────────────────┐  │
 │  │ Tauri main (Rust, ~200 lines)          │  │
-│  │   + tescellate-core (linked as a lib)  │  │
+│  │   + carbide-core (linked as a lib)  │  │
 │  └────────────────────────────────────────┘  │
 └──────────────────────────────────────────────┘
 ```
 
 - **The Electron main process disappears.** The Rust core is *linked into* the Tauri main rather than spawned as a subprocess. `WorkbookEngine` becomes a normal Rust value owned by the Tauri app state.
 - **The JSON-RPC stdio layer disappears.** Tauri's `#[tauri::command]` macro generates the renderer↔Rust bridge automatically; the renderer calls `invoke('cell_set', {sheet, address, source})` and a Rust function fires.
-- **The renderer is unchanged.** Same React, same Vite HMR, same TS. The only file that meaningfully changes is `ipc.ts` (now wraps `tauri.invoke` instead of `window.tescellate.coreRequest`).
+- **The renderer is unchanged.** Same React, same Vite HMR, same TS. The only file that meaningfully changes is `ipc.ts` (now wraps `tauri.invoke` instead of `window.carbide.coreRequest`).
 - **Native integration** via Tauri's bundled crates: `muda` for menus, `rfd` (or `tauri-plugin-dialog`) for file dialogs, `tao` for window management. All the things Electron's main process did, done in Rust.
 - **Bundle**: ~25 MB instead of ~150 MB. Faster startup (sub-second cold start vs. ~3s for Electron). No bundled Chromium — uses whatever WebView is on the host (Edge on Windows, WebKit on macOS, WebKitGTK on Linux).
 
@@ -141,14 +141,14 @@ About 1,360 lines of renderer code. This is the work L2 / L3 would replace.
 │                   │ tauri.invoke() — or       │
 │                   │ direct WASM↔native call   │
 │  ┌────────────────┴───────────────────────┐  │
-│  │ Tauri main + tescellate-core           │  │
+│  │ Tauri main + carbide-core           │  │
 │  └────────────────────────────────────────┘  │
 └──────────────────────────────────────────────┘
 ```
 
 - **The renderer becomes Rust.** Frameworks: **Dioxus** (React-flavoured, VDOM), **Leptos** (Solid-flavoured, fine-grained signals), **Sycamore** (Solid-flavoured too), **Yew** (Elm-ish, older).
 - **The system WebView stays.** All UI is still DOM under the hood — these frameworks render to the browser DOM via WASM. Canvas drawing for the grid uses the browser's HTML5 Canvas API via `wasm-bindgen` bindings.
-- **Type sharing is free.** The renderer imports `CellSnapshot`, `CellValue`, `LatticeKind` directly from `tescellate-core`. No `ipc.ts` mirror. Bugs like the `Number(5.0) vs Integer(5)` distinction can't get lost in JSON serde.
+- **Type sharing is free.** The renderer imports `CellSnapshot`, `CellValue`, `LatticeKind` directly from `carbide-core`. No `ipc.ts` mirror. Bugs like the `Number(5.0) vs Integer(5)` distinction can't get lost in JSON serde.
 - **CSS still works.** WebView is still rendering DOM; styling is unchanged. The wizard's CSS, the formula bar's flex layout — all still CSS.
 
 **Tooling state: mid.** Dioxus 0.6+ is solidly usable; the dx CLI does hot reload (slower than Vite, but functional — full WASM rebuild is 5–30s vs Vite's <1s). Leptos has the cleanest signal-based reactivity. Both can target Tauri.
@@ -162,7 +162,7 @@ About 1,360 lines of renderer code. This is the work L2 / L3 would replace.
 
 **What you gain**:
 - One language end-to-end. Refactoring across the renderer/core boundary works through `cargo`'s type checker.
-- Shared validators, formatters, parsers. The `address.ts` file goes away — `tescellate-tess::square::format_a1` is used directly.
+- Shared validators, formatters, parsers. The `address.ts` file goes away — `carbide-tess::square::format_a1` is used directly.
 - Smaller team friction: the Rust people on the project can fix renderer bugs without context-switching to TypeScript.
 
 ### L3 — Native Rust GUI (no web platform)
@@ -177,7 +177,7 @@ About 1,360 lines of renderer code. This is the work L2 / L3 would replace.
 │  └─────────────────┬──────────────────────┘  │
 │                    │ direct fn calls          │
 │  ┌─────────────────┴──────────────────────┐  │
-│  │ tescellate-core                        │  │
+│  │ carbide-core                        │  │
 │  └────────────────────────────────────────┘  │
 └──────────────────────────────────────────────┘
 ```
@@ -227,7 +227,7 @@ For the grid drawing specifically, the choice is **tiny-skia** (CPU 2D), **wgpu*
 - No process boundaries anywhere — the renderer can directly read `Workbook` state through a `&` or `Arc`.
 - Lower memory overhead.
 - "Just Rust" — every contributor only needs Rust toolchain.
-- For Tescellate specifically: the formula engine, the lattice math, and the grid rendering align naturally with immediate-mode GUI. The wizard and other modal UI are less natural.
+- For Carbide specifically: the formula engine, the lattice math, and the grid rendering align naturally with immediate-mode GUI. The wizard and other modal UI are less natural.
 
 ---
 
@@ -278,7 +278,7 @@ The renderer has no UI tests today (this is a known gap regardless of level). Wh
 
 ### Plugin / extension story
 
-If Tescellate ever grows a "user-installable extensions" feature (color themes, custom formulas, embedded charts), the web platform has obvious answers — JS bundles, declarative manifests, sandboxed iframes. The native-Rust path would need a dynamic-loading scheme via `libloading` or a WASM plugin host (the Phase 4 rustc-native engine already needs this for compiled formulas; the same machinery could host UI plugins). It's tractable but more work.
+If Carbide ever grows a "user-installable extensions" feature (color themes, custom formulas, embedded charts), the web platform has obvious answers — JS bundles, declarative manifests, sandboxed iframes. The native-Rust path would need a dynamic-loading scheme via `libloading` or a WASM plugin host (the Phase 4 rustc-native engine already needs this for compiled formulas; the same machinery could host UI plugins). It's tractable but more work.
 
 ### Cross-platform polish
 
@@ -297,26 +297,26 @@ The Phase 2 PyO3 engine and the Phase 4 rustc-native engine both already live in
 This is roughly the work PLAN.md Phase 5 already commits to.
 
 1. `cargo new --bin apps/desktop-tauri` (or similar). Pull in `tauri`, `tauri-build`, `tauri-plugin-dialog`, `tauri-plugin-shell` if needed.
-2. Add `tescellate-core`, `tescellate-formula`, `tescellate-store` as path dependencies. `WorkbookEngine` becomes managed Tauri state via `app.manage(...)`.
-3. Translate every JSON-RPC method to a `#[tauri::command] fn cell_set(state: State<...>, ...) -> Result<..., String>`. The dispatcher in `tescellate-cli/src/main.rs` becomes a set of command functions; the body of each is mostly unchanged.
+2. Add `carbide-core`, `carbide-formula`, `carbide-store` as path dependencies. `WorkbookEngine` becomes managed Tauri state via `app.manage(...)`.
+3. Translate every JSON-RPC method to a `#[tauri::command] fn cell_set(state: State<...>, ...) -> Result<..., String>`. The dispatcher in `carbide-cli/src/main.rs` becomes a set of command functions; the body of each is mostly unchanged.
 4. Replace `electron/main.ts` with `apps/desktop-tauri/src-tauri/src/main.rs`. The menu builder (~80 lines of TS) becomes ~80 lines of Rust via `tauri::Menu::new()` and `muda`.
-5. The renderer's `ipc.ts` swaps `window.tescellate.coreRequest(payload)` for `@tauri-apps/api`'s `invoke('cell_set', payload)`. Every call site stays the same shape.
+5. The renderer's `ipc.ts` swaps `window.carbide.coreRequest(payload)` for `@tauri-apps/api`'s `invoke('cell_set', payload)`. Every call site stays the same shape.
 6. Bundle config: `tauri.conf.json` instead of `electron-vite.config.ts` for window setup, menu, file associations. Vite still drives the renderer build.
 7. Delete `apps/desktop/electron/` and the Electron deps from `apps/desktop/package.json`. The renderer build is unchanged.
 
-The `tescellate-cli` binary can stay around for headless / CLI use (the smoke tests). It just stops being the Electron child process.
+The `carbide-cli` binary can stay around for headless / CLI use (the smoke tests). It just stops being the Electron child process.
 
 **Risk surface**: WebView differences across platforms. Practical mitigation: target Edge WebView2 on Windows (Chromium-equivalent), WebKit on macOS (well-understood), WebKitGTK on Linux (where it gets hairy — older distros ship old WebKitGTK; document a min-version requirement).
 
 ### L1 → L2 (Rust→WASM renderer)
 
 1. Pick a framework. Recommend **Dioxus** for "I want React but Rust" or **Leptos** for "I want fine-grained reactivity." Both have Tauri integration.
-2. New crate `crates/tescellate-renderer-wasm` (or just `apps/desktop-renderer`). `cdylib` target, depends on the framework.
+2. New crate `crates/carbide-renderer-wasm` (or just `apps/desktop-renderer`). `cdylib` target, depends on the framework.
 3. Port `App.tsx` → `App.rs`. State migrates from `useState` to framework primitives (Dioxus `use_signal`, Leptos `RwSignal`).
 4. Port `GridCanvas.tsx` → `GridCanvas.rs`. The Canvas 2D drawing code is ~95% mechanical translation: `ctx.fillRect(x, y, w, h)` becomes `ctx.fill_rect(x, y, w, h)` via `web-sys`. The DPR scaling, the helper `cellRect(c)`, the cursor highlight all port directly.
 5. Port `FormulaBar.tsx` → `FormulaBar.rs`. The controlled `<input>` is a Dioxus / Leptos input with bound state. Caret manipulation via the same `selectionStart`/`setSelectionRange` browser APIs through `web-sys`.
 6. Port `WizardModal.tsx` → `WizardModal.rs`. CSS stays in `.css` files; the framework just emits class names.
-7. `ipc.ts` deletes itself. The renderer imports `tescellate_core::{CellSnapshot, CellValue, ...}` directly from a path-dependency. `invoke` calls still go through Tauri's bridge, but now with `serde`-derived types on both sides — type safety end-to-end.
+7. `ipc.ts` deletes itself. The renderer imports `carbide_core::{CellSnapshot, CellValue, ...}` directly from a path-dependency. `invoke` calls still go through Tauri's bridge, but now with `serde`-derived types on both sides — type safety end-to-end.
 
 The Dioxus path keeps the React mental model. The Leptos path is a paradigm shift (fine-grained signals, no VDOM diff); cleaner long-term but a learning curve.
 
@@ -326,8 +326,8 @@ The Dioxus path keeps the React mental model. The Leptos path is a paradigm shif
 
 This is the rewrite. There is no incremental path — the rendering layer fundamentally changes.
 
-1. Pick a framework. For Tescellate specifically, **egui** is the natural fit for the grid (immediate-mode, simple, the canvas already redraws-on-every-frame style). **Slint** is the most "Excel-looking" if visual fidelity to existing UI is the goal. **Floem** or **Xilem** if you want to be on the front of the Rust GUI wave.
-2. New crate, `cdylib` or `bin` target. Drop Tauri; keep `tescellate-core`/`tescellate-formula`/`tescellate-store` as path deps.
+1. Pick a framework. For Carbide specifically, **egui** is the natural fit for the grid (immediate-mode, simple, the canvas already redraws-on-every-frame style). **Slint** is the most "Excel-looking" if visual fidelity to existing UI is the goal. **Floem** or **Xilem** if you want to be on the front of the Rust GUI wave.
+2. New crate, `cdylib` or `bin` target. Drop Tauri; keep `carbide-core`/`carbide-formula`/`carbide-store` as path deps.
 3. Reimplement `GridCanvas` in the framework's drawing primitives. egui: build a `Painter` and call `painter.rect_filled(...)`, `painter.text(...)`. The cell helpers from `address.ts` already live in Rust (`square::format_a1`); use them.
 4. Reimplement `FormulaBar` with the framework's TextEdit widget. Caret manipulation, IME, copy/paste all framework-provided (egui has solid versions; others vary).
 5. Reimplement the wizard. Modal windows in egui are `egui::Window::new(...).open(&mut open)`; in Slint they're `Dialog { ... }`.

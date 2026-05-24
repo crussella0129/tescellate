@@ -6,7 +6,7 @@
 //! use, to confirm nothing recurses unboundedly or degrades pathologically.
 //!
 //! The DAG algorithms — cycle detection, dirty-closure, topological order
-//! (`tescellate-core::dag`) — are all *iterative*, so a deep dependency
+//! (`carbide-core::dag`) — are all *iterative*, so a deep dependency
 //! chain walks without growing the stack. The recursive tree-walks that
 //! remain (`eval`, reference collection) recurse on a single formula's
 //! *AST depth*, which the parser caps so a pathologically deep formula is
@@ -16,9 +16,9 @@
 //! quadratic in recompute would balloon them from milliseconds to a
 //! visible stall.
 
-use tescellate_core::{CellValue, SheetId};
-use tescellate_formula::WorkbookEngine;
-use tescellate_tess::LatticeKind;
+use carbide_core::{CellValue, SheetId};
+use carbide_formula::WorkbookEngine;
+use carbide_tess::LatticeKind;
 
 /// Length of the linear dependency chain.
 const CHAIN_LEN: usize = 2000;
@@ -140,7 +140,7 @@ fn large_workbook_saves_and_reopens() {
         eng.set_cell(sid, &format!("A{i}"), Some(&src)).unwrap();
     }
 
-    let path = std::env::temp_dir().join(format!("tescellate-scale-{}.tscl", std::process::id(),));
+    let path = std::env::temp_dir().join(format!("carbide-scale-{}.tscl", std::process::id(),));
     eng.save(&path).expect("save a large workbook");
     let mut reopened = WorkbookEngine::new();
     reopened.open(&path).expect("reopen a large workbook");

@@ -7,11 +7,11 @@
 //! Formulas are parsed as expression *bodies* (the cell-level `=` marker
 //! is stripped before parsing, so it does not appear here).
 
-use tescellate_core::CellValue;
-use tescellate_formula::excellite::eval::eval;
-use tescellate_formula::excellite::parse::parse;
-use tescellate_formula::transpile::MapCtx;
-use tescellate_formula::EvalCtx;
+use carbide_core::CellValue;
+use carbide_formula::excellite::eval::eval;
+use carbide_formula::excellite::parse::parse;
+use carbide_formula::transpile::MapCtx;
+use carbide_formula::EvalCtx;
 
 /// The cell context the reference's cell-reference examples assume.
 fn ctx() -> MapCtx {
@@ -30,12 +30,12 @@ fn eval_src(src: &str) -> Result<CellValue, String> {
     let c = ctx();
     let v = eval(&ast, &c).map_err(|e| format!("eval error: {e:?}"))?;
     match v {
-        CellValue::Reference(tescellate_core::RefShape::Cell(a)) => {
+        CellValue::Reference(carbide_core::RefShape::Cell(a)) => {
             c.cell(&a).map_err(|e| format!("deref error: {e:?}"))
         }
-        CellValue::Reference(tescellate_core::RefShape::Range(a, b)) => {
+        CellValue::Reference(carbide_core::RefShape::Range(a, b)) => {
             let data = c.range(&a, &b).map_err(|e| format!("deref error: {e:?}"))?;
-            Ok(CellValue::Array(Box::new(tescellate_core::Array::col(
+            Ok(CellValue::Array(Box::new(carbide_core::Array::col(
                 data,
             ))))
         }

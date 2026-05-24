@@ -2,7 +2,7 @@
 //!
 //! Run:
 //! ```text
-//! cargo run --release -p tescellate-formula --example native_bench --features native
+//! cargo run --release -p carbide-formula --example native_bench --features native
 //! ```
 //!
 //! The interpreter walks the AST on every evaluation; the native tier bakes
@@ -21,11 +21,11 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use tescellate_formula::excellite::eval::eval;
-use tescellate_formula::excellite::parse::parse;
-use tescellate_formula::transpile::native::compile_program;
-use tescellate_formula::transpile::rt::CellValue;
-use tescellate_formula::transpile::MapCtx;
+use carbide_formula::excellite::eval::eval;
+use carbide_formula::excellite::parse::parse;
+use carbide_formula::transpile::native::compile_program;
+use carbide_formula::transpile::rt::CellValue;
+use carbide_formula::transpile::MapCtx;
 
 const ITERS: u32 = 2_000_000;
 

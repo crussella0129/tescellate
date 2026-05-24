@@ -6,7 +6,7 @@
 //! cell's own. Pure — no egui, no engine — so `cargo test` covers it.
 
 use serde::{Deserialize, Serialize};
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 use crate::format::CellFormat;
 

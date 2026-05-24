@@ -9,7 +9,7 @@ exercised indirectly by the wasm-release build (clean) and clippy on the
 new dialog handler functions.
 
 `save_then_open_round_trips_state_via_bytes` was the speculative
-fixture in the test plan; a winit-free `TescellateApp` fixture proved
+fixture in the test plan; a winit-free `CarbideApp` fixture proved
 heavier than the value it would add, so it stays deferred — the byte
 APIs are already covered by v144's tests and the path-API delegation
 test.

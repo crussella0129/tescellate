@@ -56,5 +56,5 @@ Verified the dependency chain:
 - `flate2 = "*"` with `rust_backend` selects `miniz_oxide` — pure Rust.
 
 No `libz-sys`, no `bzip2-sys`. Confirmed by the existing build: `wasm32` already
-links tescellate-store's deps transitively via tescellate-core via
-tescellate-formula. (Cross-check on first build of the sprint.)
+links carbide-store's deps transitively via carbide-core via
+carbide-formula. (Cross-check on first build of the sprint.)

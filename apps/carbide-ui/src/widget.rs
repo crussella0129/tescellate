@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 /// The kind of widget a cell renders as. Cells with no entry in
 /// [`Widgets`] render as ordinary text/number/formula cells.
@@ -381,7 +381,7 @@ mod tests {
 
     #[test]
     fn widgets_generic_with_voronoi_coord_round_trip() {
-        use tescellate_tess::voronoi::VoronoiCoord;
+        use carbide_tess::voronoi::VoronoiCoord;
         let mut w: Widgets<VoronoiCoord> = Widgets::default();
         w.set_toggle(VoronoiCoord(5), true);
         w.set_button(VoronoiCoord(0), true);
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn widgets_generic_with_tri_coord_round_trip() {
-        use tescellate_tess::triangle::TriCoord;
+        use carbide_tess::triangle::TriCoord;
         let mut w: Widgets<TriCoord> = Widgets::default();
         w.set_toggle(TriCoord::new(2, -1), true);
         w.set_button(TriCoord::new(0, 0), true);
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn widgets_generic_with_hex_coord_round_trip() {
-        use tescellate_tess::hex::HexCoord;
+        use carbide_tess::hex::HexCoord;
         let mut w: Widgets<HexCoord> = Widgets::default();
         w.set_button(HexCoord::new(2, 2), true);
         w.set_toggle(HexCoord::new(-1, 3), true);

@@ -5,10 +5,10 @@
 **Status:** Adopted, shipped in v144 (PR #175).
 
 The store crate's zip layout grew a third entry, `ui.json`, alongside the
-existing `manifest.json` and `workbook.json`. `tescellate-store` exposes
+existing `manifest.json` and `workbook.json`. `carbide-store` exposes
 this as a `UiState` newtype wrapping a `serde_json::Value` — the store
 deliberately does **not** interpret the schema. The UI owns the typed
-`UiSnapshot` in `apps/tescellate-ui/src/state_io.rs` and serializes /
+`UiSnapshot` in `apps/carbide-ui/src/state_io.rs` and serializes /
 deserializes it against the opaque blob.
 
 Why opaque, not typed at the store level: the workbook engine doesn't
@@ -38,7 +38,7 @@ handling). Shipping the engine + serialization contract as its own
 review unit means sprint 1 has a stable, byte-API-tested foundation to
 wire against without churning the on-disk format mid-flight.
 
-The `TescellateApp::capture_state` / `restore_state` methods are
+The `CarbideApp::capture_state` / `restore_state` methods are
 gated `#[allow(dead_code)]` until sprint 1 calls them.
 
 ## ADR-003 — `rfd` carries `gtk3` feature on wasm32 (sprint 1)
@@ -195,9 +195,9 @@ Implements the design accepted in ADR-011. The seed configuration is now a
 persisted, single-sourced part of a Voronoi sheet:
 
 - **`Sheet.lattice_config: Option<LatticeConfig>`** (`#[serde(default)]`,
-  in `tescellate-core`) carries `LatticeConfig::Voronoi(VoronoiConfig {
+  in `carbide-core`) carries `LatticeConfig::Voronoi(VoronoiConfig {
   seeds: Vec<[f32;2]>, bounds: [f32;4] })`. `VoronoiConfig` is a serde-stable
-  POD in `tescellate-tess` (no glam-serde dependency, keeps `workbook.json`
+  POD in `carbide-tess` (no glam-serde dependency, keeps `workbook.json`
   reviewable); `to_lattice()` delegates to `VoronoiLattice::new` so the
   ADR-009 coincident/degenerate validation is reused. Uniform tilings keep
   `lattice_config == None`.
@@ -222,7 +222,7 @@ persisted, single-sourced part of a Voronoi sheet:
 
 Scope (this sprint): seed *drag* only. Add/delete seeds, bounds editing, and
 the px↔lattice-unit mapping under zoom (the seed-drag clamp assumes 1:1, no
-zoom — C-006) are deferred. The next sprint is the Tescellate→Carbide rename,
+zoom — C-006) are deferred. The next sprint is the Carbide→Carbide rename,
 which re-touches the format layer (`.tscl`→`.crbd`) — a conscious second,
 mechanical format change after this v2 schema bump.
 
@@ -286,7 +286,7 @@ rule), ADR-012 (Sheet-authoritative seed config the marquee enumerates).
 formatting paths through the trait (today they stay one-per-lattice and
 use `primary_cells()` to ignore marquee extras); literal merge of the
 four `draw_*_grid` functions into one parameterised `draw_lattice_panel`.
-The next sprint (v160) is the Tescellate→Carbide rename, applied to the
+The next sprint (v160) is the Carbide→Carbide rename, applied to the
 already-unified renderer for a smaller diff.
 
 ## ADR-014 — Voronoi polish: seed-handle fade + widget pop-out + persisted freeze + Enter-advance history rule (sprint 18)

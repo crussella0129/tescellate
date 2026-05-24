@@ -18,7 +18,7 @@ use super::FunctionRegistry;
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::{Array, CellValue};
+use carbide_core::{Array, CellValue};
 
 /// Resolve the first argument of NEIGHBORS / RADIUS to an address string.
 /// Accepts `Expr::CellRef("A1")` directly, or any expression that

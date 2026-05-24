@@ -10,7 +10,7 @@ use crate::excellite::ast::Expr;
 use crate::{EvalCtx, EvalError};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 pub mod aggregate;
 pub mod coerce;

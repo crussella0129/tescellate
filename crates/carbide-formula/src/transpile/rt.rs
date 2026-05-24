@@ -1,6 +1,6 @@
 //! Runtime surface that transpiled Carbide code links against.
 //!
-//! Generated code emits `use tescellate_formula::transpile::rt::*;` and
+//! Generated code emits `use carbide_formula::transpile::rt::*;` and
 //! references only the names below — the value/error types, the `EvalCtx`
 //! trait it reads cells and variables through, the operator enums, the
 //! shared `apply_*` / `bare_range` / `number_binary_op` / `to_number`
@@ -15,4 +15,4 @@ pub use crate::excellite::eval::{
 pub use crate::excellite::funcs::coerce::to_number;
 pub use crate::excellite::funcs::standard;
 pub use crate::{EvalCtx, EvalError};
-pub use tescellate_core::{Array, CellValue};
+pub use carbide_core::{Array, CellValue};

@@ -10,7 +10,7 @@ Finalized - DO NOT EDIT
 ### T-002 unit tests (`FORMAT_VERSION` bump + tri-entry zip)
 - (covered by T-003 round-trip tests)
 
-### T-003 unit tests (`tescellate-store` round trip)
+### T-003 unit tests (`carbide-store` round trip)
 - `round_trip_preserves_ui_state`: `save_to_bytes(&wb, &json!({"answer": 42, "list": [1,2,3]})) → load_from_bytes` returns the same `(Workbook, UiState)`. Stub: existing `sample()` workbook fixture.
 - `reads_v0_as_empty_ui_state`: hand-build a v0 zip (manifest.json with `format_version: 0`, workbook.json, no ui.json), load returns `(workbook, UiState::default())`. Mocks: zip writer (already used in `refuses_unknown_format_version`).
 - `refuses_unknown_format_version_still_works`: keep the existing test green after the bump.
@@ -48,7 +48,7 @@ Finalized - DO NOT EDIT
 
 ### T-012 unit tests (autosave write)
 - `autosave_skips_when_payload_over_cap`: pass 5 MiB of zeros; ensure no panic; localStorage key is not set (read via web-sys; gated `#[cfg(target_arch = "wasm32")]` with a no-op stub on native).
-- Wasm-only — add `#[wasm_bindgen_test]` and ensure the apps/tescellate-ui Cargo.toml has `wasm-bindgen-test` as a dev-dep behind `cfg(target_arch = "wasm32")`. If wiring `wasm-bindgen-test` is more weight than this sprint warrants, *skip* the wasm-side tests and rely on the integration / E2E checks — note the deferral.
+- Wasm-only — add `#[wasm_bindgen_test]` and ensure the apps/carbide-ui Cargo.toml has `wasm-bindgen-test` as a dev-dep behind `cfg(target_arch = "wasm32")`. If wiring `wasm-bindgen-test` is more weight than this sprint warrants, *skip* the wasm-side tests and rely on the integration / E2E checks — note the deferral.
 
 ### T-013 unit tests (rehydrate)
 - `boot_prefers_local_storage_over_seed_demos`: native-only test where `load_from_local_storage` is feature-gated to a fake that returns `Some(bytes)`; assert no Budget/Hex-Game seed cells exist after `new()`.
@@ -65,7 +65,7 @@ Finalized - DO NOT EDIT
 - `store_round_trips_full_ui_state_shape`: build a workbook with widgets-in-Workbook (none — UiState is the sibling) and a UiSnapshot with non-trivial content, save to bytes, load back, assert byte-for-byte deserialization of the snapshot matches. (Tightens T-003 with the actual schema rather than ad-hoc JSON.)
 
 ### Component B + C integration (engine + UI state)
-- `app_save_load_cycle_preserves_full_state`: in-memory test that constructs `TescellateApp`, applies a sequence of user-style mutations (set a formula, add a widget, toggle stage mode, add a conditional rule), calls `engine.save_bytes(&capture().into())`, builds a fresh app, calls `engine.open_bytes` + `restore`, asserts identical state. Mocks: none; pure in-memory.
+- `app_save_load_cycle_preserves_full_state`: in-memory test that constructs `CarbideApp`, applies a sequence of user-style mutations (set a formula, add a widget, toggle stage mode, add a conditional rule), calls `engine.save_bytes(&capture().into())`, builds a fresh app, calls `engine.open_bytes` + `restore`, asserts identical state. Mocks: none; pure in-memory.
 
 ### Component D integration (save/open flow without dialog)
 - The dialog itself is mocked behind a trait `FileDialog` (one method `save_bytes(&[u8], &str)`, one method `open_bytes() -> Option<Vec<u8>>`). The save and open flows call this trait; production uses an rfd-backed impl, tests use an in-memory impl. The in-memory impl tracks the last bytes written and feeds back arbitrary bytes for open.
@@ -80,6 +80,6 @@ Finalized - DO NOT EDIT
 - **Status:** possible (manual)
 - `e2e_browser_save_open_roundtrip`: Run `trunk serve` (or the project's equivalent wasm dev server); open the app in Chrome; click a Budget slider; press Ctrl+S; verify a `.tscl` download appears in the browser; refresh the page; press Ctrl+O; pick the downloaded file; verify the slider is at the position the user left it.
 - `e2e_browser_autosave_survives_refresh`: edit a cell, wait 3 seconds, F5 the page, verify the cell value is restored.
-- `e2e_native_save_open_roundtrip`: `cargo run --manifest-path apps/tescellate-ui/Cargo.toml`; same sequence using the OS file dialogs; verify the on-disk `.tscl` opens cleanly.
+- `e2e_native_save_open_roundtrip`: `cargo run --manifest-path apps/carbide-ui/Cargo.toml`; same sequence using the OS file dialogs; verify the on-disk `.tscl` opens cleanly.
 
 Manual E2E is acceptable for this sprint; a Playwright/wdio harness for the wasm build is the right next-sprint target if we want CI-gated E2E.

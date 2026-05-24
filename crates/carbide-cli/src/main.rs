@@ -1,4 +1,4 @@
-//! `tescellate-cli` (becomes `carbide-cli` in v161) — placeholder binary.
+//! `carbide-cli` (becomes `carbide-cli` in v161) — placeholder binary.
 //!
 //! Historically this was the JSON-RPC server driven by the Electron renderer
 //! (`apps/desktop`). Both the Electron app and the JSON-RPC IPC crate were

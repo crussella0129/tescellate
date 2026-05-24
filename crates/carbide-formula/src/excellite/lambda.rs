@@ -12,7 +12,7 @@ use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError, ScopedCtx};
 use std::any::Any;
 use std::sync::Arc;
-use tescellate_core::{CarbideFn, CellValue, Env};
+use carbide_core::{CarbideFn, CellValue, Env};
 
 #[derive(Debug)]
 pub struct Lambda {

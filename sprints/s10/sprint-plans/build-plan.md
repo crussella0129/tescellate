@@ -15,7 +15,7 @@ Finalized - DO NOT EDIT
 ## Execution Sequence
 
 ### T-1001: Visible-range helpers in `GridMetrics`.
-- **Touches:** `apps/tescellate-ui/src/grid.rs`
+- **Touches:** `apps/carbide-ui/src/grid.rs`
 - **Depends on:** (none)
 - **Success criterion:** Two methods:
   - `visible_col_range(&self, origin_x: f32, clip_left: f32, clip_right: f32, cols: u32) -> (u32, u32)`
@@ -25,7 +25,7 @@ Finalized - DO NOT EDIT
 - **Notes:** Inclusive overlap test: `cell_right >= rel_left && cell_left <= rel_right` where `rel_* = clip_* - origin_*`.
 
 ### T-1002: Apply culling in `draw_grid`.
-- **Touches:** `apps/tescellate-ui/src/app.rs`
+- **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-1001
 - **Success criterion:** Near the top of the paint section, compute `let (c0, c1) = self.metrics.visible_col_range(origin.x, ui.clip_rect().left(), ui.clip_rect().right(), COLS);` and the row analogue. Change the four `for r in 0..ROWS` / `for c in 0..COLS` loops (main paint, heavy-border, widget, header strips) to `for r in r0..=r1` / `for c in c0..=c1`. Build clean; the grid still renders correctly when scrolled (verified manually).
 - **Notes:** The header strips iterate one axis each — row header uses `r0..=r1`, column header uses `c0..=c1`.

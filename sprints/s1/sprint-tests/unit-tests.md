@@ -16,5 +16,5 @@
 - T-102d maybe_autosave timing — covered by §E2E (edit + 2 s + F5).
 
 ## Run summary
-- `cargo test --manifest-path apps/tescellate-ui/Cargo.toml --lib`: **246 passed, 0 failed** (243 carried over from v144 + 3 new).
+- `cargo test --manifest-path apps/carbide-ui/Cargo.toml --lib`: **246 passed, 0 failed** (243 carried over from v144 + 3 new).
 - `cargo test --workspace`: all green.

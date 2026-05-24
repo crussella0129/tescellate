@@ -23,7 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read, Seek, Write};
-use tescellate_core::{EngineKind, Workbook};
+use carbide_core::{EngineKind, Workbook};
 use thiserror::Error;
 
 /// Highest format version this build can write and read at full fidelity.
@@ -191,8 +191,8 @@ pub fn load_full_from_bytes(bytes: &[u8]) -> Result<(Workbook, UiState), StoreEr
 mod tests {
     use super::*;
     use hashbrown::HashMap;
-    use tescellate_core::{Cell, CellValue, Sheet, SheetId, WorkbookId, WorkbookMeta};
-    use tescellate_tess::LatticeKind;
+    use carbide_core::{Cell, CellValue, Sheet, SheetId, WorkbookId, WorkbookMeta};
+    use carbide_tess::LatticeKind;
 
     fn sample() -> Workbook {
         let mut cells = HashMap::new();
@@ -220,7 +220,7 @@ mod tests {
                 id: sid,
                 name: "Sheet1".into(),
                 lattice: LatticeKind::Square,
-                extent: tescellate_core::SheetExtent::Unbounded,
+                extent: carbide_core::SheetExtent::Unbounded,
                 lattice_config: None,
                 cells,
             },
@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn voronoi_seeds_survive_full_round_trip() {
-        use tescellate_tess::{LatticeConfig, VoronoiConfig};
+        use carbide_tess::{LatticeConfig, VoronoiConfig};
 
         let cfg = LatticeConfig::Voronoi(VoronoiConfig {
             seeds: vec![[1.0, 2.0], [30.0, -4.0], [-5.0, 25.0]],
@@ -269,7 +269,7 @@ mod tests {
                 id: sid,
                 name: "Vor".into(),
                 lattice: LatticeKind::Voronoi,
-                extent: tescellate_core::SheetExtent::Unbounded,
+                extent: carbide_core::SheetExtent::Unbounded,
                 lattice_config: Some(cfg.clone()),
                 cells: HashMap::new(),
             },
@@ -300,7 +300,7 @@ mod tests {
         // Sprint 18 C-001: VoronoiConfig.frozen must survive the full
         // `.tscl` envelope (save_full → load_full), not just serde JSON in
         // isolation. Mirrors voronoi_seeds_survive_full_round_trip above.
-        use tescellate_tess::{LatticeConfig, VoronoiConfig};
+        use carbide_tess::{LatticeConfig, VoronoiConfig};
 
         let cfg = LatticeConfig::Voronoi(VoronoiConfig {
             seeds: vec![[1.0, 2.0], [30.0, -4.0]],
@@ -315,7 +315,7 @@ mod tests {
                 id: sid,
                 name: "VorFrozen".into(),
                 lattice: LatticeKind::Voronoi,
-                extent: tescellate_core::SheetExtent::Unbounded,
+                extent: carbide_core::SheetExtent::Unbounded,
                 lattice_config: Some(cfg.clone()),
                 cells: HashMap::new(),
             },
@@ -356,7 +356,7 @@ mod tests {
                 id: sid,
                 name: "Vor".into(),
                 lattice: LatticeKind::Voronoi,
-                extent: tescellate_core::SheetExtent::Unbounded,
+                extent: carbide_core::SheetExtent::Unbounded,
                 lattice_config: None,
                 cells: HashMap::new(),
             },

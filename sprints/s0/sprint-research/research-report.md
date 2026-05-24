@@ -23,18 +23,18 @@ calls out as the bridge between "HyperCard-with-spreadsheet-syntax" and
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `crates/tescellate-store/src/lib.rs` | high | Already implements the `.tscl` zip format: `manifest.json` + `workbook.json`, deflate-compressed. `save`/`load` take `Write+Seek`/`Read+Seek`; helpers `save_to_bytes`/`load_from_bytes` for in-memory round trips. `FORMAT_VERSION = 0`. Tests already exercise round trip + unknown-version refusal. |
-| `crates/tescellate-formula/src/engine.rs` | high | `WorkbookEngine::save(path)` / `open(path)` exist but use `std::fs::File` — **path-based, won't link on wasm32**. Need byte-oriented variants that delegate to `tescellate_store::{save_to_bytes, load_from_bytes}`. |
-| `crates/tescellate-core/...` | high | `Workbook { id, meta, default_engine, sheet_order, sheets }` and `Cell { source, engine, value }` are already `Serialize`/`Deserialize`. This is the cargo we ship through the format. |
-| `apps/tescellate-ui/src/app.rs` | high | The egui app holds `WorkbookEngine` *plus* an `ActiveSheet`, three `Sheet<C>` selection bundles, three `FormatMap`s, three `Widgets`, three `NoteMap`s, conditional `Rule` lists, the `History`, the Stage Mode flag, and view geometry. **None of this UI state currently round-trips through `Workbook`.** Anything we want to survive a save needs to ride a sibling JSON inside the zip. |
-| `apps/tescellate-ui/src/format.rs` | high | `FormatMap` + `CellFormat` + `Borders` + `HexBorders`. egui's `Color32` is the awkward field (it's not `Serialize` by default in our egui pin) — we serialize as `[u8;4]`. |
-| `apps/tescellate-ui/src/widget.rs` | high | `Widgets` is `HashMap<(u32,u32), WidgetKind>`; `WidgetKind` already has the variants `Toggle/Slider/Button/ProgressBar`. Add `#[derive(Serialize, Deserialize)]` and it round-trips. |
-| `apps/tescellate-ui/src/note.rs` | medium | Small map of per-cell note strings. Trivial to serialize. |
-| `apps/tescellate-ui/src/conditional.rs` | medium | `Rule { condition, format }`; same `Color32` pattern as `format.rs`. |
-| `apps/tescellate-ui/src/history.rs` | low | Undo stack — **intentionally not persisted**. New session starts with an empty history. |
-| `apps/tescellate-ui/src/keymap.rs` | medium | Commands enum + `SHORTCUTS` table. Need to add `Save`, `SaveAs`, `Open` commands and bind Ctrl+S / Ctrl+Shift+S / Ctrl+O. egui already swallows Ctrl+S by default; we shadow it with `consume_key`. |
-| `apps/tescellate-ui/src/ribbon.rs` | medium | Save/Open/New buttons live here; add `RibbonAction::Save / SaveAs / Open / New`. |
-| `apps/tescellate-ui/Cargo.toml` | high | Currently depends on core/tess/formula; **does not** depend on `tescellate-store`. Adding the store pulls `zip` and `serde_json` in. Both compile to wasm32-unknown-unknown (pure-Rust deflate via `flate2`'s rust_backend feature; `zip` has the `deflate-flate2` feature that selects it). Need to verify nothing in the dependency tree drags in a native-only crate (e.g. `bzip2-sys`). |
+| `crates/carbide-store/src/lib.rs` | high | Already implements the `.tscl` zip format: `manifest.json` + `workbook.json`, deflate-compressed. `save`/`load` take `Write+Seek`/`Read+Seek`; helpers `save_to_bytes`/`load_from_bytes` for in-memory round trips. `FORMAT_VERSION = 0`. Tests already exercise round trip + unknown-version refusal. |
+| `crates/carbide-formula/src/engine.rs` | high | `WorkbookEngine::save(path)` / `open(path)` exist but use `std::fs::File` — **path-based, won't link on wasm32**. Need byte-oriented variants that delegate to `carbide_store::{save_to_bytes, load_from_bytes}`. |
+| `crates/carbide-core/...` | high | `Workbook { id, meta, default_engine, sheet_order, sheets }` and `Cell { source, engine, value }` are already `Serialize`/`Deserialize`. This is the cargo we ship through the format. |
+| `apps/carbide-ui/src/app.rs` | high | The egui app holds `WorkbookEngine` *plus* an `ActiveSheet`, three `Sheet<C>` selection bundles, three `FormatMap`s, three `Widgets`, three `NoteMap`s, conditional `Rule` lists, the `History`, the Stage Mode flag, and view geometry. **None of this UI state currently round-trips through `Workbook`.** Anything we want to survive a save needs to ride a sibling JSON inside the zip. |
+| `apps/carbide-ui/src/format.rs` | high | `FormatMap` + `CellFormat` + `Borders` + `HexBorders`. egui's `Color32` is the awkward field (it's not `Serialize` by default in our egui pin) — we serialize as `[u8;4]`. |
+| `apps/carbide-ui/src/widget.rs` | high | `Widgets` is `HashMap<(u32,u32), WidgetKind>`; `WidgetKind` already has the variants `Toggle/Slider/Button/ProgressBar`. Add `#[derive(Serialize, Deserialize)]` and it round-trips. |
+| `apps/carbide-ui/src/note.rs` | medium | Small map of per-cell note strings. Trivial to serialize. |
+| `apps/carbide-ui/src/conditional.rs` | medium | `Rule { condition, format }`; same `Color32` pattern as `format.rs`. |
+| `apps/carbide-ui/src/history.rs` | low | Undo stack — **intentionally not persisted**. New session starts with an empty history. |
+| `apps/carbide-ui/src/keymap.rs` | medium | Commands enum + `SHORTCUTS` table. Need to add `Save`, `SaveAs`, `Open` commands and bind Ctrl+S / Ctrl+Shift+S / Ctrl+O. egui already swallows Ctrl+S by default; we shadow it with `consume_key`. |
+| `apps/carbide-ui/src/ribbon.rs` | medium | Save/Open/New buttons live here; add `RibbonAction::Save / SaveAs / Open / New`. |
+| `apps/carbide-ui/Cargo.toml` | high | Currently depends on core/tess/formula; **does not** depend on `carbide-store`. Adding the store pulls `zip` and `serde_json` in. Both compile to wasm32-unknown-unknown (pure-Rust deflate via `flate2`'s rust_backend feature; `zip` has the `deflate-flate2` feature that selects it). Need to verify nothing in the dependency tree drags in a native-only crate (e.g. `bzip2-sys`). |
 
 ## 3. External Sources
 
@@ -42,7 +42,7 @@ calls out as the bridge between "HyperCard-with-spreadsheet-syntax" and
 - [web-sys: HtmlInputElement file picker](https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.HtmlInputElement.html) — `<input type="file" accept=".tscl">` plus a `change` listener that pulls the chosen `File`, hands it to a `FileReader`, and resolves a `js_sys::Promise` with the bytes. Async — must be awaited via `wasm-bindgen-futures::spawn_local`.
 - [web-sys: window().local_storage()](https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.Storage.html) — `set_item(key, value)`/`get_item(key)`. Values are JS strings, so a `.tscl` zip needs base64 encoding for transport. Quota is browser-defined (Chrome ~10 MiB per origin); we'll cap at 5 MiB and surface a non-blocking toast if a workbook exceeds it.
 - [rfd crate](https://docs.rs/rfd/latest/rfd/) — cross-platform native file dialog with a wasm backend. The wasm backend ends up calling the same Blob/Input dance we'd write by hand. Pulling rfd in means the UI gets native dialogs *and* wasm dialogs from one API. **Decision: use rfd; only fall through to raw web-sys if rfd's wasm path can't trigger a download from a non-user-gesture context.**
-- [zip crate features](https://docs.rs/zip/latest/zip/) — confirms `deflate-flate2` selects the pure-Rust deflate path; that's what tescellate-store currently uses, so wasm is already supported transitively.
+- [zip crate features](https://docs.rs/zip/latest/zip/) — confirms `deflate-flate2` selects the pure-Rust deflate path; that's what carbide-store currently uses, so wasm is already supported transitively.
 
 ## 4. Risks, Unknowns, Dependencies
 
@@ -61,18 +61,18 @@ calls out as the bridge between "HyperCard-with-spreadsheet-syntax" and
 
 1. **Engine API** — add `WorkbookEngine::save_bytes() -> Result<Vec<u8>>` and `WorkbookEngine::open_bytes(&[u8])`. The existing `save(path)/open(path)` keep working (they shell to the new methods).
 2. **Store extension** — bump `FORMAT_VERSION` to 1; add an optional `ui.json` member; `save`/`load` take an extra `&UiState`/return `(Workbook, UiState)`. `UiState` is an opaque-to-engine JSON value (the engine doesn't interpret it; the UI does). Engine callers that don't have a UiState pass `UiState::default()` — i.e. an empty object — which is forwards-compatible.
-3. **UI capture/restore** — `apps/tescellate-ui` adds `state_io.rs`:
+3. **UI capture/restore** — `apps/carbide-ui` adds `state_io.rs`:
    - `capture(&self) -> UiState` snapshots the three FormatMaps, three Widgets, three NoteMaps, the conditional rule lists, the active sheet enum, stage_mode, and view geometry.
    - `restore(&mut self, UiState)` writes them back.
    - Both are pure functions over the app struct; no rendering.
 4. **Ctrl+S / Save** — keymap adds `Command::Save`. On wasm: build bytes via `engine.save_bytes()` + `state_io::capture`, hand to `rfd::AsyncFileDialog::new().save_file()`. On native: same, but rfd opens a native dialog.
 5. **Ctrl+O / Open** — same pattern, mirror direction. On wasm: rfd async; on resolved bytes, call `engine.open_bytes()` + `state_io::restore`. Lift the autosave debounce briefly to avoid the open immediately overwriting itself.
-6. **localStorage autosave** — `state_io::autosave_to_local_storage()` runs on a debounced dirty flag (every 2s if the workbook changed). Stores base64-encoded `.tscl` bytes under key `tescellate.autosave.v1`. On app boot, before seeding demos, look up the key; if present, restore from it.
+6. **localStorage autosave** — `state_io::autosave_to_local_storage()` runs on a debounced dirty flag (every 2s if the workbook changed). Stores base64-encoded `.tscl` bytes under key `carbide.autosave.v1`. On app boot, before seeding demos, look up the key; if present, restore from it.
 7. **Tests** —
-   - `tescellate-store`: round-trip a workbook + non-empty UiState through `save_to_bytes`/`load_from_bytes`.
-   - `tescellate-store`: refuse format_version 99; tolerate format_version 0 (yields `UiState::default()`).
-   - `tescellate-ui` unit tests for `state_io::capture` / `restore` round trip a stub app fixture.
-8. **CI gate** — workspace test, clippy, fmt, and `cargo build --target wasm32-unknown-unknown --manifest-path apps/tescellate-ui/Cargo.toml`. All four must pass.
+   - `carbide-store`: round-trip a workbook + non-empty UiState through `save_to_bytes`/`load_from_bytes`.
+   - `carbide-store`: refuse format_version 99; tolerate format_version 0 (yields `UiState::default()`).
+   - `carbide-ui` unit tests for `state_io::capture` / `restore` round trip a stub app fixture.
+8. **CI gate** — workspace test, clippy, fmt, and `cargo build --target wasm32-unknown-unknown --manifest-path apps/carbide-ui/Cargo.toml`. All four must pass.
 
 **Alternative considered — two-file split (engine `.tscl` + UI `.tscl-ui` sidecar).** Cleaner separation, but doubles the user-visible artifact and complicates "send a teammate the file" — they'd lose styling. Rejected: the file format already supports multi-entry zip; we use it.
 

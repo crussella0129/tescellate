@@ -5,7 +5,7 @@
 use super::ast::{BinaryOp, Expr, UnaryOp};
 use super::funcs::{coerce::*, standard};
 use crate::{EvalCtx, EvalError, FormulaRef};
-use tescellate_core::{Array, CellError, CellValue};
+use carbide_core::{Array, CellError, CellValue};
 
 pub fn eval_error_to_cell_error(e: EvalError) -> CellError {
     match e {

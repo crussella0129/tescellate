@@ -1,12 +1,12 @@
 [package]
-name = "tescellate-formula"
+name = "carbide-formula"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Formula engines for Tescellate: Excel-lite (built-in), Python (PyO3), Rhai, and native Rust (rustc + libloading)."
+description = "Formula engines for Carbide: Excel-lite (built-in), Python (PyO3), Rhai, and native Rust (rustc + libloading)."
 
 [features]
 # All engines off by default in Phase 0 — only the trait + ExcelLite scaffold
@@ -23,9 +23,9 @@ native = ["dep:libloading"]
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }
-tescellate-core = { workspace = true }
-tescellate-tess = { workspace = true }
-tescellate-store = { workspace = true }
+carbide-core = { workspace = true }
+carbide-tess = { workspace = true }
+carbide-store = { workspace = true }
 hashbrown = { workspace = true }
 libloading = { version = "0.8", optional = true }
 pyo3 = { version = "0.23", features = ["auto-initialize"], optional = true }

@@ -1,5 +1,5 @@
 //! UI-side persistence snapshot — the typed mirror of the opaque
-//! `tescellate_store::UiState` blob that rides inside a `.tscl` file
+//! `carbide_store::UiState` blob that rides inside a `.tscl` file
 //! alongside the workbook.
 //!
 //! [`UiSnapshot`] is a deliberately small, JSON-friendly struct that
@@ -16,8 +16,8 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use tescellate_tess::hex::HexCoord;
-use tescellate_tess::triangle::TriCoord;
+use carbide_tess::hex::HexCoord;
+use carbide_tess::triangle::TriCoord;
 
 use crate::conditional::Rule;
 use crate::format::FormatMap;
@@ -34,7 +34,7 @@ pub enum ActiveSheetTag {
     Voronoi,
 }
 
-/// The persistent slice of a `TescellateApp`. New fields land here with a
+/// The persistent slice of a `CarbideApp`. New fields land here with a
 /// `#[serde(default)]` so older snapshots tolerate the addition; removed
 /// fields are kept until the next major format bump.
 ///
@@ -59,7 +59,7 @@ pub struct UiSnapshot {
     /// Voronoi-sheet widgets (sprint 9). New field — pre-v152 snapshots
     /// default to empty. Closes the four-lattice widget surface.
     #[serde(default)]
-    pub voronoi_widgets: Widgets<tescellate_tess::voronoi::VoronoiCoord>,
+    pub voronoi_widgets: Widgets<carbide_tess::voronoi::VoronoiCoord>,
     #[serde(with = "vec_pair::square_notes")]
     pub square_notes: HashMap<(u32, u32), String>,
     #[serde(with = "vec_pair::hex_notes")]
@@ -69,7 +69,7 @@ pub struct UiSnapshot {
     pub conditional_rules: Vec<Rule>,
     pub column_widths: HashMap<u32, f32>,
     pub row_heights: HashMap<u32, f32>,
-    /// True only for the fresh seed workbook produced by `TescellateApp::new`
+    /// True only for the fresh seed workbook produced by `CarbideApp::new`
     /// before the user touched anything. Used by the autosave path to skip
     /// persisting the seed itself.
     pub is_fresh_seed: bool,
@@ -102,27 +102,27 @@ mod vec_pair {
         };
     }
     vec_pair_for!(square_notes, (u32, u32));
-    vec_pair_for!(hex_notes, tescellate_tess::hex::HexCoord);
-    vec_pair_for!(tri_notes, tescellate_tess::triangle::TriCoord);
+    vec_pair_for!(hex_notes, carbide_tess::hex::HexCoord);
+    vec_pair_for!(tri_notes, carbide_tess::triangle::TriCoord);
 }
 
 /// JSON-encode a snapshot into the opaque store-side blob. Falls back to
 /// `Value::Null` only on a `serde_json::to_value` panic (which the typed
 /// adapters above prevent), keeping the round-trip lossless in practice.
-pub fn snapshot_to_ui_state(s: &UiSnapshot) -> tescellate_store::UiState {
-    tescellate_store::UiState(serde_json::to_value(s).unwrap_or(serde_json::Value::Null))
+pub fn snapshot_to_ui_state(s: &UiSnapshot) -> carbide_store::UiState {
+    carbide_store::UiState(serde_json::to_value(s).unwrap_or(serde_json::Value::Null))
 }
 
 /// JSON-decode an opaque store-side blob into a typed snapshot. Returns
 /// the default snapshot on a parse failure — losing UI state is annoying
 /// but not corrupting; the workbook itself still loads.
-pub fn ui_state_to_snapshot(ui: &tescellate_store::UiState) -> UiSnapshot {
+pub fn ui_state_to_snapshot(ui: &carbide_store::UiState) -> UiSnapshot {
     serde_json::from_value(ui.0.clone()).unwrap_or_default()
 }
 
 /// localStorage key for the wasm autosave. Versioned so a future format
 /// bump can ignore stale autosaves rather than crash on them.
-pub const AUTOSAVE_KEY: &str = "tescellate.autosave.v1";
+pub const AUTOSAVE_KEY: &str = "carbide.autosave.v1";
 
 /// Maximum size of a base64-encoded autosave payload we'll try to write.
 /// Browsers quota localStorage to ~5 MiB per origin; we cap at ~4 MiB
@@ -189,9 +189,9 @@ mod tests {
         hex_widgets.set_button(HexCoord::new(2, 2), true);
         let mut triangle_widgets: Widgets<TriCoord> = Widgets::default();
         triangle_widgets.set_toggle(TriCoord::new(2, -1), true);
-        let mut voronoi_widgets: Widgets<tescellate_tess::voronoi::VoronoiCoord> =
+        let mut voronoi_widgets: Widgets<carbide_tess::voronoi::VoronoiCoord> =
             Widgets::default();
-        voronoi_widgets.set_toggle(tescellate_tess::voronoi::VoronoiCoord(5), true);
+        voronoi_widgets.set_toggle(carbide_tess::voronoi::VoronoiCoord(5), true);
 
         let mut square_formats: FormatMap<(u32, u32)> = FormatMap::new();
         square_formats.update((0, 0), |f| {
@@ -238,7 +238,7 @@ mod tests {
         assert!(back.triangle_widgets.is_toggle(TriCoord::new(2, -1)));
         assert!(back
             .voronoi_widgets
-            .is_toggle(tescellate_tess::voronoi::VoronoiCoord(5)));
+            .is_toggle(carbide_tess::voronoi::VoronoiCoord(5)));
         assert!(back.square_formats.get((0, 0)).bold);
         assert_eq!(
             back.square_notes.get(&(3, 3)).map(String::as_str),
@@ -250,7 +250,7 @@ mod tests {
 
     #[test]
     fn empty_ui_state_yields_default_snapshot() {
-        let ui = tescellate_store::UiState::default();
+        let ui = carbide_store::UiState::default();
         let snap = ui_state_to_snapshot(&ui);
         assert_eq!(snap.active_sheet, ActiveSheetTag::Square);
         assert!(!snap.stage_mode);

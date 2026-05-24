@@ -11,9 +11,9 @@
 //! all three line cells die (under-stimulated) and four new cells are born
 //! in the parallel positions H(1,-1), H(0,1), H(2,-1), H(1,1).
 
-use tescellate_core::CellValue;
-use tescellate_formula::WorkbookEngine;
-use tescellate_tess::LatticeKind;
+use carbide_core::CellValue;
+use carbide_formula::WorkbookEngine;
+use carbide_tess::LatticeKind;
 
 /// Live cell value. Encoding as 1.0 / 0.0 lets `SUM(NEIGHBORS(...))` give
 /// the live-neighbor count directly.

@@ -5,7 +5,7 @@
 //! outside its region; `Unbounded` accepts any syntactically valid address.
 
 use serde::{Deserialize, Serialize};
-use tescellate_tess::ParsedCoord;
+use carbide_tess::ParsedCoord;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "spec", rename_all = "snake_case")]

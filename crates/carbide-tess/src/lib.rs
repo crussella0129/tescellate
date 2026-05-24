@@ -1,4 +1,4 @@
-//! Tessellation lattices for Tescellate.
+//! Tessellation lattices for Carbide.
 //!
 //! See `PLAN.md` §3 for the full design. This crate currently exposes only
 //! the `Lattice` trait and the `LatticeKind` enum; concrete implementations
@@ -36,7 +36,7 @@ pub enum LatticeHandle {
 }
 
 /// Lattice-specific parsed coordinate. Returned by `LatticeHandle::parse_coord`
-/// for callers (notably `tescellate-core`'s `SheetExtent` bound check) that
+/// for callers (notably `carbide-core`'s `SheetExtent` bound check) that
 /// need to do lattice-aware arithmetic without re-parsing.
 #[derive(Debug, Clone, Copy)]
 pub enum ParsedCoord {
@@ -635,7 +635,7 @@ pub enum Direction {
     TBase,
 }
 
-/// The core abstraction of `tescellate-tess`. See PLAN.md §3.1.
+/// The core abstraction of `carbide-tess`. See PLAN.md §3.1.
 ///
 /// Implementations are dyn-compatible via `LatticeKind`-dispatched wrappers
 /// at the workbook layer; this trait itself uses associated types so each

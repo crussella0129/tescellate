@@ -1,7 +1,7 @@
-//! Formula engines for Tescellate. See PLAN.md §6.
+//! Formula engines for Carbide. See PLAN.md §6.
 
 use std::sync::Arc;
-use tescellate_core::{CellValue, EngineKind, Env};
+use carbide_core::{CellValue, EngineKind, Env};
 use thiserror::Error;
 
 pub mod engine;

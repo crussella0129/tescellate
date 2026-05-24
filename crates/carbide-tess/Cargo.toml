@@ -1,12 +1,12 @@
 [package]
-name = "tescellate-tess"
+name = "carbide-tess"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Tessellation lattices and geometry for Tescellate. Square / hex / triangle / parallelogram cell systems."
+description = "Tessellation lattices and geometry for Carbide. Square / hex / triangle / parallelogram cell systems."
 
 [dependencies]
 serde = { workspace = true }

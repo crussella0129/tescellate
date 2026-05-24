@@ -10,7 +10,7 @@ use crate::excellite::lambda::Lambda;
 use crate::{EvalCtx, EvalError, ScopedCtx};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tescellate_core::{CellValue, Env};
+use carbide_core::{CellValue, Env};
 
 /// `LAMBDA(p1, p2, ..., body)` — first-class function literal.
 ///
@@ -155,8 +155,8 @@ mod tests {
     use crate::WorkbookEngine;
     use crate::{EvalCtx, EvalError};
     use hashbrown::HashMap;
-    use tescellate_core::{CellValue, SheetId};
-    use tescellate_tess::LatticeKind;
+    use carbide_core::{CellValue, SheetId};
+    use carbide_tess::LatticeKind;
 
     // -- Mock evaluation context for cells-free tests ----------------------
 

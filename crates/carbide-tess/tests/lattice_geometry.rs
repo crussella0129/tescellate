@@ -1,12 +1,12 @@
 //! Property-based tests for the tessellation lattices — v13.
 //!
-//! Tescellate's defining feature is non-square tessellating cells: a sheet
-//! can be a square grid or a hex grid (`tescellate-tess`). The lattice math
+//! Carbide's defining feature is non-square tessellating cells: a sheet
+//! can be a square grid or a hex grid (`carbide-tess`). The lattice math
 //! — addressing, neighbours, ranges, radius discs — is geometry, and
 //! geometry has invariants that hold for *every* cell, which is exactly
 //! what property testing is for.
 //!
-//! `tescellate-tess` has good unit coverage of fixed cases; this file adds
+//! `carbide-tess` has good unit coverage of fixed cases; this file adds
 //! a generative gate over both lattices, targeting invariants the fixed
 //! tests leave thin: address↔coordinate round-trips across wide coordinate
 //! ranges, neighbour symmetry, range membership (not just length), and
@@ -18,9 +18,9 @@
 
 use std::collections::HashSet;
 
-use tescellate_tess::hex::HexCoord;
-use tescellate_tess::square::SquareCoord;
-use tescellate_tess::{LatticeHandle, LatticeKind, ParsedCoord};
+use carbide_tess::hex::HexCoord;
+use carbide_tess::square::SquareCoord;
+use carbide_tess::{LatticeHandle, LatticeKind, ParsedCoord};
 
 /// Fixed seed — a generative CI gate must reproduce byte-for-byte.
 const SEED: u64 = 0x1A77_1CE0_F00D_5EED;

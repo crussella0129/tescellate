@@ -1,19 +1,19 @@
-//! The Tescellate application — an `eframe::App` that owns a
+//! The Carbide application — an `eframe::App` that owns a
 //! `WorkbookEngine` and draws the spreadsheet with egui.
 //!
 //! The square sheet has keyboard navigation, in-cell editing, row/column
 //! sizing, cell formatting, a formatting ribbon, multi-cell range
 //! selection, copy/paste and (v10) undo/redo. The hex sheet renders
-//! `tescellate-tess`'s `HexLattice` as a real tessellation and is
+//! `carbide-tess`'s `HexLattice` as a real tessellation and is
 //! interactive too — both sheets share the pure `keymap` command layer.
 
 use eframe::egui;
-use tescellate_core::{CellError, CellValue, EngineKind, SheetId};
-use tescellate_formula::WorkbookEngine;
-use tescellate_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
-use tescellate_tess::triangle::{TriCoord, TriangleLattice};
-use tescellate_tess::voronoi::{VoronoiCoord, VoronoiLattice};
-use tescellate_tess::{Lattice, LatticeKind, Point2};
+use carbide_core::{CellError, CellValue, EngineKind, SheetId};
+use carbide_formula::WorkbookEngine;
+use carbide_tess::hex::{self, HexCoord, HexLattice, HexOrientation};
+use carbide_tess::triangle::{TriCoord, TriangleLattice};
+use carbide_tess::voronoi::{VoronoiCoord, VoronoiLattice};
+use carbide_tess::{Lattice, LatticeKind, Point2};
 
 use crate::clipboard::{Clipboard, CopiedCell, PasteMode, SourceLattice};
 use crate::conditional::{self, Condition, Rule};
@@ -427,8 +427,8 @@ enum Action {
     HexFormats(Vec<HexFormatEdit>),
 }
 
-/// The Tescellate front-end application.
-pub struct TescellateApp {
+/// The Carbide front-end application.
+pub struct CarbideApp {
     engine: WorkbookEngine,
     /// The square-lattice sheet — engine handle, selection, formula
     /// reference, and per-cell formatting bundled per
@@ -441,9 +441,9 @@ pub struct TescellateApp {
     /// The Voronoi-lattice sheet — analogue of [`Self::square`].
     /// Sprint 6 ships single-cell selection only (no range / fill drag).
     voronoi: Sheet<VoronoiCoord>,
-    /// Geometry for the hex sheet — owned by `tescellate-tess`.
+    /// Geometry for the hex sheet — owned by `carbide-tess`.
     hex_lattice: HexLattice,
-    /// Geometry for the triangle sheet — owned by `tescellate-tess`.
+    /// Geometry for the triangle sheet — owned by `carbide-tess`.
     triangle_lattice: TriangleLattice,
     /// Geometry for the Voronoi sheet — carries seeds + bounding rect.
     voronoi_lattice: VoronoiLattice,
@@ -576,7 +576,7 @@ pub struct TescellateApp {
     suppress_autosave_until: f64,
 }
 
-impl TescellateApp {
+impl CarbideApp {
     /// Build the app, seeding a square demo sheet and a hex demo sheet.
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let mut engine = WorkbookEngine::new();
@@ -712,7 +712,7 @@ impl TescellateApp {
         };
 
         // Voronoi sheet — Demo C. Uses the default 8-seed config from
-        // `tescellate-tess`. Seed cells populate `V(0)..V(7)` with
+        // `carbide-tess`. Seed cells populate `V(0)..V(7)` with
         // simple labels and one formula example.
         let voronoi_sheet = engine.add_sheet("Voronoi", LatticeKind::Voronoi);
         for (addr, src) in [
@@ -2155,11 +2155,11 @@ impl TescellateApp {
             return;
         }
         let mut open = self.about_open;
-        egui::Window::new("About Tescellate")
+        egui::Window::new("About Carbide")
             .open(&mut open)
             .resizable(false)
             .show(ctx, |ui| {
-                ui.heading("Tescellate");
+                ui.heading("Carbide");
                 ui.label(egui::RichText::new(env!("CARGO_PKG_VERSION")).weak());
                 ui.add_space(6.0);
                 ui.label(
@@ -2169,7 +2169,7 @@ impl TescellateApp {
                 ui.add_space(6.0);
                 ui.label(
                     "Built with egui / eframe; compiles native and to \
-                     WebAssembly. Engine: tescellate-core / -tess / -formula.",
+                     WebAssembly. Engine: carbide-core / -tess / -formula.",
                 );
                 ui.add_space(8.0);
                 ui.hyperlink_to("Source", "https://github.com/crussella0129/tescellate");
@@ -5276,7 +5276,7 @@ impl TescellateApp {
         {
             if let Some(path) = rfd::FileDialog::new()
                 .set_file_name("workbook.tscl")
-                .add_filter("Tescellate", &["tscl"])
+                .add_filter("Carbide", &["tscl"])
                 .save_file()
             {
                 if let Err(e) = std::fs::write(&path, &bytes) {
@@ -5289,7 +5289,7 @@ impl TescellateApp {
             wasm_bindgen_futures::spawn_local(async move {
                 if let Some(handle) = rfd::AsyncFileDialog::new()
                     .set_file_name("workbook.tscl")
-                    .add_filter("Tescellate", &["tscl"])
+                    .add_filter("Carbide", &["tscl"])
                     .save_file()
                     .await
                 {
@@ -5309,7 +5309,7 @@ impl TescellateApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("Tescellate", &["tscl"])
+                .add_filter("Carbide", &["tscl"])
                 .pick_file()
             {
                 match std::fs::read(&path) {
@@ -5327,7 +5327,7 @@ impl TescellateApp {
             let slot = self.pending_open_bytes.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 if let Some(handle) = rfd::AsyncFileDialog::new()
-                    .add_filter("Tescellate", &["tscl"])
+                    .add_filter("Carbide", &["tscl"])
                     .pick_file()
                     .await
                 {
@@ -5512,7 +5512,7 @@ impl TescellateApp {
     }
 }
 
-impl eframe::App for TescellateApp {
+impl eframe::App for CarbideApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Drain any bytes left by an async Open dialog BEFORE handling
         // this frame's input — the restored state then drives the rest
@@ -5543,7 +5543,7 @@ impl eframe::App for TescellateApp {
         // ribbon, formula bar, sheet tabs — so a sheet reads as an
         // app rather than a spreadsheet.
         if !self.stage_mode {
-            egui::TopBottomPanel::top("tescellate_menu_bar").show(ctx, |ui| {
+            egui::TopBottomPanel::top("carbide_menu_bar").show(ctx, |ui| {
                 let can_undo = self.history.can_undo();
                 let can_redo = self.history.can_redo();
                 if let Some(action) = ribbon::menu_bar(ui, can_undo, can_redo) {
@@ -5553,7 +5553,7 @@ impl eframe::App for TescellateApp {
         }
 
         if !self.stage_mode {
-            egui::TopBottomPanel::top("tescellate_ribbon").show(ctx, |ui| match self.active {
+            egui::TopBottomPanel::top("carbide_ribbon").show(ctx, |ui| match self.active {
                 ActiveSheet::Square => {
                     let current = self.square.formats.get(self.square.selection.cursor);
                     let can_undo = self.history.can_undo();
@@ -5638,7 +5638,7 @@ impl eframe::App for TescellateApp {
         }
 
         if !self.stage_mode {
-            egui::TopBottomPanel::top("tescellate_formula_bar")
+            egui::TopBottomPanel::top("carbide_formula_bar")
                 .resizable(true)
                 .min_height(28.0)
                 .show(ctx, |ui| {
@@ -5778,7 +5778,7 @@ impl eframe::App for TescellateApp {
         }
 
         if !self.stage_mode {
-            egui::TopBottomPanel::bottom("tescellate_sheet_tabs").show(ctx, |ui| {
+            egui::TopBottomPanel::bottom("carbide_sheet_tabs").show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui
                         .selectable_label(self.active == ActiveSheet::Square, "Budget")
@@ -5850,7 +5850,7 @@ impl eframe::App for TescellateApp {
         // user always has a visible way out (Esc also exits — see
         // the `ClearMarquee` handler).
         if self.stage_mode {
-            let exit_area = egui::Area::new("tescellate_stage_exit".into())
+            let exit_area = egui::Area::new("carbide_stage_exit".into())
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-12.0, 12.0))
                 .interactable(true);
             exit_area.show(ctx, |ui| {
@@ -6248,7 +6248,7 @@ fn triangle_address(c: TriCoord) -> String {
 }
 
 /// The `V(N)` address string for a Voronoi coord — matches the
-/// canonical form `tescellate-tess`'s voronoi lattice emits.
+/// canonical form `carbide-tess`'s voronoi lattice emits.
 fn voronoi_address(c: VoronoiCoord) -> String {
     format!("V({})", c.0)
 }
@@ -6426,7 +6426,7 @@ fn pick_next_voronoi(
 
 /// Apply one Voronoi Enter-advance step (ADR-014 F3). Pure-over-engine
 /// so the history mutation + bounded-queue cap is testable with just a
-/// `WorkbookEngine` (no full `TescellateApp`). Returns the next cursor
+/// `WorkbookEngine` (no full `CarbideApp`). Returns the next cursor
 /// `VoronoiCoord` to collapse to, or `None` if Enter should stop.
 /// Mutates `history` in place: on a successful pick, pushes `current`
 /// onto the back and pops the front while length > `N-1`.
@@ -6634,7 +6634,7 @@ mod tests {
     // --- T-005: cells_in_screen_rect (centroid-in-rect marquee) ---
 
     fn marquee_lattice() -> VoronoiLattice {
-        use tescellate_tess::Rect;
+        use carbide_tess::Rect;
         let seeds = vec![
             Point2::new(0.0, 0.0),
             Point2::new(50.0, 0.0),

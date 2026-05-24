@@ -1,10 +1,10 @@
-# Tescellate
+# Carbide
 
 (Under Construction)
 
 A spreadsheet where cells are not stuck being squares and the flow of time itself becomes a tool.
 
-Tescellate is a DAG-evaluated workbook with: 
+Carbide is a DAG-evaluated workbook with: 
 
 - **Tessellating Cell Shapes** — squares, hexagons, triangles and Voronoi cells, with unique conditional formatting capabilities in some cases
 - **Switchable formula language per cell**: Excel-style, Python (embedded via PyO3), or Rust (Rhai-preview with an optional rustc-compiled native path)

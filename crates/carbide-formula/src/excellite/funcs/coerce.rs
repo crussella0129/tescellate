@@ -4,7 +4,7 @@
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::{Array, CellValue, RefShape};
+use carbide_core::{Array, CellValue, RefShape};
 
 /// Resolve a [`CellValue::Reference`] to the value(s) it points at:
 /// `Cell` → the target cell's value; `Range` → a column `Array` of the
@@ -92,8 +92,8 @@ pub fn stringify(v: &CellValue) -> String {
         CellValue::Function(f) => f.debug_label(),
         // A bare reference stringifies to its canonical address text.
         CellValue::Reference(r) => match r {
-            tescellate_core::RefShape::Cell(a) => a.clone(),
-            tescellate_core::RefShape::Range(a, b) => format!("{a}:{b}"),
+            carbide_core::RefShape::Cell(a) => a.clone(),
+            carbide_core::RefShape::Range(a, b) => format!("{a}:{b}"),
         },
     }
 }

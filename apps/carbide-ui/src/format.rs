@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use egui::Color32;
 use serde::{Deserialize, Serialize};
-use tescellate_tess::hex::HexCoord;
+use carbide_tess::hex::HexCoord;
 
 /// Serialize `egui::Color32` as a `[r, g, b, a]` byte array. `Color32`
 /// is not `Serialize` by default in our pinned egui; round-tripping

@@ -22,7 +22,7 @@ pub use eval::{collect_refs, eval, eval_error_to_cell_error};
 pub use parse::parse;
 
 use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine, FormulaRef, ParseError};
-use tescellate_core::{CellValue, EngineKind};
+use carbide_core::{CellValue, EngineKind};
 
 pub struct ExcelLite;
 

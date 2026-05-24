@@ -45,7 +45,7 @@ use std::collections::HashMap;
 use crate::excellite::ast::{BinaryOp, Expr, UnaryOp};
 use crate::excellite::eval::number_binary_op;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 /// The static type the codegen tracks for a subtree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

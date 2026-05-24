@@ -4,7 +4,7 @@ use super::coerce::{each_numeric, flatten};
 use super::FunctionRegistry;
 use crate::excellite::ast::Expr;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 pub fn sum(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
     let mut acc = 0.0;

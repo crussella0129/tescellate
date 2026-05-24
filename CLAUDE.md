@@ -1,10 +1,10 @@
-# CLAUDE.md — Tescellate
+# CLAUDE.md — Carbide
 
 This file gives Claude Code (claude.ai/code) project-specific guidance. It overrides the global `~/.claude/CLAUDE.md` where they conflict.
 
 ## What this project is
 
-Tescellate is a DAG-evaluated spreadsheet with **non-square tessellating cells** (squares, hexes, triangles, parallelograms, and beyond) and a **switchable formula language per cell** (Excel-lite, Python via PyO3, Rust via Rhai-preview + rustc-native).
+Carbide is a DAG-evaluated spreadsheet with **non-square tessellating cells** (squares, hexes, triangles, parallelograms, and beyond) and a **switchable formula language per cell** (Excel-lite, Python via PyO3, Rust via Rhai-preview + rustc-native).
 
 **Read `PLAN.md` before doing non-trivial work.** It is the canonical architecture document and supersedes anything in this file if they diverge.
 
@@ -16,14 +16,14 @@ This is a **Rust-first** project; the global preference applies here strongly.
 - **Electron + React + TypeScript** under `apps/desktop/` is a thin renderer. It owns layout, drawing, and UI state — not workbook logic. Resist the temptation to put computation in the renderer.
 - **Tauri port comes later** (Phase 5+). Don't preemptively avoid Electron-specific APIs; we'll deal with the port when the project earns it.
 
-Formula engines live under `crates/tescellate-formula/src/<engine>/`. Each engine is gated behind a Cargo feature (`python`, `rhai`, `rustnative`) so the project builds without PyO3 / rustc-as-a-library available on a CI machine.
+Formula engines live under `crates/carbide-formula/src/<engine>/`. Each engine is gated behind a Cargo feature (`python`, `rhai`, `rustnative`) so the project builds without PyO3 / rustc-as-a-library available on a CI machine.
 
 ## Working norms
 
 - **Workspace-aware tests.** Run `cargo test -p <crate>` for the crate you changed, not `cargo test` across the whole workspace, unless your change crosses crate boundaries.
 - **Formatters/linters** (from global CLAUDE.md): `cargo fmt`, `cargo clippy`, and on the frontend `prettier` + `eslint` (configs to land with Phase 1 — until then, match existing style).
 - **No premature abstraction.** The plan lists future tilings and engines, but only build what the current phase needs. Add the trait + first impl; don't pre-implement the third lattice "for symmetry".
-- **The Lattice trait is load-bearing.** Changes to `tescellate-tess::Lattice` ripple into every renderer module and every formula engine. Discuss in PR before changing the trait signature.
+- **The Lattice trait is load-bearing.** Changes to `carbide-tess::Lattice` ripple into every renderer module and every formula engine. Discuss in PR before changing the trait signature.
 
 ## What NOT to do without asking
 
@@ -37,8 +37,8 @@ Formula engines live under `crates/tescellate-formula/src/<engine>/`. Each engin
 ```bash
 # Rust core
 cargo build               # workspace
-cargo test -p tescellate-core
-cargo run --bin tescellate-cli -- --help
+cargo test -p carbide-core
+cargo run --bin carbide-cli -- --help
 
 # Desktop app
 cd apps/desktop
@@ -49,15 +49,15 @@ npm run build             # production build
 
 ## Running shell commands
 
-The Bash / PowerShell tool starts in the repo root (`C:\Users\charl\Tescellate`) and its working directory persists between calls — **do not prepend `cd`** to commands. A `cd` combined with output redirection (`>`, `2>&1`) in a compound command trips a sandbox guard ("Compound command contains cd with output redirection — manual approval required to prevent path resolution bypass") and forces a needless approval prompt. Dropping the redundant `cd` avoids the guard entirely (it does not weaken it).
+The Bash / PowerShell tool starts in the repo root (`C:\Users\charl\Carbide`) and its working directory persists between calls — **do not prepend `cd`** to commands. A `cd` combined with output redirection (`>`, `2>&1`) in a compound command trips a sandbox guard ("Compound command contains cd with output redirection — manual approval required to prevent path resolution bypass") and forces a needless approval prompt. Dropping the redundant `cd` avoids the guard entirely (it does not weaken it).
 
 - `git`, `gh`, and any repo-root command: run bare — no `cd` prefix.
-- `cargo` for the `apps/tescellate-ui` crate (it is its own `[workspace]`): pass `--manifest-path apps/tescellate-ui/Cargo.toml` — e.g. `cargo test --manifest-path apps/tescellate-ui/Cargo.toml` — rather than `cd apps/tescellate-ui && cargo test`.
+- `cargo` for the `apps/carbide-ui` crate (it is its own `[workspace]`): pass `--manifest-path apps/carbide-ui/Cargo.toml` — e.g. `cargo test --manifest-path apps/carbide-ui/Cargo.toml` — rather than `cd apps/carbide-ui && cargo test`.
 - Watching a CI run to completion — a backgrounded `gh run watch --exit-status` — is a routine, expected step of the version loop, not something to confirm each iteration. `.claude/settings.json` allowlists the read-only CI commands (`gh run watch` / `list` / `view`) so they run without a prompt.
 
 ## Repo identity
 
 - Owner: `crussella0129`
-- GitHub: `git@github.com:crussella0129/tescellate.git`
+- GitHub: `git@github.com:crussella0129/tescellate.git` (flips to `…/carbide` after user runs `gh repo rename` post-merge — ADR-015)
 - License: MIT OR Apache-2.0 (dual)
 - Default branch: `main`

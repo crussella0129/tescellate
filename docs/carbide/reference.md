@@ -1,13 +1,13 @@
 # The Carbide Formula Language — Reference
 
-Carbide is Tescellate's default formula language: the Excel-lite engine
+Carbide is Carbide's default formula language: the Excel-lite engine
 every workbook uses unless a cell opts into another engine (Python today;
 Rhai and rust-native are planned). This document is the **foundation
 reference** — the value model, syntax, and semantics. It is not the
 exhaustive function catalogue, though every built-in is indexed below.
 
 > **Verified.** Every example in this reference is reproduced and checked
-> against the engine by `crates/tescellate-formula/tests/reference_examples.rs`.
+> against the engine by `crates/carbide-formula/tests/reference_examples.rs`.
 > If the engine and this document disagree, CI fails — so the examples here
 > cannot silently rot.
 

@@ -582,7 +582,7 @@ pub fn series_fill(seed: &[f64], total: usize) -> Vec<f64> {
 ///   copies from `seed[i % seed.len()]`.
 ///
 /// `format_number` lets callers control how the synthetic numeric
-/// values come back as strings (Tescellate uses Excel-style trimming
+/// values come back as strings (Carbide uses Excel-style trimming
 /// of trailing zeros).
 pub fn fill_lane(
     seed: &[Option<String>],

@@ -1,8 +1,8 @@
-//! Tescellate's pure-Rust front-end — an egui/eframe application that
+//! Carbide's pure-Rust front-end — an egui/eframe application that
 //! builds both natively and to WebAssembly.
 //!
-//! The Rust core (`tescellate-core`, `tescellate-tess`,
-//! `tescellate-formula`) is consumed directly as library crates,
+//! The Rust core (`carbide-core`, `carbide-tess`,
+//! `carbide-formula`) is consumed directly as library crates,
 //! in-process — there is no JSON-RPC boundary and no subprocess, unlike
 //! the Electron front-end this replaces.
 
@@ -23,4 +23,4 @@ pub mod state_io;
 pub mod stats;
 pub mod widget;
 
-pub use app::TescellateApp;
+pub use app::CarbideApp;

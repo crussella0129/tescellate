@@ -3,7 +3,7 @@
 //! Pure: it takes a slice of `CellValue` and returns a [`Stats`], with no
 //! egui and no engine, so it is exercised by ordinary `cargo test`.
 
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 /// Summary stats for a set of cell values — Excel's status-bar set.
 #[derive(Debug, Clone, Copy, PartialEq)]

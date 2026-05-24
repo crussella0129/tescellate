@@ -7,7 +7,7 @@
 //! Epoch: **1899-12-30 = day 0** (so `DATE(1900, 1, 1) = 2`). Excel
 //! uses 1900-01-01 = day 1 *with* the well-known 1900 leap-year bug
 //! that adds a phantom 1900-02-29 — we deliberately do NOT replicate
-//! that bug. Spreadsheets shared between Tescellate and Excel will
+//! that bug. Spreadsheets shared between Carbide and Excel will
 //! agree on every date except those in January–February 1900, which
 //! is fine for the intended audience.
 //!
@@ -23,7 +23,7 @@ use super::FunctionRegistry;
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 const fn days_from_civil_const(y: i32, m: i32, d: i32) -> i32 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -57,12 +57,12 @@ fn civil_from_days(z: i32) -> (i32, u32, u32) {
     (y, m, d)
 }
 
-/// Convert a `(year, month, day)` tuple to a Tescellate serial.
+/// Convert a `(year, month, day)` tuple to a Carbide serial.
 fn serial_of(year: i32, month: i32, day: i32) -> i32 {
     days_from_civil(year, month, day) - days_from_civil(1899, 12, 30)
 }
 
-/// Convert a Tescellate serial back to `(year, month, day)`.
+/// Convert a Carbide serial back to `(year, month, day)`.
 fn date_of(serial: i32) -> (i32, u32, u32) {
     civil_from_days(serial + days_from_civil(1899, 12, 30))
 }

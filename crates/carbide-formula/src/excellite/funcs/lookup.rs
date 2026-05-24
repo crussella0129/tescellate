@@ -18,7 +18,7 @@ use super::FunctionRegistry;
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::{Array, CellValue, RefShape};
+use carbide_core::{Array, CellValue, RefShape};
 
 /// Evaluate `arg` to a 2D array. Range and ArrayLit are accepted naturally;
 /// scalar values become 1×1 arrays.
@@ -38,12 +38,12 @@ fn to_array_2d(arg: &Expr, ctx: &dyn EvalCtx) -> Result<Array, EvalError> {
             match v {
                 CellValue::Array(a) => Ok(*a),
                 // A reference (OFFSET/INDIRECT) resolves like a range.
-                CellValue::Reference(tescellate_core::RefShape::Range(a, b)) => {
+                CellValue::Reference(carbide_core::RefShape::Range(a, b)) => {
                     let data = ctx.range(&a, &b)?;
                     let len = data.len();
                     Ok(Array::col(data).normalise_if_empty(len))
                 }
-                CellValue::Reference(tescellate_core::RefShape::Cell(a)) => {
+                CellValue::Reference(carbide_core::RefShape::Cell(a)) => {
                     Ok(Array::new(1, 1, vec![ctx.cell(&a)?]))
                 }
                 other => Ok(Array::new(1, 1, vec![other])),

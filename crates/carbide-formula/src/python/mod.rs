@@ -15,7 +15,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 
 use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine, FormulaRef, ParseError};
-use tescellate_core::{CellValue, EngineKind};
+use carbide_core::{CellValue, EngineKind};
 
 /// Failure evaluating a Python formula.
 #[derive(Debug, thiserror::Error)]
@@ -164,8 +164,8 @@ fn cell_value_to_py<'py>(py: Python<'py>, value: &CellValue) -> PyResult<Bound<'
         // panic, matching `stringify`'s treatment.
         CellValue::Reference(r) => {
             let s = match r {
-                tescellate_core::RefShape::Cell(a) => a.clone(),
-                tescellate_core::RefShape::Range(a, b) => format!("{a}:{b}"),
+                carbide_core::RefShape::Cell(a) => a.clone(),
+                carbide_core::RefShape::Range(a, b) => format!("{a}:{b}"),
             };
             Ok(PyString::new(py, &s).into_any())
         }

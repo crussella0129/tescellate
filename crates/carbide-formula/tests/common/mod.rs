@@ -13,10 +13,10 @@
 use std::fs;
 use std::process::Command;
 
-use tescellate_formula::excellite::ast::Expr;
-use tescellate_formula::excellite::eval::eval;
-use tescellate_formula::transpile::rt::CellValue;
-use tescellate_formula::transpile::{emit_formula_fn, MapCtx};
+use carbide_formula::excellite::ast::Expr;
+use carbide_formula::excellite::eval::eval;
+use carbide_formula::transpile::rt::CellValue;
+use carbide_formula::transpile::{emit_formula_fn, MapCtx};
 
 /// Numeric cells the corpus reads. Both differential tests build a `MapCtx`
 /// from this exact table on each side of the comparison.
@@ -203,8 +203,8 @@ pub fn run_differential(dir_name: &str, cases: &[(String, Expr)]) {
     // 2. Transpile every case into one generated source file.
     let mut generated = String::from(
         "#![allow(unused_variables)]\n\
-         use tescellate_formula::transpile::rt::*;\n\
-         use tescellate_formula::transpile::MapCtx;\n\n",
+         use carbide_formula::transpile::rt::*;\n\
+         use carbide_formula::transpile::MapCtx;\n\n",
     );
     for (i, (_, expr)) in cases.iter().enumerate() {
         generated.push_str(&emit_formula_fn(&format!("formula_{i}"), expr));
@@ -227,7 +227,7 @@ pub fn run_differential(dir_name: &str, cases: &[(String, Expr)]) {
     // 3. Materialize a standalone crate. The temp dir is stable, so the
     //    crate's `target/` persists and re-runs are fast. `[workspace]`
     //    detaches it from any ancestor workspace.
-    let formula_crate = env!("CARGO_MANIFEST_DIR"); // .../crates/tescellate-formula
+    let formula_crate = env!("CARGO_MANIFEST_DIR"); // .../crates/carbide-formula
     let crate_dir = std::env::temp_dir().join(dir_name);
     fs::create_dir_all(crate_dir.join("src")).expect("create generated crate dir");
     let cargo_toml = format!(
@@ -236,7 +236,7 @@ pub fn run_differential(dir_name: &str, cases: &[(String, Expr)]) {
          version = \"0.0.0\"\n\
          edition = \"2021\"\n\n\
          [dependencies]\n\
-         tescellate-formula = {{ path = {formula_crate:?} }}\n\n\
+         carbide-formula = {{ path = {formula_crate:?} }}\n\n\
          [workspace]\n"
     );
     fs::write(crate_dir.join("Cargo.toml"), cargo_toml).expect("write generated Cargo.toml");

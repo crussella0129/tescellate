@@ -9,8 +9,8 @@ This page is the deep dive on cell-shape tessellations. The companion [addressin
 
 Source files for the parts that exist:
 
-- `crates/tescellate-tess/src/lib.rs` — the `Lattice` trait and `LatticeKind` enum.
-- `crates/tescellate-tess/src/square.rs` — the only concrete implementation today.
+- `crates/carbide-tess/src/lib.rs` — the `Lattice` trait and `LatticeKind` enum.
+- `crates/carbide-tess/src/square.rs` — the only concrete implementation today.
 - PLAN.md §3.2 — original architectural framing of the regular/irregular split.
 
 ---
@@ -269,7 +269,7 @@ Aperiodic tilings are not just mathematical curiosities. They appear in:
 - **Decorative architecture** — the Islamic geometric tradition (girih tiles) anticipates Penrose by 500 years.
 - **Procedural content generation** — game/level design where periodic repetition would be visually obvious.
 
-A Tescellate sheet on an einstein-hat tiling is a niche tool. But it's the only spreadsheet that can express it.
+A Carbide sheet on an einstein-hat tiling is a niche tool. But it's the only spreadsheet that can express it.
 
 ---
 

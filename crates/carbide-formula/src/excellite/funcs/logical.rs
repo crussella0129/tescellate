@@ -6,7 +6,7 @@ use super::FunctionRegistry;
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 pub fn if_(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
     arity_range("IF", args, 2, 3)?;
@@ -110,7 +110,7 @@ pub fn ifna(args: &[Expr], ctx: &dyn EvalCtx) -> Result<CellValue, EvalError> {
     arity_n("IFNA", args, 2)?;
     // We don't have an N/A variant yet; treat #REF! / lookup misses as N/A.
     match eval(&args[0], ctx) {
-        Ok(CellValue::Error(tescellate_core::CellError::Ref)) => eval(&args[1], ctx),
+        Ok(CellValue::Error(carbide_core::CellError::Ref)) => eval(&args[1], ctx),
         Ok(v) => Ok(v),
         Err(_) => eval(&args[1], ctx),
     }

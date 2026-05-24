@@ -26,9 +26,9 @@
 //!
 //! Determinism is fixed-seed so a CI failure always reproduces.
 
-use tescellate_core::{CellError, CellValue};
-use tescellate_formula::WorkbookEngine;
-use tescellate_tess::LatticeKind;
+use carbide_core::{CellError, CellValue};
+use carbide_formula::WorkbookEngine;
+use carbide_tess::LatticeKind;
 
 /// Fixed seed — a generative CI gate must reproduce byte-for-byte.
 const SEED: u64 = 0x6C0F_FEE5_1234_ABCD;

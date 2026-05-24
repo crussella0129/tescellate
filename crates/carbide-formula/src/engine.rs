@@ -10,13 +10,13 @@
 use crate::excellite::{eval_error_to_cell_error, ExcelLite};
 use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine, FormulaRef};
 use hashbrown::HashMap;
-use tescellate_core::{
+use carbide_core::{
     Cell, CellError, CellRef, CellValue, Dag, EngineKind, Sheet, SheetExtent, SheetId, Workbook,
     WorkbookId, WorkbookMeta,
 };
-use tescellate_tess::square::SquareCoord;
-use tescellate_tess::voronoi::VoronoiLattice;
-use tescellate_tess::{LatticeConfig, LatticeHandle, LatticeKind, ParsedCoord, VoronoiConfig};
+use carbide_tess::square::SquareCoord;
+use carbide_tess::voronoi::VoronoiLattice;
+use carbide_tess::{LatticeConfig, LatticeHandle, LatticeKind, ParsedCoord, VoronoiConfig};
 
 pub struct WorkbookEngine {
     pub workbook: Workbook,
@@ -115,16 +115,16 @@ impl WorkbookEngine {
     /// zip and return the bytes. The DAG isn't stored — it can be
     /// reconstructed from cell sources on load. Target-agnostic; the UI
     /// uses this directly on wasm32 where the path-based API can't link.
-    pub fn save_bytes(&self, ui: &tescellate_store::UiState) -> Result<Vec<u8>, SetCellError> {
-        tescellate_store::save_full_to_bytes(&self.workbook, ui)
+    pub fn save_bytes(&self, ui: &carbide_store::UiState) -> Result<Vec<u8>, SetCellError> {
+        carbide_store::save_full_to_bytes(&self.workbook, ui)
             .map_err(|e| SetCellError::Io(e.to_string()))
     }
 
     /// Deserialize a workbook + UI state from in-memory `.tscl` bytes.
     /// Rebuilds the DAG via [`Self::rebuild_dag`]. Returns the opaque UI
     /// state so the UI can restore its own per-sheet view.
-    pub fn open_bytes(&mut self, bytes: &[u8]) -> Result<tescellate_store::UiState, SetCellError> {
-        let (workbook, ui) = tescellate_store::load_full_from_bytes(bytes)
+    pub fn open_bytes(&mut self, bytes: &[u8]) -> Result<carbide_store::UiState, SetCellError> {
+        let (workbook, ui) = carbide_store::load_full_from_bytes(bytes)
             .map_err(|e| SetCellError::Io(e.to_string()))?;
         self.workbook = workbook;
         self.dag = Dag::new();
@@ -140,7 +140,7 @@ impl WorkbookEngine {
     /// `UiState::default()`; callers that own UI state should hand it to
     /// `save_bytes` directly.
     pub fn save(&self, path: &std::path::Path) -> Result<(), SetCellError> {
-        let bytes = self.save_bytes(&tescellate_store::UiState::default())?;
+        let bytes = self.save_bytes(&carbide_store::UiState::default())?;
         std::fs::write(path, bytes).map_err(|e| SetCellError::Io(e.to_string()))
     }
 
@@ -1256,7 +1256,7 @@ mod tests {
         eng.set_cell(sid, "A1", Some("=10")).unwrap();
         eng.set_cell(sid, "B1", Some("=A1*3")).unwrap();
 
-        let ui: tescellate_store::UiState = serde_json::json!({"answer": 42}).into();
+        let ui: carbide_store::UiState = serde_json::json!({"answer": 42}).into();
         let bytes = eng.save_bytes(&ui).unwrap();
 
         let mut other = WorkbookEngine::new();
@@ -1278,11 +1278,11 @@ mod tests {
     fn engine_path_api_uses_byte_api() {
         let (eng, _sid) = new_sheet();
         let path_bytes_via_save = eng
-            .save_bytes(&tescellate_store::UiState::default())
+            .save_bytes(&carbide_store::UiState::default())
             .unwrap();
 
         let tmp = std::env::temp_dir().join(format!(
-            "tescellate-byte-api-{}-{}.tscl",
+            "carbide-byte-api-{}-{}.tscl",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1294,11 +1294,11 @@ mod tests {
         std::fs::remove_file(&tmp).ok();
         // The two zips need not be byte-identical (zip metadata can drift)
         // but they must each load to the same workbook + empty UiState.
-        let (wb_a, ui_a) = tescellate_store::load_full_from_bytes(&path_bytes_via_save).unwrap();
-        let (wb_b, ui_b) = tescellate_store::load_full_from_bytes(&on_disk).unwrap();
+        let (wb_a, ui_a) = carbide_store::load_full_from_bytes(&path_bytes_via_save).unwrap();
+        let (wb_b, ui_b) = carbide_store::load_full_from_bytes(&on_disk).unwrap();
         assert_eq!(wb_a.sheet_order, wb_b.sheet_order);
         assert_eq!(ui_a, ui_b);
-        assert_eq!(ui_a, tescellate_store::UiState::default());
+        assert_eq!(ui_a, carbide_store::UiState::default());
     }
 
     #[test]
@@ -1308,7 +1308,7 @@ mod tests {
         eng.set_cell(sid, "A2", Some("=A1*2")).unwrap();
 
         let tmp = std::env::temp_dir().join(format!(
-            "tescellate-test-{}-{}.tscl",
+            "carbide-test-{}-{}.tscl",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1918,7 +1918,7 @@ mod tests {
         eng.set_cell(sid, "H(0,0)", Some("=10")).unwrap();
         eng.set_cell(sid, "H(1,0)", Some("=H(0,0) * 2")).unwrap();
         let tmp = std::env::temp_dir().join(format!(
-            "tescellate-hex-test-{}-{}.tscl",
+            "carbide-hex-test-{}-{}.tscl",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1943,7 +1943,7 @@ mod tests {
 
     #[test]
     fn hex_extent_bounds_check() {
-        use tescellate_core::{BoundedExtent, SheetExtent};
+        use carbide_core::{BoundedExtent, SheetExtent};
         let mut eng = WorkbookEngine::new();
         eng.new_workbook();
         let sid = eng.add_sheet_with_extent(
@@ -1968,7 +1968,7 @@ mod tests {
 
     #[test]
     fn hex_disc_extent_works() {
-        use tescellate_core::{BoundedExtent, SheetExtent};
+        use carbide_core::{BoundedExtent, SheetExtent};
         let mut eng = WorkbookEngine::new();
         eng.new_workbook();
         let sid = eng.add_sheet_with_extent(
@@ -2109,7 +2109,7 @@ mod tests {
 
     fn voronoi_sheet_with(eng: &mut WorkbookEngine, seeds: Vec<[f32; 2]>) -> SheetId {
         let sid = eng.add_sheet("Vor", LatticeKind::Voronoi);
-        let cfg = tescellate_tess::VoronoiConfig {
+        let cfg = carbide_tess::VoronoiConfig {
             seeds,
             bounds: [-20.0, -20.0, 20.0, 20.0],
             frozen: false,
@@ -2405,7 +2405,7 @@ mod tests {
         eng.set_voronoi_seeds(sid, new.clone()).unwrap();
 
         let bytes = eng
-            .save_bytes(&tescellate_store::UiState::default())
+            .save_bytes(&carbide_store::UiState::default())
             .unwrap();
 
         let mut reloaded = WorkbookEngine::new();
@@ -2427,7 +2427,7 @@ mod tests {
         let sid = eng.add_sheet("V", LatticeKind::Voronoi);
         eng.set_voronoi_frozen(sid, true).unwrap();
         let bytes = eng
-            .save_bytes(&tescellate_store::UiState::default())
+            .save_bytes(&carbide_store::UiState::default())
             .unwrap();
         let mut reloaded = WorkbookEngine::new();
         reloaded.open_bytes(&bytes).unwrap();

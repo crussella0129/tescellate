@@ -26,10 +26,10 @@ hashbrown = { version = "0.14", features = ["serde"] }
 glam = { version = "0.27", features = ["serde"] }
 
 # Internal crates referenced by path so the workspace is self-contained.
-tescellate-core = { path = "crates/carbide-core" }
-tescellate-tess = { path = "crates/carbide-tess" }
-tescellate-formula = { path = "crates/carbide-formula" }
-tescellate-store = { path = "crates/carbide-store" }
+carbide-core = { path = "crates/carbide-core" }
+carbide-tess = { path = "crates/carbide-tess" }
+carbide-formula = { path = "crates/carbide-formula" }
+carbide-store = { path = "crates/carbide-store" }
 
 [profile.release]
 lto = "thin"

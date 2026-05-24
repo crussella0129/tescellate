@@ -1,4 +1,4 @@
-//! Entry points for the Tescellate UI — one binary, two targets.
+//! Entry points for the Carbide UI — one binary, two targets.
 //!
 //! Native (`cargo run`) opens a desktop window via `eframe::run_native`.
 //! WebAssembly (`trunk build`) mounts the same app onto an HTML canvas via
@@ -14,9 +14,9 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "Tescellate",
+        "Carbide",
         options,
-        Box::new(|cc| Ok(Box::new(tescellate_ui::TescellateApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(carbide_ui::CarbideApp::new(cc)))),
     )
 }
 
@@ -30,17 +30,17 @@ fn main() {
             .expect("no browser window")
             .document()
             .expect("no document")
-            .get_element_by_id("tescellate_canvas")
-            .expect("index.html is missing the #tescellate_canvas element")
+            .get_element_by_id("carbide_canvas")
+            .expect("index.html is missing the #carbide_canvas element")
             .dyn_into::<eframe::web_sys::HtmlCanvasElement>()
-            .expect("#tescellate_canvas is not a <canvas>");
+            .expect("#carbide_canvas is not a <canvas>");
         eframe::WebRunner::new()
             .start(
                 canvas,
                 web_options,
-                Box::new(|cc| Ok(Box::new(tescellate_ui::TescellateApp::new(cc)))),
+                Box::new(|cc| Ok(Box::new(carbide_ui::CarbideApp::new(cc)))),
             )
             .await
-            .expect("failed to start the Tescellate UI");
+            .expect("failed to start the Carbide UI");
     });
 }

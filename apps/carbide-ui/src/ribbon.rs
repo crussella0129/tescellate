@@ -693,7 +693,7 @@ pub fn ribbon(
 pub fn menu_bar(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<RibbonAction> {
     let mut action = None;
     egui::menu::bar(ui, |ui| {
-        ui.label(egui::RichText::new("Tescellate").strong());
+        ui.label(egui::RichText::new("Carbide").strong());
         ui.separator();
         ui.menu_button("File", |ui| {
             ui.add_enabled(false, egui::Button::new("New"));
@@ -945,7 +945,7 @@ pub fn menu_bar(ui: &mut egui::Ui, can_undo: bool, can_redo: bool) -> Option<Rib
                 action = Some(RibbonAction::OpenHelp);
                 ui.close_menu();
             }
-            if ui.button("About Tescellate…").clicked() {
+            if ui.button("About Carbide…").clicked() {
                 action = Some(RibbonAction::OpenAbout);
                 ui.close_menu();
             }

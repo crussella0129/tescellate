@@ -16,17 +16,17 @@ Finalized - DO NOT EDIT
 ## Execution Sequence
 
 ### T-801: Hex text-pass widget skip.
-- **Touches:** `apps/tescellate-ui/src/app.rs` (`paint_hex`).
+- **Touches:** `apps/carbide-ui/src/app.rs` (`paint_hex`).
 - **Depends on:** (none).
 - **Success criterion:** `paint_hex` computes `let suppress_text = self.hex_widgets.is_widget(coord);` and empties the text when true. Build clean.
 
 ### T-802: Triangle text-pass widget skip.
-- **Touches:** `apps/tescellate-ui/src/app.rs` (`draw_triangle_grid`).
+- **Touches:** `apps/carbide-ui/src/app.rs` (`draw_triangle_grid`).
 - **Depends on:** (none).
 - **Success criterion:** Triangle text-pass `if self.triangle_widgets.is_widget(coord) { continue; }`. Build clean.
 
 ### T-803: Square widget cell sizing floor.
-- **Touches:** `apps/tescellate-ui/src/app.rs` (`TescellateApp::new`).
+- **Touches:** `apps/carbide-ui/src/app.rs` (`CarbideApp::new`).
 - **Depends on:** (none).
 - **Success criterion:** After the struct literal binds `this`, walk `this.square_widgets.iter()`; for each Slider/Button/ProgressBar, ensure the host column width is ≥ 160 px and the host row height is ≥ 28 px. Toggle cells use the default. Build clean.
 

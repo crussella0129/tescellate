@@ -1,6 +1,6 @@
 //! Cross-engine differential test — v17.
 //!
-//! Tescellate's defining promise is a *switchable per-cell formula
+//! Carbide's defining promise is a *switchable per-cell formula
 //! language*: the same computation can be written in Carbide (the
 //! Excel-lite engine) or in Python, and a cell does not care which. That
 //! promise only holds if the two engines *agree*. The Carbide engine is
@@ -27,11 +27,11 @@
 
 #![cfg(feature = "python")]
 
-use tescellate_core::CellValue;
-use tescellate_formula::excellite::eval::eval;
-use tescellate_formula::excellite::parse::parse;
-use tescellate_formula::python::eval_python_with_ctx;
-use tescellate_formula::transpile::MapCtx;
+use carbide_core::CellValue;
+use carbide_formula::excellite::eval::eval;
+use carbide_formula::excellite::parse::parse;
+use carbide_formula::python::eval_python_with_ctx;
+use carbide_formula::transpile::MapCtx;
 
 /// Fixed seed — a generative CI gate must reproduce byte-for-byte.
 const SEED: u64 = 0xC0FF_EE57_17C7_055E;

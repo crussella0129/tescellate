@@ -1,7 +1,7 @@
 # Sprint 5 Test Report
 
 ## Summary
-- Unit tests: 10 net-new in `tescellate-tess` (7 in `voronoi::tests`, 2 in `handle_tests`, 1 implicit via existing `radius_count_matches_the_lattice_formula` etc. still green for non-Voronoi variants). All 57 tess tests pass.
+- Unit tests: 10 net-new in `carbide-tess` (7 in `voronoi::tests`, 2 in `handle_tests`, 1 implicit via existing `radius_count_matches_the_lattice_formula` etc. still green for non-Voronoi variants). All 57 tess tests pass.
 - Integration tests: 0 net-new (LatticeHandle is the integration boundary; covered by the handle round-trip tests).
 - E2E tests: N/A (engine-only sprint).
 - CI status: green. PR #180 passed all 7 checks. Squash-merged as `7e6a8e9`.

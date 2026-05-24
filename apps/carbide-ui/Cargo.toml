@@ -1,9 +1,9 @@
 [package]
-name = "tescellate-ui"
+name = "carbide-ui"
 version = "0.0.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-description = "Tescellate's pure-Rust front-end — an egui/eframe app, native and WebAssembly."
+description = "Carbide's pure-Rust front-end — an egui/eframe app, native and WebAssembly."
 
 # Its own workspace root: the heavy egui/winit dependency tree is kept out
 # of the engine workspace so `cargo build --workspace` there stays lean.
@@ -12,10 +12,10 @@ description = "Tescellate's pure-Rust front-end — an egui/eframe app, native a
 [dependencies]
 eframe = "0.29"
 egui = "0.29"
-tescellate-core = { path = "../../crates/carbide-core" }
-tescellate-tess = { path = "../../crates/carbide-tess" }
-tescellate-formula = { path = "../../crates/carbide-formula" }
-tescellate-store = { path = "../../crates/carbide-store" }
+carbide-core = { path = "../../crates/carbide-core" }
+carbide-tess = { path = "../../crates/carbide-tess" }
+carbide-formula = { path = "../../crates/carbide-formula" }
+carbide-store = { path = "../../crates/carbide-store" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 smallvec = { version = "1", features = ["serde"] }

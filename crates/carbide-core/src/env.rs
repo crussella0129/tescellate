@@ -7,7 +7,7 @@
 //! `LETREC` patches placeholder slots, because the env chain is shared
 //! through the `Arc` and the bindings hash map is mutable through `RwLock`.
 //!
-//! Lives in `tescellate-core` (not `tescellate-formula`) because `CellValue`
+//! Lives in `carbide-core` (not `carbide-formula`) because `CellValue`
 //! lives here and any lambda value must carry an `Arc<Env>`.
 
 use crate::CellValue;

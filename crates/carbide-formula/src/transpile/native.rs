@@ -18,7 +18,7 @@
 //! The cdylib and the host exchange Rust types (`&dyn EvalCtx`,
 //! `Result<CellValue, EvalError>`) across the library boundary. Rust does
 //! not *guarantee* a stable ABI, so this is sound only when the cdylib is
-//! built with the same rustc and the same `tescellate-formula` source as
+//! built with the same rustc and the same `carbide-formula` source as
 //! the host. The pipeline ensures exactly that: the generated crate
 //! path-depends on this very crate and is built by the toolchain that is
 //! running. This is the accepted tradeoff noted in PLAN.md §12 — native
@@ -32,7 +32,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::excellite::ast::Expr;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 /// The Rust-ABI signature every generated `carbide_formula_*` exports.
 type FormulaFn = unsafe fn(&dyn EvalCtx) -> Result<CellValue, EvalError>;
@@ -114,12 +114,12 @@ fn build_program(key: u64, bodies: &[String]) -> Result<NativeProgram, NativeErr
     // A per-content directory: parallel compiles of different formula sets
     // never collide, and each keeps its own `target/`, so cargo's caching
     // makes an unchanged rebuild a near-no-op.
-    let dir = std::env::temp_dir().join(format!("tescellate_native_{key:016x}"));
+    let dir = std::env::temp_dir().join(format!("carbide_native_{key:016x}"));
     std::fs::create_dir_all(dir.join("src"))?;
 
-    let formula_crate = env!("CARGO_MANIFEST_DIR"); // .../crates/tescellate-formula
+    let formula_crate = env!("CARGO_MANIFEST_DIR"); // .../crates/carbide-formula
     let mut lib_rs =
-        String::from("#![allow(unused_variables)]\nuse tescellate_formula::transpile::rt::*;\n\n");
+        String::from("#![allow(unused_variables)]\nuse carbide_formula::transpile::rt::*;\n\n");
     for (i, body) in bodies.iter().enumerate() {
         lib_rs.push_str(&format!(
             "#[no_mangle]\n\
@@ -135,7 +135,7 @@ fn build_program(key: u64, bodies: &[String]) -> Result<NativeProgram, NativeErr
          [lib]\n\
          crate-type = [\"cdylib\"]\n\n\
          [dependencies]\n\
-         tescellate-formula = {{ path = {formula_crate:?} }}\n\n\
+         carbide-formula = {{ path = {formula_crate:?} }}\n\n\
          [workspace]\n"
     );
     std::fs::write(dir.join("Cargo.toml"), cargo_toml)?;

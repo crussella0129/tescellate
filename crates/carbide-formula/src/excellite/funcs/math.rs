@@ -8,7 +8,7 @@ use super::FunctionRegistry;
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError};
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 /// Process-wide PRNG state shared by `RAND` and `RANDBETWEEN`. The
 /// state is mutated on every call (consecutive calls inside the same

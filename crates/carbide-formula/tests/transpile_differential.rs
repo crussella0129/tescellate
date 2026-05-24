@@ -9,7 +9,7 @@
 
 mod common;
 
-use tescellate_formula::excellite::parse::parse;
+use carbide_formula::excellite::parse::parse;
 
 #[test]
 fn transpiled_carbide_matches_interpreter() {
@@ -20,5 +20,5 @@ fn transpiled_carbide_matches_interpreter() {
             (format!("`{src}`"), expr)
         })
         .collect();
-    common::run_differential("tescellate_transpile_diff", &cases);
+    common::run_differential("carbide_transpile_diff", &cases);
 }

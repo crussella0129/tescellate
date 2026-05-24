@@ -6,7 +6,7 @@ Finalized - DO NOT EDIT
 
 - **Sprint Goal:** v148 — extend `Widgets<K>` to the triangle sheet, completing the per-lattice widget surface (ADR-005 follow-up).
   - **Component A — Field + persistence**
-    - T-401: `triangle_widgets: Widgets<TriCoord>` on `TescellateApp`; UiSnapshot gains `triangle_widgets` with `#[serde(default)]`; capture/restore round-trip.
+    - T-401: `triangle_widgets: Widgets<TriCoord>` on `CarbideApp`; UiSnapshot gains `triangle_widgets` with `#[serde(default)]`; capture/restore round-trip.
   - **Component B — Render**
     - T-402: Triangle render dispatch for Button + Toggle in `draw_triangle_grid`.
   - **Component C — Demo touch**
@@ -18,13 +18,13 @@ Finalized - DO NOT EDIT
 ## Execution Sequence
 
 ### T-401: `triangle_widgets` field + UiSnapshot field.
-- **Touches:** `apps/tescellate-ui/src/app.rs`, `apps/tescellate-ui/src/state_io.rs`
+- **Touches:** `apps/carbide-ui/src/app.rs`, `apps/carbide-ui/src/state_io.rs`
 - **Depends on:** (none)
-- **Success criterion:** `triangle_widgets: Widgets<TriCoord>` on `TescellateApp`, initialised `Widgets::default()` in `new`. `UiSnapshot.triangle_widgets: Widgets<TriCoord>` with `#[serde(default)]`. `capture_state` clones the field into the snapshot; `restore_state` calls `replace_with` on it. Build clean.
-- **Notes:** Use `TriCoord` from `tescellate_tess::triangle` — already imported at the top of `app.rs`.
+- **Success criterion:** `triangle_widgets: Widgets<TriCoord>` on `CarbideApp`, initialised `Widgets::default()` in `new`. `UiSnapshot.triangle_widgets: Widgets<TriCoord>` with `#[serde(default)]`. `capture_state` clones the field into the snapshot; `restore_state` calls `replace_with` on it. Build clean.
+- **Notes:** Use `TriCoord` from `carbide_tess::triangle` — already imported at the top of `app.rs`.
 
 ### T-402: Triangle render dispatch.
-- **Touches:** `apps/tescellate-ui/src/app.rs`
+- **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-401
 - **Success criterion:** A new widget pass in `draw_triangle_grid` (after the text pass, before the in-cell edit overlay) iterates `self.triangle_widgets.iter()`. For each (coord, kind):
   - Centroid via `self.triangle_lattice.centroid(coord)`.
@@ -35,15 +35,15 @@ Finalized - DO NOT EDIT
 - **Notes:** Re-firing the source uses `engine.set_cell(self.triangle.sheet_id, &triangle_address(coord), Some(source.as_str()))`.
 
 ### T-403: Demo seed — a Toggle widget on a triangle cell.
-- **Touches:** `apps/tescellate-ui/src/app.rs`
+- **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-402
 - **Success criterion:** `triangle_widgets` initialiser inserts `(TriCoord::new(2, -1), WidgetKind::Toggle)` (outside the existing seed pattern). The triangle demo seeds also gain `("T(2,-1)", "FALSE")` so the checkbox starts unchecked. Build clean.
 - **Notes:** Visual verification deferred to manual E2E.
 
 ### T-404: Tests.
-- **Touches:** `apps/tescellate-ui/src/widget.rs`, `apps/tescellate-ui/src/state_io.rs`
+- **Touches:** `apps/carbide-ui/src/widget.rs`, `apps/carbide-ui/src/state_io.rs`
 - **Depends on:** T-401
-- **Success criterion:** New test `widgets_generic_with_tri_coord_round_trip` asserts a `Widgets<TriCoord>` with Button + Toggle entries JSON round-trips. Existing `snapshot_round_trips_through_ui_state` fixture extended to populate `triangle_widgets`; assertion added that the field round-trips. `cargo test -p tescellate-ui` green.
+- **Success criterion:** New test `widgets_generic_with_tri_coord_round_trip` asserts a `Widgets<TriCoord>` with Button + Toggle entries JSON round-trips. Existing `snapshot_round_trips_through_ui_state` fixture extended to populate `triangle_widgets`; assertion added that the field round-trips. `cargo test -p carbide-ui` green.
 
 ### T-405: CI gate + PR.
 - **Touches:** (verification + git)

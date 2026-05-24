@@ -25,10 +25,10 @@ geometric primitive committed before any consumer leans on it.
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `crates/tescellate-tess/src/lib.rs` | high | Defines `LatticeHandle`, `LatticeKind`, `ParsedCoord`, `Lattice` trait, `Point2`, `Rect`, `AddressError`, `Direction`. Sprint 5 adds a `Voronoi` variant to each of `LatticeHandle`, `LatticeKind`, `ParsedCoord`. The `Lattice` trait stays unchanged. |
-| `crates/tescellate-tess/src/hex.rs` | medium | Template for a non-trivial Lattice impl. `HexLattice` carries `size` + `orientation`; `cell_at` does cube rounding; `vertices` computes 6 corners around the centroid. Voronoi follows the same shape but `cell_at` is "nearest seed" and `vertices` is a clipped polygon. |
-| `crates/tescellate-tess/src/triangle.rs` | low | Another Lattice template. Useful for the parse/format pattern (`T(col,row)` ↔ `TriCoord`). |
-| `crates/tescellate-tess/Cargo.toml` | low | Already depends on `glam` (for `Vec2` → `Point2`), `smallvec`, `serde`, `thiserror`. Sprint 5 adds nothing new — Voronoi computation is handwritten with no crate. |
+| `crates/carbide-tess/src/lib.rs` | high | Defines `LatticeHandle`, `LatticeKind`, `ParsedCoord`, `Lattice` trait, `Point2`, `Rect`, `AddressError`, `Direction`. Sprint 5 adds a `Voronoi` variant to each of `LatticeHandle`, `LatticeKind`, `ParsedCoord`. The `Lattice` trait stays unchanged. |
+| `crates/carbide-tess/src/hex.rs` | medium | Template for a non-trivial Lattice impl. `HexLattice` carries `size` + `orientation`; `cell_at` does cube rounding; `vertices` computes 6 corners around the centroid. Voronoi follows the same shape but `cell_at` is "nearest seed" and `vertices` is a clipped polygon. |
+| `crates/carbide-tess/src/triangle.rs` | low | Another Lattice template. Useful for the parse/format pattern (`T(col,row)` ↔ `TriCoord`). |
+| `crates/carbide-tess/Cargo.toml` | low | Already depends on `glam` (for `Vec2` → `Point2`), `smallvec`, `serde`, `thiserror`. Sprint 5 adds nothing new — Voronoi computation is handwritten with no crate. |
 
 ## 3. External Sources
 
@@ -50,7 +50,7 @@ No external crate dep this sprint.
 
 **Primary — engine plumbing only, no integration.**
 
-1. **T-501: New `voronoi.rs` module in `tescellate-tess`** with `VoronoiCoord(pub u32)`, `VoronoiLattice { seeds: Vec<Point2>, bounds: Rect }`, and `VoronoiLattice::new(seeds, bounds) -> Result<Self, …>` (rejects coincident seeds; rejects empty seed list).
+1. **T-501: New `voronoi.rs` module in `carbide-tess`** with `VoronoiCoord(pub u32)`, `VoronoiLattice { seeds: Vec<Point2>, bounds: Rect }`, and `VoronoiLattice::new(seeds, bounds) -> Result<Self, …>` (rejects coincident seeds; rejects empty seed list).
 2. **T-502: `Lattice` impl for `VoronoiLattice`.**
    - `kind` returns `LatticeKind::Voronoi`.
    - `address(VoronoiCoord(i)) -> "V(i)"`.

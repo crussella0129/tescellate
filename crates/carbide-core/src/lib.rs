@@ -1,10 +1,10 @@
-//! Workbook / sheet / cell types and the DAG evaluation engine for Tescellate.
+//! Workbook / sheet / cell types and the DAG evaluation engine for Carbide.
 //!
 //! See `PLAN.md` §4 (data model) and §5 (DAG engine). Phase 0 ships only the
 //! type skeleton; the recompute engine lands in Phase 1.
 
 use serde::{Deserialize, Serialize};
-use tescellate_tess::{LatticeConfig, LatticeKind};
+use carbide_tess::{LatticeConfig, LatticeKind};
 
 pub mod cell;
 pub mod dag;
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn sheet_with_lattice_config_round_trips() {
-        use tescellate_tess::{LatticeConfig, VoronoiConfig};
+        use carbide_tess::{LatticeConfig, VoronoiConfig};
         let cfg = LatticeConfig::Voronoi(VoronoiConfig {
             seeds: vec![[0.0, 0.0], [10.0, 0.0], [0.0, 10.0]],
             bounds: [-20.0, -20.0, 20.0, 20.0],

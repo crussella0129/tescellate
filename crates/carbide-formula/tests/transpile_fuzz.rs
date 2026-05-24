@@ -29,7 +29,7 @@
 
 mod common;
 
-use tescellate_formula::excellite::ast::{BinaryOp, Expr, UnaryOp};
+use carbide_formula::excellite::ast::{BinaryOp, Expr, UnaryOp};
 
 /// Fixed seed — a generative CI gate must reproduce byte-for-byte.
 const SEED: u64 = 0x853C_49E6_748F_EA9B;
@@ -352,7 +352,7 @@ fn generated_carbide_matches_interpreter() {
             (format!("{e:?}"), e)
         })
         .collect();
-    common::run_differential("tescellate_transpile_fuzz", &cases);
+    common::run_differential("carbide_transpile_fuzz", &cases);
 }
 
 #[test]

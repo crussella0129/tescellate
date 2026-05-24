@@ -4,9 +4,9 @@ This page is the canonical reference for Carbide's surface syntax — what the l
 
 Source files (Rust):
 
-- Lexer: `crates/tescellate-formula/src/excellite/lex.rs`
-- Parser: `crates/tescellate-formula/src/excellite/parse.rs`
-- AST: `crates/tescellate-formula/src/excellite/ast.rs`
+- Lexer: `crates/carbide-formula/src/excellite/lex.rs`
+- Parser: `crates/carbide-formula/src/excellite/parse.rs`
+- AST: `crates/carbide-formula/src/excellite/ast.rs`
 
 The parser is a hand-rolled Pratt parser. Cell references and ranges are carried in the AST as opaque address strings; the parser does not know which lattice the sheet uses. See [addressing.md](addressing.md) for the addressing layer.
 
@@ -14,7 +14,7 @@ The parser is a hand-rolled Pratt parser. Cell references and ranges are carried
 
 This is the single most consequential decision in the language and worth stating up front.
 
-When a cell receives input, the orchestrator in `tescellate-formula::engine::set_cell` looks at the source string:
+When a cell receives input, the orchestrator in `carbide-formula::engine::set_cell` looks at the source string:
 
 | Input starts with `=` | Treatment |
 |---|---|

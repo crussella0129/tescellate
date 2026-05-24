@@ -6,8 +6,8 @@
 //! existing `save_and_open_preserves_dependencies` unit test covers.
 //!
 //! These tests generate random workbooks, drive them through
-//! `WorkbookEngine::save` (→ `tescellate_store`) and `WorkbookEngine::open`
-//! (← `tescellate_store`), and assert:
+//! `WorkbookEngine::save` (→ `carbide_store`) and `WorkbookEngine::open`
+//! (← `carbide_store`), and assert:
 //!
 //!  * every cell's source text and computed value survive the round-trip;
 //!  * the reopened workbook's DAG is functional — `open` rebuilds the
@@ -20,9 +20,9 @@
 
 use std::path::PathBuf;
 
-use tescellate_core::{CellValue, SheetId};
-use tescellate_formula::WorkbookEngine;
-use tescellate_tess::LatticeKind;
+use carbide_core::{CellValue, SheetId};
+use carbide_formula::WorkbookEngine;
+use carbide_tess::LatticeKind;
 
 /// Fixed seed — a generative CI gate must reproduce byte-for-byte.
 const SEED: u64 = 0x7E5C_E11A_7E5D_0001;
@@ -96,7 +96,7 @@ fn build(cells: &[(String, String)]) -> (WorkbookEngine, SheetId) {
 /// A unique-per-call temp `.tscl` path.
 fn temp_tscl(tag: &str, i: usize) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "tescellate-persist-{tag}-{}-{i}.tscl",
+        "carbide-persist-{tag}-{}-{i}.tscl",
         std::process::id()
     ))
 }

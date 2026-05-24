@@ -9,8 +9,8 @@ This page documents the contract every engine shares — what they have to do, w
 
 Source files:
 
-- Engine trait: `crates/tescellate-formula/src/lib.rs` — `pub trait FormulaEngine`, `pub trait EvalCtx`, `pub trait CarbideFn`.
-- Engine orchestrator: `crates/tescellate-formula/src/engine.rs` — `WorkbookEngine` owns the engines registry, the DAG, the spill machinery.
+- Engine trait: `crates/carbide-formula/src/lib.rs` — `pub trait FormulaEngine`, `pub trait EvalCtx`, `pub trait CarbideFn`.
+- Engine orchestrator: `crates/carbide-formula/src/engine.rs` — `WorkbookEngine` owns the engines registry, the DAG, the spill machinery.
 
 ## The four boundaries
 
@@ -149,7 +149,7 @@ The one place engines need lattice awareness is when surfacing **geometric** fun
 
 ## The DAG
 
-The dependency graph (`tescellate-core::dag::Dag`) is engine-agnostic. Its nodes are `CellRef { sheet: SheetId, address: String }`; its edges are populated from `FormulaEngine::refs(compiled)`. The DAG doesn't know whether the address `H(0,0)` is a hex axial coord or a square address, and it doesn't care — it just treats the string as a node identifier.
+The dependency graph (`carbide-core::dag::Dag`) is engine-agnostic. Its nodes are `CellRef { sheet: SheetId, address: String }`; its edges are populated from `FormulaEngine::refs(compiled)`. The DAG doesn't know whether the address `H(0,0)` is a hex axial coord or a square address, and it doesn't care — it just treats the string as a node identifier.
 
 This means cross-engine recompute works trivially: editing a Python cell that an Excel-lite cell depends on triggers the Excel-lite cell's `engine.eval(...)` because the DAG fired the dirty-closure walk and reached it. Both engines see the new value through `EvalCtx::cell`.
 
@@ -163,7 +163,7 @@ The on-disk `.tscl` format stores `Sheet.cells: HashMap<String, Cell>`, where ea
 
 `CompiledFormula` is **not** persisted. On workbook open, `engine::rebuild_dag` walks every cell with a `source`, asks the appropriate engine to `parse` it, populates the DAG. This is what restores live `CellValue::Function` values after `Function` round-trips as `#STALE!`.
 
-Engines that need their own persistent state (e.g., the planned Rust native engine caches `cdylib`s in `~/.tescellate/cache/native/`) own that cache outside the workbook file. The `.tscl` format itself is engine-neutral.
+Engines that need their own persistent state (e.g., the planned Rust native engine caches `cdylib`s in `~/.carbide/cache/native/`) own that cache outside the workbook file. The `.tscl` format itself is engine-neutral.
 
 ## Numbered guarantees
 

@@ -4,11 +4,11 @@ This page is the reference for the dynamic type system: what values exist, how t
 
 Source files:
 
-- `CellValue` + `Array` + `CarbideFn`: `crates/tescellate-core/src/value.rs`
-- `CellError`: `crates/tescellate-core/src/cell.rs`
-- `Env` (lexical environment): `crates/tescellate-core/src/env.rs`
-- Coercion: `crates/tescellate-formula/src/excellite/funcs/coerce.rs`
-- Spill: `crates/tescellate-formula/src/engine.rs::compute_spill_for`
+- `CellValue` + `Array` + `CarbideFn`: `crates/carbide-core/src/value.rs`
+- `CellError`: `crates/carbide-core/src/cell.rs`
+- `Env` (lexical environment): `crates/carbide-core/src/env.rs`
+- Coercion: `crates/carbide-formula/src/excellite/funcs/coerce.rs`
+- Spill: `crates/carbide-formula/src/engine.rs::compute_spill_for`
 
 ## `CellValue`
 
@@ -106,7 +106,7 @@ pub struct Lambda {
 
 **Calling**: `Lambda::call(args: Vec<CellValue>, outer: &dyn EvalCtx)` enforces arity, builds an `Env` with the args bound by name (chained to `captured`), wraps `outer` in a `ScopedCtx`, and recursively `eval`s the body. The same call path is shared by direct `Apply`, by the `Call → Var fallback` for LET-bound names, and by every higher-order helper (`MAP`, `REDUCE`, `BYROW`, `BYCOL`, `SCAN`, `MAKEARRAY`).
 
-**Where lambdas live**: in cell values transiently (because formula results can be functions) and in `Env` bindings (because `LET(f, LAMBDA(…), …)` binds `f` to the lambda). The `Lambda` type lives in `tescellate-formula`, not core; that's why core exposes the trait object `CarbideFn` and not the concrete type.
+**Where lambdas live**: in cell values transiently (because formula results can be functions) and in `Env` bindings (because `LET(f, LAMBDA(…), …)` binds `f` to the lambda). The `Lambda` type lives in `carbide-formula`, not core; that's why core exposes the trait object `CarbideFn` and not the concrete type.
 
 ## Equality and persistence
 

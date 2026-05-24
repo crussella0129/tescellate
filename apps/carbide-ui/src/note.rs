@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn works_with_a_hex_key() {
-        use tescellate_tess::hex::HexCoord;
+        use carbide_tess::hex::HexCoord;
         let mut m: NoteMap<HexCoord> = NoteMap::new();
         m.set(HexCoord::new(1, -2), "hex note");
         assert!(m.has(HexCoord::new(1, -2)));

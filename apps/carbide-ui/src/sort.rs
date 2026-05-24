@@ -4,7 +4,7 @@
 //! egui and no engine mutation here, so `cargo test` covers it.
 
 use std::cmp::Ordering;
-use tescellate_core::CellValue;
+use carbide_core::CellValue;
 
 /// A coarse rank grouping [`CellValue`] variants for sorting: numbers
 /// first, then text, then booleans, then everything else (blank,
