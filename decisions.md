@@ -288,3 +288,75 @@ use `primary_cells()` to ignore marquee extras); literal merge of the
 four `draw_*_grid` functions into one parameterised `draw_lattice_panel`.
 The next sprint (v160) is the Tescellate→Carbide rename, applied to the
 already-unified renderer for a smaller diff.
+
+## ADR-014 — Voronoi polish: seed-handle fade + widget pop-out + persisted freeze + Enter-advance history rule (sprint 18)
+**Date:** 2026-05-23
+**Status:** Adopted, shipping in v160.
+
+After v159 the user surfaced four Voronoi-side polish gaps; this ADR
+documents the four locked design rules that close them.
+
+**F1 — Seed-handle proximity fade.** Each seed's render alpha is a
+piecewise function of cursor distance: `[<=40px] = 225`, `[>=80px] = 0`,
+linear in between (`fade_alpha` pure helper). The 5-px hit area stays
+alive throughout — a click/drag where the handle was last seen still
+works. The per-frame per-seed decision is wrapped by `seed_handle_alphas`
+(pure, no egui — closes the testability gap of v159's all-or-nothing
+render bool). Priority order is `dragged > fade > no-hover`: a seed
+being dragged renders at full opacity even if the cursor leaves the
+panel, so the user doesn't lose sight of the handle mid-drag.
+
+**F1b — Widget pop-out under handle visibility.** When the seed handle
+becomes visible (cursor near), the cell's widget (Toggle/Button) is
+offset to a side so its click target isn't occluded by the handle. The
+`pop_out_widget_center` helper tries `[+x, -x, +y, -y]` offsets at 30 px
+(lattice units, ADR-013 C-006 no-zoom precondition); the first candidate
+where `cell_at(p) == Some(self_coord)` (i.e. still inside this cell's
+polygon, ADR-009) wins. Falls back to centroid when no side has
+clearance. When the widget cell is the editing cell, pop-out is skipped
+— the edit overlay continues to anchor at centroid.
+
+**F2 — Freeze seeds (persisted on the `Sheet`).** A new
+`VoronoiConfig.frozen: bool` with `#[serde(default)]` rides in
+`workbook.json` alongside the seeds. **No `.tscl` version bump** — the v2
+schema (ADR-012) already accepts new optional fields this way. `frozen`
+is classified as a **UI preference**, not user data: if an older v2
+reader opens a frozen workbook and re-saves without the flag, the worst
+case is the user can drag seeds they meant to lock (recoverable, not
+data-destructive — different from ADR-012's seed-data case where losing
+the geometry would silently corrupt the sheet, which is why ADR-012
+*did* bump the version). When frozen: the seed-handle pass is skipped
+entirely (no draw, no `ui.interact`) and the widget pass treats handle
+as never-visible (widgets render at centroid). Toggle lives on a
+contextual "Voronoi" ribbon group, visible only on `ActiveSheet::Voronoi`.
+
+**F3 — Enter = commit-and-advance with the user's history rule.** On
+Voronoi, Enter advances to a Delaunay neighbor (via ADR-010) that
+**isn't in the last `N-1` visits**, where `N` is the current seed count.
+Tie-break when multiple candidates qualify: **closest centroid**
+(Euclidean), then lowest `VoronoiCoord` index for determinism. Returns
+`None` when no candidate qualifies — Enter stops. Property: Enter
+traverses each cell at most once before stopping. The `pick_next_voronoi`
+helper is pure; `voronoi_advance_step` composes it with the engine
+(testable with just a `WorkbookEngine` + `VecDeque`). The visit history
+clears on (a) **primary cell-select click** (a deliberate selection
+restarts traversal — distinguishes from formula-mode-click-as-reference
+and widget clicks, which do NOT clear); (b) **workbook reload via
+`rebind_sheet_ids`** (seed count may have changed; OOR `VoronoiCoord`s
+in stale history would point at seeds that no longer exist).
+
+**Cross-references:** **ADR-005** (lattice-generic precedent — same
+"add the trait impl, inherit the behavior" promise, here extended into
+per-lattice render polish); **ADR-009** (Voronoi bounded-cell guarantee
+— F1b's `cell_at` containment + F3's `centroid` semantics both depend on
+it); **ADR-010** (Delaunay adjacency — F3's neighbor walk uses it);
+**ADR-012** (Sheet-authoritative config — F2's `frozen` flag rides in
+the same struct as seeds); **ADR-013** (selection model + dispatch —
+ADR-014 builds on the seed-drag and marquee foundations laid there).
+
+**Deferred to v161+:** Carbide rename (now the v161 sprint). Add/delete
+seeds (would change `N` and require history to track the size delta
+within a session). Bounds editing. Per-cell widget anchor configuration
+(pop-out direction is fully automatic in v160). Widget pop-out for
+non-Voronoi lattices (the problem doesn't exist there — no draggable
+handles to clear).
