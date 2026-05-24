@@ -5027,8 +5027,12 @@ impl TescellateApp {
 
         // Widget pass — Button + Toggle inscribed at each widget cell's
         // centroid. Slider/ProgressBar fall through to text (ADR-006).
+        // **T-004 (ADR-014):** when the seed handle is visible at this seed
+        // (cursor near), the widget pops out to a side so the click area
+        // isn't occluded by the handle.
         if !self.voronoi_widgets.is_empty() {
             let editing_coord = self.edit.as_ref().map(|_| self.voronoi.selection.cursor);
+            let widget_cursor = response.hover_pos();
             let mut vor_edits: Vec<(VoronoiCoord, Option<String>)> = Vec::new();
             for (coord, kind) in self
                 .voronoi_widgets
@@ -5040,7 +5044,21 @@ impl TescellateApp {
                     continue;
                 }
                 let centroid = self.voronoi_lattice.centroid(coord);
-                let center = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+                // Decide pop-out: handle is "visible" when cursor proximity
+                // produces a non-zero fade alpha at this seed.
+                let centroid_screen = egui::pos2(origin.x + centroid.x, origin.y + centroid.y);
+                let handle_visible = match widget_cursor {
+                    Some(c) => fade_alpha((centroid_screen - c).length()) > 0,
+                    None => false,
+                };
+                let lattice_center = if handle_visible {
+                    pop_out_widget_center(centroid, WIDGET_POP_OUT_OFFSET, coord, |p| {
+                        self.voronoi_lattice.cell_at(p)
+                    })
+                } else {
+                    centroid
+                };
+                let center = egui::pos2(origin.x + lattice_center.x, origin.y + lattice_center.y);
                 let rect = egui::Rect::from_center_size(center, egui::vec2(120.0, 24.0));
                 let addr = voronoi_address(coord);
                 match kind {
