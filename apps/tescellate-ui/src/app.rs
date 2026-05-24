@@ -6188,6 +6188,36 @@ fn synced_voronoi_lattice(engine: &WorkbookEngine, sid: SheetId) -> VoronoiLatti
 /// lattice_centroid`) falls inside `screen_rect`. The unified marquee rule
 /// for a tessellation without rect-indexed coords (ADR-013). A degenerate
 /// rect (zero width or height) returns an empty `Vec`.
+/// Voronoi seed-handle proximity fade thresholds (ADR-014, lattice units).
+/// Within `INNER` of the cursor the handle is fully opaque; past `OUTER`
+/// it's invisible; between the two it fades linearly.
+// Wired into the seed-handle pass by T-002.
+#[allow(dead_code)]
+const SEED_FADE_INNER: f32 = 40.0;
+#[allow(dead_code)]
+const SEED_FADE_OUTER: f32 = 80.0;
+/// Maximum alpha for the seed-handle fill (below 255 so the dot reads as
+/// a marker rather than a fully-opaque blob over cell content).
+#[allow(dead_code)]
+const SEED_FADE_MAX_ALPHA: u8 = 225;
+
+/// Distance-to-alpha mapping for the seed-handle proximity fade (ADR-014).
+/// Piecewise: `[<=INNER] = MAX`, `[>=OUTER] = 0`, linear in between. Pure
+/// (no egui types) so the per-frame per-seed decision is unit-testable
+/// without a render context.
+// Wired into the seed-handle pass by T-002.
+#[allow(dead_code)]
+fn fade_alpha(distance: f32) -> u8 {
+    if distance <= SEED_FADE_INNER {
+        SEED_FADE_MAX_ALPHA
+    } else if distance >= SEED_FADE_OUTER {
+        0
+    } else {
+        ((SEED_FADE_OUTER - distance) / (SEED_FADE_OUTER - SEED_FADE_INNER)
+            * SEED_FADE_MAX_ALPHA as f32) as u8
+    }
+}
+
 fn cells_in_screen_rect(
     lattice: &VoronoiLattice,
     screen_rect: egui::Rect,
@@ -6416,6 +6446,48 @@ mod tests {
         let rect = egui::Rect::from_min_max(egui::pos2(95.0, 95.0), egui::pos2(105.0, 155.0));
         let hits = cells_in_screen_rect(&lat, rect, origin);
         assert_eq!(hits, vec![VoronoiCoord(0), VoronoiCoord(2)]);
+    }
+
+    // --- T-001: fade_alpha (proximity-fade thresholds) ---
+
+    #[test]
+    fn fade_alpha_zero_distance_is_full() {
+        assert_eq!(fade_alpha(0.0), SEED_FADE_MAX_ALPHA);
+    }
+
+    #[test]
+    fn fade_alpha_inner_threshold_is_full() {
+        assert_eq!(fade_alpha(SEED_FADE_INNER), SEED_FADE_MAX_ALPHA);
+    }
+
+    #[test]
+    fn fade_alpha_outer_threshold_is_zero() {
+        assert_eq!(fade_alpha(SEED_FADE_OUTER), 0);
+    }
+
+    #[test]
+    fn fade_alpha_midpoint_is_half() {
+        let mid = (SEED_FADE_INNER + SEED_FADE_OUTER) / 2.0; // 60.0
+        let got = fade_alpha(mid) as i16;
+        let target = (SEED_FADE_MAX_ALPHA as i16) / 2; // 112
+        assert!(
+            (got - target).abs() <= 2,
+            "got {got}, expected within ±2 of {target}"
+        );
+    }
+
+    #[test]
+    fn fade_alpha_past_outer_is_zero() {
+        assert_eq!(fade_alpha(150.0), 0);
+        assert_eq!(fade_alpha(10_000.0), 0);
+    }
+
+    #[test]
+    fn fade_alpha_negative_distance_clamps_to_full() {
+        // Defensive: a hypothetical caller passing a negative distance
+        // (signed delta etc.) still gets full opacity, not a wraparound.
+        assert_eq!(fade_alpha(-5.0), SEED_FADE_MAX_ALPHA);
+        assert_eq!(fade_alpha(-1000.0), SEED_FADE_MAX_ALPHA);
     }
 
     #[test]
