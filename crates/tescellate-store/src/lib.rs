@@ -296,6 +296,53 @@ mod tests {
     }
 
     #[test]
+    fn voronoi_frozen_survives_save_load() {
+        // Sprint 18 C-001: VoronoiConfig.frozen must survive the full
+        // `.tscl` envelope (save_full → load_full), not just serde JSON in
+        // isolation. Mirrors voronoi_seeds_survive_full_round_trip above.
+        use tescellate_tess::{LatticeConfig, VoronoiConfig};
+
+        let cfg = LatticeConfig::Voronoi(VoronoiConfig {
+            seeds: vec![[1.0, 2.0], [30.0, -4.0]],
+            bounds: [-100.0, -100.0, 100.0, 100.0],
+            frozen: true,
+        });
+        let sid = SheetId(1);
+        let mut sheets = HashMap::new();
+        sheets.insert(
+            sid,
+            Sheet {
+                id: sid,
+                name: "VorFrozen".into(),
+                lattice: LatticeKind::Voronoi,
+                extent: tescellate_core::SheetExtent::Unbounded,
+                lattice_config: Some(cfg.clone()),
+                cells: HashMap::new(),
+            },
+        );
+        let wb = Workbook {
+            id: WorkbookId(1),
+            meta: WorkbookMeta {
+                title: "frozen".into(),
+                created_at: "2026-05-24T00:00:00Z".into(),
+                format_version: 0,
+            },
+            default_engine: EngineKind::ExcelLite,
+            sheet_order: vec![sid],
+            sheets,
+        };
+
+        let bytes = save_full_to_bytes(&wb, &UiState::default()).unwrap();
+        let (back, _ui) = load_full_from_bytes(&bytes).unwrap();
+        match back.sheets.get(&sid).unwrap().lattice_config.as_ref() {
+            Some(LatticeConfig::Voronoi(c)) => {
+                assert!(c.frozen, "frozen flag must survive save_full → load_full");
+            }
+            other => panic!("expected Voronoi config, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn reads_v1_voronoi_without_lattice_config_key() {
         // A genuine v1 file: a Voronoi sheet whose `workbook.json` *physically
         // omits* the `lattice_config` key (not `null`). The v2 loader must

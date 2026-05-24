@@ -6747,17 +6747,22 @@ mod tests {
 
     #[test]
     fn seed_handle_alphas_dragging_overrides_fade() {
-        // No hover (or hover far away), but seed 2 is being dragged →
-        // that seed is fully opaque regardless. Others stay invisible.
+        // No hover, but seed 2 is being dragged → that seed is fully opaque
+        // regardless. Others honor the no-hover rule (= 0). C-007: explicit
+        // 0-assertions for the non-dragged seeds so a regression that gave
+        // dragged-state opacity to ALL seeds would be caught.
         let seeds = vec![
             egui::pos2(0.0, 0.0),
             egui::pos2(50.0, 0.0),
-            egui::pos2(500.0, 500.0), // far from any hover
+            egui::pos2(500.0, 500.0),
         ];
         let alphas = seed_handle_alphas(None, &seeds, Some(2));
-        assert_eq!(alphas[0], 0);
-        assert_eq!(alphas[1], 0);
-        assert_eq!(alphas[2], SEED_FADE_MAX_ALPHA);
+        assert_eq!(alphas[0], 0, "seed 0 not dragged + no hover → 0");
+        assert_eq!(alphas[1], 0, "seed 1 not dragged + no hover → 0");
+        assert_eq!(
+            alphas[2], SEED_FADE_MAX_ALPHA,
+            "seed 2 is dragged → full opacity"
+        );
     }
 
     #[test]
@@ -6979,18 +6984,21 @@ mod tests {
     fn voronoi_advance_after_seed_drag_uses_new_centroids() {
         // C-010: dragging a seed mid-traversal must re-evaluate the
         // closest-centroid tie-break against the NEW positions.
-        // Initial config:
-        //   V(0)=(0,0), V(1)=(40,0), V(2)=(-40,0), V(3)=(0,40)
-        // All four are connected in the Delaunay graph (V0 interior to the
-        // hull triangle V1-V2-V3); from V(0) all neighbors are at dist 40,
-        // tie-break → V(1).
+        // **C-006 (geometry): keep V(0) off the V(1)-V(2) collinear axis**
+        // (push it down 1 px) so the Delaunay triangulation is unambiguous.
+        // V(0)=(0,-1) is strictly inside the hull triangle V(1)=(40,0),
+        // V(2)=(-40,0), V(3)=(0,40) — all four are connected in the
+        // Delaunay graph. From V(0), distances to V(1)/V(2)/V(3) are ≈40
+        // each (V(1)/V(2): √(40²+1²)≈40.012; V(3): 41) — V(1) and V(2)
+        // are essentially tied with V(3) marginally farther. Tie-break by
+        // lowest index → V(1).
         let mut engine = WorkbookEngine::new();
         engine.new_workbook();
         let sid = engine.add_sheet("V", LatticeKind::Voronoi);
         engine
             .set_voronoi_seeds(
                 sid,
-                vec![[0.0, 0.0], [40.0, 0.0], [-40.0, 0.0], [0.0, 40.0]],
+                vec![[0.0, -1.0], [40.0, 0.0], [-40.0, 0.0], [0.0, 40.0]],
             )
             .unwrap();
         let mut history: std::collections::VecDeque<VoronoiCoord> =
@@ -6999,15 +7007,15 @@ mod tests {
         assert_eq!(first, Some(VoronoiCoord(1)));
 
         // Drag: move V(1) far right (500, 0) and V(2) close to V(1) at
-        // (450, 1). V(0)=(0,0) and V(3)=(0,40) stay on the left. Now V(1)'s
-        // Delaunay neighbors are V(0)/V(2)/V(3) (V(2) is interior to the
-        // triangle V(0)-V(1)-V(3); the 1-px y-offset avoids collinearity).
-        // From V(1)=(500,0): V(0)=(0,0) is in history; V(2)=(450,1) is at
+        // (450, 1). V(0) stays at (0,-1) and V(3) at (0,40). V(2) is
+        // interior to the hull triangle V(0)-V(1)-V(3); the y-offsets on
+        // V(0) and V(2) keep the triangulation unambiguous.
+        // From V(1)=(500,0): V(0)=(0,-1) is in history; V(2)=(450,1) is at
         // dist ≈50; V(3)=(0,40) is at dist ≈501.6. V(2) wins.
         engine
             .set_voronoi_seeds(
                 sid,
-                vec![[0.0, 0.0], [500.0, 0.0], [450.0, 1.0], [0.0, 40.0]],
+                vec![[0.0, -1.0], [500.0, 0.0], [450.0, 1.0], [0.0, 40.0]],
             )
             .unwrap();
         let second = voronoi_advance_step(&engine, sid, VoronoiCoord(1), &mut history);

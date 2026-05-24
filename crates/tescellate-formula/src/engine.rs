@@ -2416,4 +2416,24 @@ mod tests {
         let got: Vec<[f32; 2]> = lat.seeds.iter().map(|s| [s.x, s.y]).collect();
         assert_eq!(got, new, "dragged seeds must survive save → reload");
     }
+
+    #[test]
+    fn frozen_survives_save_bytes_round_trip() {
+        // Sprint 18 C-002: frozen flag must survive the engine-layer
+        // save_bytes → open_bytes round-trip (counterpart to the store-layer
+        // voronoi_frozen_survives_save_load test).
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        eng.set_voronoi_frozen(sid, true).unwrap();
+        let bytes = eng
+            .save_bytes(&tescellate_store::UiState::default())
+            .unwrap();
+        let mut reloaded = WorkbookEngine::new();
+        reloaded.open_bytes(&bytes).unwrap();
+        assert!(
+            reloaded.voronoi_frozen(sid),
+            "frozen flag must survive save_bytes → open_bytes"
+        );
+    }
 }
