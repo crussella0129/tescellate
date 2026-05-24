@@ -36,7 +36,7 @@ Every crate under `crates/` is pure Rust:
 | `carbide-tess` | ~200 | The `Lattice` trait and the `SquareLattice` impl. |
 | `carbide-formula` | ~4,200 | The Carbide engine — lexer, Pratt parser, evaluator, `Lambda`, the function registry, ~90 standard-library functions, the `WorkbookEngine` orchestrator, spill rendering. |
 | `carbide-ipc` | ~120 | LSP-style framed JSON-RPC server (just framing — the dispatch is in `cli`). |
-| `carbide-store` | ~200 | The `.tscl` zip-archive reader/writer. |
+| `carbide-store` | ~200 | The `.crbd` zip-archive reader/writer. |
 | `carbide-cli` | ~250 | The `carbide-core` binary that Electron spawns. Dispatches JSON-RPC. |
 
 All cell logic, every formula, every value, every coordinate system, every snapshot, every save/load operation — entirely Rust. There is nothing about the *language* or the *spreadsheet model* that isn't already in Rust.
@@ -237,7 +237,7 @@ For the grid drawing specifically, the choice is **tiny-skia** (CPU 2D), **wgpu*
 |---|---|---|---|---|
 | `WorkbookEngine` | Rust crate | same | same | same |
 | Formula parser / eval | Rust crate | same | same | same |
-| `.tscl` save/load | Rust crate | same | same | same |
+| `.crbd` save/load | Rust crate | same | same | same |
 | Process boundary | stdio JSON-RPC | Tauri command | Tauri command (or WASM↔native via shared types) | none — direct fn call |
 | Serialization at boundary | JSON | JSON (Tauri serde) | optional (can use bincode / direct Rust types) | none |
 | Renderer state | React `useState` | same | Rust framework state (Dioxus hooks / Leptos signals) | Rust framework state |

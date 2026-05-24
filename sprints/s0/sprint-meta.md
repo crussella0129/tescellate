@@ -6,7 +6,7 @@
 - **Model:** claude-opus-4-7[1m]
 - **Exit status:** success
 - **Token count:** (filled at Loop Phase if observable)
-- **Summary:** v144 — .tscl persistence in the egui/wasm UI: Ctrl+S save, Ctrl+O open, localStorage autosave, with a UiState sidecar inside the zip (format v0 → v1).
+- **Summary:** v144 — .crbd persistence in the egui/wasm UI: Ctrl+S save, Ctrl+O open, localStorage autosave, with a UiState sidecar inside the zip (format v0 → v1).
 
 ## Blockages
 

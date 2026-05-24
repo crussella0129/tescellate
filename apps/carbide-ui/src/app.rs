@@ -5251,7 +5251,7 @@ impl CarbideApp {
         }
     }
 
-    /// Persist the workbook + UI state to a `.tscl`. On native, opens a
+    /// Persist the workbook + UI state to a `.crbd`. On native, opens a
     /// blocking save dialog; on wasm, spawns an async dialog that hands
     /// the bytes to the browser via a download blob. Errors are logged
     /// rather than panicked so a cancelled dialog or write failure
@@ -5275,8 +5275,8 @@ impl CarbideApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(path) = rfd::FileDialog::new()
-                .set_file_name("workbook.tscl")
-                .add_filter("Carbide", &["tscl"])
+                .set_file_name("workbook.crbd")
+                .add_filter("Carbide", &["crbd"])
                 .save_file()
             {
                 if let Err(e) = std::fs::write(&path, &bytes) {
@@ -5288,7 +5288,7 @@ impl CarbideApp {
         {
             wasm_bindgen_futures::spawn_local(async move {
                 if let Some(handle) = rfd::AsyncFileDialog::new()
-                    .set_file_name("workbook.tscl")
+                    .set_file_name("workbook.crbd")
                     .add_filter("Carbide", &["tscl"])
                     .save_file()
                     .await
@@ -5299,7 +5299,7 @@ impl CarbideApp {
         }
     }
 
-    /// Load a workbook + UI state from a `.tscl`. On native, opens a
+    /// Load a workbook + UI state from a `.crbd`. On native, opens a
     /// blocking pick dialog and reads synchronously; on wasm, spawns the
     /// async picker and writes the resulting bytes into
     /// [`Self::pending_open_bytes`] for `update()` to drain on the next
@@ -5309,7 +5309,7 @@ impl CarbideApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(path) = rfd::FileDialog::new()
-                .add_filter("Carbide", &["tscl"])
+                .add_filter("Carbide", &["crbd", "tscl"])
                 .pick_file()
             {
                 match std::fs::read(&path) {

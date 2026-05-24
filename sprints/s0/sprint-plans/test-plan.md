@@ -78,8 +78,8 @@ Finalized - DO NOT EDIT
 ## End-to-End Tests
 
 - **Status:** possible (manual)
-- `e2e_browser_save_open_roundtrip`: Run `trunk serve` (or the project's equivalent wasm dev server); open the app in Chrome; click a Budget slider; press Ctrl+S; verify a `.tscl` download appears in the browser; refresh the page; press Ctrl+O; pick the downloaded file; verify the slider is at the position the user left it.
+- `e2e_browser_save_open_roundtrip`: Run `trunk serve` (or the project's equivalent wasm dev server); open the app in Chrome; click a Budget slider; press Ctrl+S; verify a `.crbd` download appears in the browser; refresh the page; press Ctrl+O; pick the downloaded file; verify the slider is at the position the user left it.
 - `e2e_browser_autosave_survives_refresh`: edit a cell, wait 3 seconds, F5 the page, verify the cell value is restored.
-- `e2e_native_save_open_roundtrip`: `cargo run --manifest-path apps/carbide-ui/Cargo.toml`; same sequence using the OS file dialogs; verify the on-disk `.tscl` opens cleanly.
+- `e2e_native_save_open_roundtrip`: `cargo run --manifest-path apps/carbide-ui/Cargo.toml`; same sequence using the OS file dialogs; verify the on-disk `.crbd` opens cleanly.
 
 Manual E2E is acceptable for this sprint; a Playwright/wdio harness for the wasm build is the right next-sprint target if we want CI-gated E2E.

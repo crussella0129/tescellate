@@ -1,4 +1,4 @@
-//! Property-based tests for `.tscl` persistence — v14.
+//! Property-based tests for `.crbd` persistence — v14.
 //!
 //! A spreadsheet that loses data when saved and reopened is worse than
 //! useless, so the `save` → `open` round-trip is a correctness property
@@ -93,10 +93,10 @@ fn build(cells: &[(String, String)]) -> (WorkbookEngine, SheetId) {
     (eng, sid)
 }
 
-/// A unique-per-call temp `.tscl` path.
+/// A unique-per-call temp `.crbd` path.
 fn temp_tscl(tag: &str, i: usize) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "carbide-persist-{tag}-{}-{i}.tscl",
+        "carbide-persist-{tag}-{}-{i}.crbd",
         std::process::id()
     ))
 }

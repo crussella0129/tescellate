@@ -2,12 +2,12 @@
 
 ## 1. Sprint Goal
 
-Ship Priority 3 from the launch brief: end-to-end `.tscl` persistence in the
+Ship Priority 3 from the launch brief: end-to-end `.crbd` persistence in the
 pure-Rust egui/WebAssembly UI. Concretely:
 
-- **Ctrl+S** in the app produces a downloadable `.tscl` file (browser blob,
+- **Ctrl+S** in the app produces a downloadable `.crbd` file (browser blob,
   native file dialog where applicable).
-- A **File → Open / Ctrl+O** action lets the user load a `.tscl` back, with the
+- A **File → Open / Ctrl+O** action lets the user load a `.crbd` back, with the
   workbook *and* per-sheet UI state (formats, widgets, notes, conditional
   rules, stage flags) round-tripping faithfully.
 - **localStorage autosave** keeps the current workbook safe across browser
@@ -23,7 +23,7 @@ calls out as the bridge between "HyperCard-with-spreadsheet-syntax" and
 
 | File | Relevance | Notes |
 |------|-----------|-------|
-| `crates/carbide-store/src/lib.rs` | high | Already implements the `.tscl` zip format: `manifest.json` + `workbook.json`, deflate-compressed. `save`/`load` take `Write+Seek`/`Read+Seek`; helpers `save_to_bytes`/`load_from_bytes` for in-memory round trips. `FORMAT_VERSION = 0`. Tests already exercise round trip + unknown-version refusal. |
+| `crates/carbide-store/src/lib.rs` | high | Already implements the `.crbd` zip format: `manifest.json` + `workbook.json`, deflate-compressed. `save`/`load` take `Write+Seek`/`Read+Seek`; helpers `save_to_bytes`/`load_from_bytes` for in-memory round trips. `FORMAT_VERSION = 0`. Tests already exercise round trip + unknown-version refusal. |
 | `crates/carbide-formula/src/engine.rs` | high | `WorkbookEngine::save(path)` / `open(path)` exist but use `std::fs::File` — **path-based, won't link on wasm32**. Need byte-oriented variants that delegate to `carbide_store::{save_to_bytes, load_from_bytes}`. |
 | `crates/carbide-core/...` | high | `Workbook { id, meta, default_engine, sheet_order, sheets }` and `Cell { source, engine, value }` are already `Serialize`/`Deserialize`. This is the cargo we ship through the format. |
 | `apps/carbide-ui/src/app.rs` | high | The egui app holds `WorkbookEngine` *plus* an `ActiveSheet`, three `Sheet<C>` selection bundles, three `FormatMap`s, three `Widgets`, three `NoteMap`s, conditional `Rule` lists, the `History`, the Stage Mode flag, and view geometry. **None of this UI state currently round-trips through `Workbook`.** Anything we want to survive a save needs to ride a sibling JSON inside the zip. |
@@ -39,8 +39,8 @@ calls out as the bridge between "HyperCard-with-spreadsheet-syntax" and
 ## 3. External Sources
 
 - [web-sys: HtmlAnchorElement + Blob](https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.HtmlAnchorElement.html) — programmatic download pattern: build a `Blob` from the bytes, `URL::create_object_url_with_blob`, set `<a download>` href, `.click()`, revoke the URL. This is what we'll use for save-to-disk on wasm.
-- [web-sys: HtmlInputElement file picker](https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.HtmlInputElement.html) — `<input type="file" accept=".tscl">` plus a `change` listener that pulls the chosen `File`, hands it to a `FileReader`, and resolves a `js_sys::Promise` with the bytes. Async — must be awaited via `wasm-bindgen-futures::spawn_local`.
-- [web-sys: window().local_storage()](https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.Storage.html) — `set_item(key, value)`/`get_item(key)`. Values are JS strings, so a `.tscl` zip needs base64 encoding for transport. Quota is browser-defined (Chrome ~10 MiB per origin); we'll cap at 5 MiB and surface a non-blocking toast if a workbook exceeds it.
+- [web-sys: HtmlInputElement file picker](https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.HtmlInputElement.html) — `<input type="file" accept=".crbd">` plus a `change` listener that pulls the chosen `File`, hands it to a `FileReader`, and resolves a `js_sys::Promise` with the bytes. Async — must be awaited via `wasm-bindgen-futures::spawn_local`.
+- [web-sys: window().local_storage()](https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.Storage.html) — `set_item(key, value)`/`get_item(key)`. Values are JS strings, so a `.crbd` zip needs base64 encoding for transport. Quota is browser-defined (Chrome ~10 MiB per origin); we'll cap at 5 MiB and surface a non-blocking toast if a workbook exceeds it.
 - [rfd crate](https://docs.rs/rfd/latest/rfd/) — cross-platform native file dialog with a wasm backend. The wasm backend ends up calling the same Blob/Input dance we'd write by hand. Pulling rfd in means the UI gets native dialogs *and* wasm dialogs from one API. **Decision: use rfd; only fall through to raw web-sys if rfd's wasm path can't trigger a download from a non-user-gesture context.**
 - [zip crate features](https://docs.rs/zip/latest/zip/) — confirms `deflate-flate2` selects the pure-Rust deflate path; that's what carbide-store currently uses, so wasm is already supported transitively.
 
@@ -67,14 +67,14 @@ calls out as the bridge between "HyperCard-with-spreadsheet-syntax" and
    - Both are pure functions over the app struct; no rendering.
 4. **Ctrl+S / Save** — keymap adds `Command::Save`. On wasm: build bytes via `engine.save_bytes()` + `state_io::capture`, hand to `rfd::AsyncFileDialog::new().save_file()`. On native: same, but rfd opens a native dialog.
 5. **Ctrl+O / Open** — same pattern, mirror direction. On wasm: rfd async; on resolved bytes, call `engine.open_bytes()` + `state_io::restore`. Lift the autosave debounce briefly to avoid the open immediately overwriting itself.
-6. **localStorage autosave** — `state_io::autosave_to_local_storage()` runs on a debounced dirty flag (every 2s if the workbook changed). Stores base64-encoded `.tscl` bytes under key `carbide.autosave.v1`. On app boot, before seeding demos, look up the key; if present, restore from it.
+6. **localStorage autosave** — `state_io::autosave_to_local_storage()` runs on a debounced dirty flag (every 2s if the workbook changed). Stores base64-encoded `.crbd` bytes under key `carbide.autosave.v1`. On app boot, before seeding demos, look up the key; if present, restore from it.
 7. **Tests** —
    - `carbide-store`: round-trip a workbook + non-empty UiState through `save_to_bytes`/`load_from_bytes`.
    - `carbide-store`: refuse format_version 99; tolerate format_version 0 (yields `UiState::default()`).
    - `carbide-ui` unit tests for `state_io::capture` / `restore` round trip a stub app fixture.
 8. **CI gate** — workspace test, clippy, fmt, and `cargo build --target wasm32-unknown-unknown --manifest-path apps/carbide-ui/Cargo.toml`. All four must pass.
 
-**Alternative considered — two-file split (engine `.tscl` + UI `.tscl-ui` sidecar).** Cleaner separation, but doubles the user-visible artifact and complicates "send a teammate the file" — they'd lose styling. Rejected: the file format already supports multi-entry zip; we use it.
+**Alternative considered — two-file split (engine `.crbd` + UI `.crbd-ui` sidecar).** Cleaner separation, but doubles the user-visible artifact and complicates "send a teammate the file" — they'd lose styling. Rejected: the file format already supports multi-entry zip; we use it.
 
 **Rationale:** the store layer is the right home for the schema; the UI already knows how to flatten its state but doesn't need to know about zip framing. The format-version bump is unavoidable but the existing `Version(u32)` error path is exactly the upgrade path the project CLAUDE.md asks for.
 

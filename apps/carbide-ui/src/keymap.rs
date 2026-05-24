@@ -106,12 +106,12 @@ pub enum Command {
     ToggleStageMode,
     /// Exit Stage Mode (Escape while in Stage Mode).
     ExitStageMode,
-    /// Save the workbook to a `.tscl` (Ctrl+S). Re-uses the last save
+    /// Save the workbook to a `.crbd` (Ctrl+S). Re-uses the last save
     /// path on native; on wasm always prompts for a download location.
     Save,
     /// Force a save dialog even when a path is known (Ctrl+Shift+S).
     SaveAs,
-    /// Open a `.tscl` (Ctrl+O). Replaces the current workbook + UI state.
+    /// Open a `.crbd` (Ctrl+O). Replaces the current workbook + UI state.
     Open,
 }
 

@@ -6,7 +6,7 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "`.tscl` workbook file format reader/writer. Zip archive with manifest, sheets, formula assets."
+description = "`.crbd` workbook file format reader/writer. Zip archive with manifest, sheets, formula assets."
 
 [dependencies]
 serde = { workspace = true }

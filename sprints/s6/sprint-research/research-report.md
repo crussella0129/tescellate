@@ -14,7 +14,7 @@ v151 follow-up.
 - **ADR-009 (sprint 5)** — `VoronoiLattice` carries `seeds` + `bounds`
   as struct state; cells are bounded against `Rect`. Sprint 6 consumes
   this without modification.
-- **ADR-001 (sprint 0)** — `.tscl` `ui.json` sidecar schema. Sprint 6
+- **ADR-001 (sprint 0)** — `.crbd` `ui.json` sidecar schema. Sprint 6
   follows the established schema-evolution pattern: any new UiSnapshot
   field gets `#[serde(default)]` so older snapshots tolerate the
   addition.

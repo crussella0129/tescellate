@@ -52,7 +52,7 @@ Finalized - DO NOT EDIT
 ## End-to-End Tests
 
 - **Status:** possible (manual)
-- `e2e_browser_save_open_roundtrip`: build wasm, serve, open app in browser, change a slider, Ctrl+S → download a `.tscl`, refresh, Ctrl+O → pick downloaded file, verify slider state restored.
+- `e2e_browser_save_open_roundtrip`: build wasm, serve, open app in browser, change a slider, Ctrl+S → download a `.crbd`, refresh, Ctrl+O → pick downloaded file, verify slider state restored.
 - `e2e_browser_autosave_survives_refresh`: edit a cell, wait > 2s, F5, verify cell value restored from localStorage.
 - `e2e_native_save_open_roundtrip`: `cargo run --manifest-path apps/carbide-ui/Cargo.toml`, Ctrl+S → native dialog → write to disk; reopen; Ctrl+O → native dialog → restore.
 

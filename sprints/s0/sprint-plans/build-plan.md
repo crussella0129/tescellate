@@ -4,7 +4,7 @@ Finalized - DO NOT EDIT
 
 ## Schema Tree
 
-- **Sprint Goal:** `.tscl` persistence end-to-end in the egui/wasm UI (Ctrl+S save, Ctrl+O open, localStorage autosave; UiState round-trips).
+- **Sprint Goal:** `.crbd` persistence end-to-end in the egui/wasm UI (Ctrl+S save, Ctrl+O open, localStorage autosave; UiState round-trips).
   - **Component A — Store layer extension** (UiState payload in the zip; format-version bump v0→v1; backwards-compatible read of v0).
     - T-001: Add `UiState` opaque-JSON type to `carbide-store`.
     - T-002: Bump `FORMAT_VERSION` to 1; extend `save`/`load` signatures to carry `&UiState`/return `(Workbook, UiState)`; accept v0 as "no UiState".
@@ -17,7 +17,7 @@ Finalized - DO NOT EDIT
   - **Component D — Save/Open keymap and dialog flow**
     - T-007: Add `carbide-store` dep + `rfd` dep + `base64` dep + `wasm-bindgen-futures` (already present) to `apps/carbide-ui/Cargo.toml`. Pin versions, configure features so wasm32 compiles.
     - T-008: Extend `keymap.rs` with `Command::Save`, `Command::SaveAs`, `Command::Open`; bind Ctrl+S, Ctrl+Shift+S, Ctrl+O; register them in `NAV_KEYS`.
-    - T-009: Implement async save flow in `app.rs`: on Save, call `engine.save_bytes(&capture())`, hand bytes to `rfd::AsyncFileDialog::new().set_file_name("carbide.tscl").save_file().await?.write(bytes).await`. Use `wasm-bindgen-futures::spawn_local` on wasm and a `pollster::block_on` (or sync `rfd::FileDialog`) path on native.
+    - T-009: Implement async save flow in `app.rs`: on Save, call `engine.save_bytes(&capture())`, hand bytes to `rfd::AsyncFileDialog::new().set_file_name("carbide.crbd").save_file().await?.write(bytes).await`. Use `wasm-bindgen-futures::spawn_local` on wasm and a `pollster::block_on` (or sync `rfd::FileDialog`) path on native.
     - T-010: Implement async open flow: on Open, `rfd::AsyncFileDialog::new().add_filter("Carbide", &["tscll", "tscl"]).pick_file().await?.read().await`, then `engine.open_bytes` + `state_io::restore`. Stash bytes in a `Arc<Mutex<Option<Vec<u8>>>>` and drain it at the start of each frame (egui can't await mid-update).
     - T-011: Add Ribbon "Save" and "Open" buttons that emit the same `RibbonAction`s and route through the same handlers.
   - **Component E — localStorage autosave + rehydrate**
@@ -81,13 +81,13 @@ Finalized - DO NOT EDIT
 ### T-009: Save flow.
 - **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-004, T-006, T-007, T-008
-- **Success criterion:** Triggering `Command::Save` (Ctrl+S or ribbon) calls `engine.save_bytes(&capture().into())`, then opens a save dialog via `rfd::AsyncFileDialog::new().set_file_name("workbook.tscl").save_file()`, then writes bytes via `FileHandle::write`. On wasm: `spawn_local` the future. On native: `pollster::block_on` is too heavyweight — use the sync `rfd::FileDialog` instead behind `#[cfg(not(target_arch = "wasm32"))]`.
+- **Success criterion:** Triggering `Command::Save` (Ctrl+S or ribbon) calls `engine.save_bytes(&capture().into())`, then opens a save dialog via `rfd::AsyncFileDialog::new().set_file_name("workbook.crbd").save_file()`, then writes bytes via `FileHandle::write`. On wasm: `spawn_local` the future. On native: `pollster::block_on` is too heavyweight — use the sync `rfd::FileDialog` instead behind `#[cfg(not(target_arch = "wasm32"))]`.
 - **Notes:** Treat failures (user cancelled the dialog → `None`; write error) as silent for now; logging hook can be added in a follow-up.
 
 ### T-010: Open flow.
 - **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-009
-- **Success criterion:** Triggering `Command::Open` opens a file picker filtered to `*.tscl`, reads the bytes, calls `engine.open_bytes`, then `state_io::restore`. Bytes arrive asynchronously on wasm — staged through `Arc<Mutex<Option<Vec<u8>>>>` (call it `pending_open`), drained at the top of `update()`.
+- **Success criterion:** Triggering `Command::Open` opens a file picker filtered to `*.crbd`, reads the bytes, calls `engine.open_bytes`, then `state_io::restore`. Bytes arrive asynchronously on wasm — staged through `Arc<Mutex<Option<Vec<u8>>>>` (call it `pending_open`), drained at the top of `update()`.
 - **Notes:** While the open is in flight, suppress autosave (`self.suppress_autosave_until = now + 2.0`) so the in-flight load doesn't get clobbered.
 
 ### T-011: Ribbon Save/Open buttons.

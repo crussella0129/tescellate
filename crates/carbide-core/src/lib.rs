@@ -3,8 +3,8 @@
 //! See `PLAN.md` §4 (data model) and §5 (DAG engine). Phase 0 ships only the
 //! type skeleton; the recompute engine lands in Phase 1.
 
-use serde::{Deserialize, Serialize};
 use carbide_tess::{LatticeConfig, LatticeKind};
+use serde::{Deserialize, Serialize};
 
 pub mod cell;
 pub mod dag;

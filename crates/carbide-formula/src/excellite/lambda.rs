@@ -10,9 +10,9 @@
 use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::{EvalCtx, EvalError, ScopedCtx};
+use carbide_core::{CarbideFn, CellValue, Env};
 use std::any::Any;
 use std::sync::Arc;
-use carbide_core::{CarbideFn, CellValue, Env};
 
 #[derive(Debug)]
 pub struct Lambda {

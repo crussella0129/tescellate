@@ -1,6 +1,6 @@
-//! `.tscl` file format I/O. See PLAN.md §9.
+//! `.crbd` file format I/O. See PLAN.md §9.
 //!
-//! A `.tscl` file is a zip archive with this layout:
+//! A `.crbd` file is a zip archive with this layout:
 //!
 //! ```text
 //! manifest.json   { "format_version": 2, "engines": [...] }
@@ -21,9 +21,9 @@
 //! `formulas/native/<hash>.rs` for cached Rust compilations, and
 //! `trust.json` for the native-formula trust manifest.
 
+use carbide_core::{EngineKind, Workbook};
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read, Seek, Write};
-use carbide_core::{EngineKind, Workbook};
 use thiserror::Error;
 
 /// Highest format version this build can write and read at full fidelity.
@@ -32,7 +32,7 @@ use thiserror::Error;
 /// `lattice_config == None` via serde default.
 pub const FORMAT_VERSION: u32 = 2;
 
-/// Opaque UI-side state ridden alongside the workbook inside a `.tscl`.
+/// Opaque UI-side state ridden alongside the workbook inside a `.crbd`.
 ///
 /// The store treats this as a transparent JSON blob — it does not interpret
 /// or validate fields. The egui front-end owns the schema (per-sheet formats,
@@ -190,9 +190,9 @@ pub fn load_full_from_bytes(bytes: &[u8]) -> Result<(Workbook, UiState), StoreEr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hashbrown::HashMap;
     use carbide_core::{Cell, CellValue, Sheet, SheetId, WorkbookId, WorkbookMeta};
     use carbide_tess::LatticeKind;
+    use hashbrown::HashMap;
 
     fn sample() -> Workbook {
         let mut cells = HashMap::new();
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn voronoi_frozen_survives_save_load() {
         // Sprint 18 C-001: VoronoiConfig.frozen must survive the full
-        // `.tscl` envelope (save_full → load_full), not just serde JSON in
+        // `.crbd` envelope (save_full → load_full), not just serde JSON in
         // isolation. Mirrors voronoi_seeds_survive_full_round_trip above.
         use carbide_tess::{LatticeConfig, VoronoiConfig};
 

@@ -155,7 +155,7 @@ This means cross-engine recompute works trivially: editing a Python cell that an
 
 ## Persistence
 
-The on-disk `.tscl` format stores `Sheet.cells: HashMap<String, Cell>`, where each `Cell` carries:
+The on-disk `.crbd` format stores `Sheet.cells: HashMap<String, Cell>`, where each `Cell` carries:
 
 - `source: Option<String>` — the user's typed source.
 - `engine: Option<EngineKind>` — `None` means "use the workbook default".
@@ -163,7 +163,7 @@ The on-disk `.tscl` format stores `Sheet.cells: HashMap<String, Cell>`, where ea
 
 `CompiledFormula` is **not** persisted. On workbook open, `engine::rebuild_dag` walks every cell with a `source`, asks the appropriate engine to `parse` it, populates the DAG. This is what restores live `CellValue::Function` values after `Function` round-trips as `#STALE!`.
 
-Engines that need their own persistent state (e.g., the planned Rust native engine caches `cdylib`s in `~/.carbide/cache/native/`) own that cache outside the workbook file. The `.tscl` format itself is engine-neutral.
+Engines that need their own persistent state (e.g., the planned Rust native engine caches `cdylib`s in `~/.carbide/cache/native/`) own that cache outside the workbook file. The `.crbd` format itself is engine-neutral.
 
 ## Numbered guarantees
 

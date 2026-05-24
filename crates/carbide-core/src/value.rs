@@ -120,7 +120,7 @@ pub enum CellValue {
     /// Async eval / compile in flight. Renderer should show a spinner.
     Pending,
     /// First-class function value: `LAMBDA(...)` literals, LET-bound
-    /// closures, etc. Cannot fully round-trip through `.tscl` save/load
+    /// closures, etc. Cannot fully round-trip through `.crbd` save/load
     /// — deserializes to `CellError::StaleFunction` and is restored by
     /// recompute-on-load from the cell's stored `source`.
     Function(Arc<dyn CarbideFn>),

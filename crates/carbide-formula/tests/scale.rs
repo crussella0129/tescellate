@@ -140,7 +140,7 @@ fn large_workbook_saves_and_reopens() {
         eng.set_cell(sid, &format!("A{i}"), Some(&src)).unwrap();
     }
 
-    let path = std::env::temp_dir().join(format!("carbide-scale-{}.tscl", std::process::id(),));
+    let path = std::env::temp_dir().join(format!("carbide-scale-{}.crbd", std::process::id(),));
     eng.save(&path).expect("save a large workbook");
     let mut reopened = WorkbookEngine::new();
     reopened.open(&path).expect("reopen a large workbook");

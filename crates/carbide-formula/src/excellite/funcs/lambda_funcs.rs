@@ -8,9 +8,9 @@ use crate::excellite::ast::Expr;
 use crate::excellite::eval::eval;
 use crate::excellite::lambda::Lambda;
 use crate::{EvalCtx, EvalError, ScopedCtx};
+use carbide_core::{CellValue, Env};
 use std::collections::HashSet;
 use std::sync::Arc;
-use carbide_core::{CellValue, Env};
 
 /// `LAMBDA(p1, p2, ..., body)` — first-class function literal.
 ///
@@ -154,9 +154,9 @@ mod tests {
     use crate::excellite::parse::parse;
     use crate::WorkbookEngine;
     use crate::{EvalCtx, EvalError};
-    use hashbrown::HashMap;
     use carbide_core::{CellValue, SheetId};
     use carbide_tess::LatticeKind;
+    use hashbrown::HashMap;
 
     // -- Mock evaluation context for cells-free tests ----------------------
 

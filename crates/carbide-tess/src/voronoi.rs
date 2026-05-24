@@ -168,7 +168,7 @@ pub struct VoronoiConfig {
     /// *engine* ignores it (geometry, eval, neighbors don't change).
     /// `#[serde(default)]` so pre-sprint v2 files load with `frozen: false`
     /// (the field didn't exist before; ADR-012 v2 schema accepts
-    /// new optional fields this way — no `.tscl` version bump).
+    /// new optional fields this way — no `.crbd` version bump).
     #[serde(default)]
     pub frozen: bool,
 }

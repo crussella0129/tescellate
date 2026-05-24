@@ -4,8 +4,8 @@
 //! `Sheet.cells`). Extent governs validation: `Bounded` rejects writes
 //! outside its region; `Unbounded` accepts any syntactically valid address.
 
-use serde::{Deserialize, Serialize};
 use carbide_tess::ParsedCoord;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "spec", rename_all = "snake_case")]

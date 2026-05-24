@@ -1,7 +1,7 @@
 //! Formula engines for Carbide. See PLAN.md §6.
 
-use std::sync::Arc;
 use carbide_core::{CellValue, EngineKind, Env};
+use std::sync::Arc;
 use thiserror::Error;
 
 pub mod engine;

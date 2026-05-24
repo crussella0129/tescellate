@@ -43,7 +43,7 @@ across wasm and native — the only `#[cfg]` is at the `spawn_local` vs.
 - Firefox: 5 MiB.
 - Safari: 5 MiB.
 
-Practical ceiling for autosave: 4 MiB of base64 = ~3 MiB binary. A `.tscl` with
+Practical ceiling for autosave: 4 MiB of base64 = ~3 MiB binary. A `.crbd` with
 ~10K cells of text-and-numbers compresses to well under 100 KiB, so the cap is
 only relevant for pathological workbooks; we surface a toast and skip the
 autosave when over.

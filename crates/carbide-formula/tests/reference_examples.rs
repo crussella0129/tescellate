@@ -35,9 +35,7 @@ fn eval_src(src: &str) -> Result<CellValue, String> {
         }
         CellValue::Reference(carbide_core::RefShape::Range(a, b)) => {
             let data = c.range(&a, &b).map_err(|e| format!("deref error: {e:?}"))?;
-            Ok(CellValue::Array(Box::new(carbide_core::Array::col(
-                data,
-            ))))
+            Ok(CellValue::Array(Box::new(carbide_core::Array::col(data))))
         }
         other => Ok(other),
     }

@@ -1,5 +1,5 @@
 //! UI-side persistence snapshot — the typed mirror of the opaque
-//! `carbide_store::UiState` blob that rides inside a `.tscl` file
+//! `carbide_store::UiState` blob that rides inside a `.crbd` file
 //! alongside the workbook.
 //!
 //! [`UiSnapshot`] is a deliberately small, JSON-friendly struct that
@@ -9,7 +9,7 @@
 //! (selection drag, find state, history, dialog visibility, etc.) is
 //! intentionally ephemeral.
 //!
-//! [`capture`] is called when writing a `.tscl`; [`restore`] is called
+//! [`capture`] is called when writing a `.crbd`; [`restore`] is called
 //! when reading one back. Both are pure functions over the app struct:
 //! no rendering, no engine calls.
 
@@ -130,7 +130,7 @@ pub const AUTOSAVE_KEY: &str = "carbide.autosave.v1";
 /// throwing a quota exception that breaks the autosave path.
 pub const AUTOSAVE_MAX_BYTES: usize = 4 * 1024 * 1024;
 
-/// Persist `.tscl` bytes into browser localStorage (wasm32 only). On
+/// Persist `.crbd` bytes into browser localStorage (wasm32 only). On
 /// native, a no-op — the dialog flow already covers explicit save. All
 /// failures (no window, no storage, quota exceeded, oversize payload)
 /// are swallowed; autosave is best-effort.

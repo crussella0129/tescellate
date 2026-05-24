@@ -9,7 +9,6 @@
 
 use crate::excellite::{eval_error_to_cell_error, ExcelLite};
 use crate::{CompiledFormula, EvalCtx, EvalError, FormulaEngine, FormulaRef};
-use hashbrown::HashMap;
 use carbide_core::{
     Cell, CellError, CellRef, CellValue, Dag, EngineKind, Sheet, SheetExtent, SheetId, Workbook,
     WorkbookId, WorkbookMeta,
@@ -17,6 +16,7 @@ use carbide_core::{
 use carbide_tess::square::SquareCoord;
 use carbide_tess::voronoi::VoronoiLattice;
 use carbide_tess::{LatticeConfig, LatticeHandle, LatticeKind, ParsedCoord, VoronoiConfig};
+use hashbrown::HashMap;
 
 pub struct WorkbookEngine {
     pub workbook: Workbook,
@@ -111,7 +111,7 @@ impl WorkbookEngine {
             .map_err(|e| SetCellError::Parse(e.to_string()))
     }
 
-    /// Serialize the workbook (plus an opaque UI-state blob) to a `.tscl`
+    /// Serialize the workbook (plus an opaque UI-state blob) to a `.crbd`
     /// zip and return the bytes. The DAG isn't stored — it can be
     /// reconstructed from cell sources on load. Target-agnostic; the UI
     /// uses this directly on wasm32 where the path-based API can't link.
@@ -120,7 +120,7 @@ impl WorkbookEngine {
             .map_err(|e| SetCellError::Io(e.to_string()))
     }
 
-    /// Deserialize a workbook + UI state from in-memory `.tscl` bytes.
+    /// Deserialize a workbook + UI state from in-memory `.crbd` bytes.
     /// Rebuilds the DAG via [`Self::rebuild_dag`]. Returns the opaque UI
     /// state so the UI can restore its own per-sheet view.
     pub fn open_bytes(&mut self, bytes: &[u8]) -> Result<carbide_store::UiState, SetCellError> {
@@ -135,7 +135,7 @@ impl WorkbookEngine {
         Ok(ui)
     }
 
-    /// Persist the workbook to a `.tscl` zip at `path`. Path-based wrapper
+    /// Persist the workbook to a `.crbd` zip at `path`. Path-based wrapper
     /// over [`Self::save_bytes`] for native callers. Writes with
     /// `UiState::default()`; callers that own UI state should hand it to
     /// `save_bytes` directly.
@@ -144,7 +144,7 @@ impl WorkbookEngine {
         std::fs::write(path, bytes).map_err(|e| SetCellError::Io(e.to_string()))
     }
 
-    /// Load a workbook from a `.tscl` file. Path-based wrapper over
+    /// Load a workbook from a `.crbd` file. Path-based wrapper over
     /// [`Self::open_bytes`]; the returned UI state (if any) is discarded.
     pub fn open(&mut self, path: &std::path::Path) -> Result<(), SetCellError> {
         let bytes = std::fs::read(path).map_err(|e| SetCellError::Io(e.to_string()))?;
@@ -1277,12 +1277,10 @@ mod tests {
     #[test]
     fn engine_path_api_uses_byte_api() {
         let (eng, _sid) = new_sheet();
-        let path_bytes_via_save = eng
-            .save_bytes(&carbide_store::UiState::default())
-            .unwrap();
+        let path_bytes_via_save = eng.save_bytes(&carbide_store::UiState::default()).unwrap();
 
         let tmp = std::env::temp_dir().join(format!(
-            "carbide-byte-api-{}-{}.tscl",
+            "carbide-byte-api-{}-{}.crbd",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1308,7 +1306,7 @@ mod tests {
         eng.set_cell(sid, "A2", Some("=A1*2")).unwrap();
 
         let tmp = std::env::temp_dir().join(format!(
-            "carbide-test-{}-{}.tscl",
+            "carbide-test-{}-{}.crbd",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1918,7 +1916,7 @@ mod tests {
         eng.set_cell(sid, "H(0,0)", Some("=10")).unwrap();
         eng.set_cell(sid, "H(1,0)", Some("=H(0,0) * 2")).unwrap();
         let tmp = std::env::temp_dir().join(format!(
-            "carbide-hex-test-{}-{}.tscl",
+            "carbide-hex-test-{}-{}.crbd",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2404,9 +2402,7 @@ mod tests {
         let new = vec![[3.0, 4.0], [40.0, -8.0], [-12.0, 33.0]];
         eng.set_voronoi_seeds(sid, new.clone()).unwrap();
 
-        let bytes = eng
-            .save_bytes(&carbide_store::UiState::default())
-            .unwrap();
+        let bytes = eng.save_bytes(&carbide_store::UiState::default()).unwrap();
 
         let mut reloaded = WorkbookEngine::new();
         reloaded.open_bytes(&bytes).unwrap();
@@ -2426,9 +2422,7 @@ mod tests {
         eng.new_workbook();
         let sid = eng.add_sheet("V", LatticeKind::Voronoi);
         eng.set_voronoi_frozen(sid, true).unwrap();
-        let bytes = eng
-            .save_bytes(&carbide_store::UiState::default())
-            .unwrap();
+        let bytes = eng.save_bytes(&carbide_store::UiState::default()).unwrap();
         let mut reloaded = WorkbookEngine::new();
         reloaded.open_bytes(&bytes).unwrap();
         assert!(

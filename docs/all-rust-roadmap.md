@@ -106,7 +106,7 @@ A version does not merge until both gates pass. Versions are not calendar-bound.
 > property-based testing of the DAG recompute engine (incremental recompute proven
 > order-independent on random workbooks, cycle detection hardened), of the
 > tessellation lattices (geometric invariants fuzzed across square and hex), and of
-> `.tscl` persistence (save/open round-trip fidelity across random workbooks), capped
+> `.crbd` persistence (save/open round-trip fidelity across random workbooks), capped
 > by an end-to-end smoke test driving the real `carbide-core` binary over its
 > JSON-RPC stdio protocol, scale/stress tests that surfaced and fixed an
 > unbounded-recursion crash on pathologically deep formulas, and a cross-engine

@@ -344,7 +344,7 @@ Rendering cost per cell is dominated by Canvas 2D `lineTo` calls, so a 10k-cell 
 
 A workbook with an irregular tessellation needs to store enough on disk that the lattice can be reconstructed on load:
 
-| Lattice | What's stored in `.tscl` |
+| Lattice | What's stored in `.crbd` |
 |---|---|
 | Square / hex / tri / parallelogram / composite | `LatticeKind` enum variant + extent params. ~50 bytes. |
 | Voronoi | `LatticeKind::Voronoi { seeds: Vec<Point2>, bounds, seed_source }`. Linear in seed count; ~16 bytes per seed. |

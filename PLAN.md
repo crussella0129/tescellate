@@ -70,7 +70,7 @@ On top of the geometry, formulas can be written in **multiple languages** with a
 │   │     - python         (PyO3, embedded CPython)            │ │
 │   │     - rhai           (sandboxed scripting)               │ │
 │   │     - rustnative     (rustc + libloading, cached)        │ │
-│   │  carbide-store    .tscl file format (zip)             │ │
+│   │  carbide-store    .crbd file format (zip)             │ │
 │   └──────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -452,7 +452,7 @@ Example methods (non-exhaustive):
 
 | Method | Direction | Purpose |
 |---|---|---|
-| `workbook.open` | C→S | Load a `.tscl` file |
+| `workbook.open` | C→S | Load a `.crbd` file |
 | `workbook.new` | C→S | Create workbook with a default lattice |
 | `sheet.add` | C→S | Add sheet with a chosen lattice |
 | `cell.set` | C→S | Set source + engine on a cell |
@@ -507,12 +507,12 @@ The renderer translates user gestures into the lattice's region type; the formul
 
 ---
 
-## 9. Persistence: the `.tscl` format
+## 9. Persistence: the `.crbd` format
 
 A zip archive (so it's git-diffable with a tool, scriptable, and inspectable) with this layout:
 
 ```
-my_workbook.tscl
+my_workbook.crbd
 ├── manifest.json
 ├── workbook.json
 ├── sheets/
@@ -590,7 +590,7 @@ Each phase ends in something demonstrable. Phases are not calendar-bound.
 - Excel-lite engine: arithmetic, references, ranges, ~30 functions including `SUM`, `AVG`, `IF`, `COUNT`, `INDEX`, `MATCH`.
 - DAG engine + recompute.
 - Renderer draws the square grid + selection + formula bar.
-- Save/load `.tscl`.
+- Save/load `.crbd`.
 - **Test**: replicate the classic "loan amortization table" sample.
 
 ### Phase 2 — Hex grid + Python

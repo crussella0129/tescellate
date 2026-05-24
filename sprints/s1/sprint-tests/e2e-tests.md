@@ -7,7 +7,7 @@ autosave code is at least compilation- and lint-clean against the real
 target. The remaining E2E targets need a human at a browser:
 
 - `e2e_browser_save_open_roundtrip`: serve the wasm build, change a Budget
-  slider, Ctrl+S → download a `.tscl`, refresh, Ctrl+O → pick the file,
+  slider, Ctrl+S → download a `.crbd`, refresh, Ctrl+O → pick the file,
   verify the slider returned to the saved position.
 - `e2e_browser_autosave_survives_refresh`: edit any cell, wait > 2 s, F5,
   verify the cell value is restored from localStorage (boot rehydrate).

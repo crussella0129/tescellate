@@ -183,7 +183,7 @@ The engine's `lattice_for` rebuilds the lattice from just `LatticeKind`
 survive eval or save/load today. Decision: generalize the `Sheet` to
 carry its lattice's full configuration (not just the kind), so dragged
 Voronoi seeds persist and the engine's eval-time lattice matches the UI.
-This is a `.tscl` format change — requires a `manifest.json` version bump
+This is a `.crbd` format change — requires a `manifest.json` version bump
 and an upgrade path (older files → default seeds). Larger than ADR-010;
 sequenced as a separate sprint after v157.
 
@@ -215,14 +215,14 @@ persisted, single-sourced part of a Voronoi sheet:
   edit time are stale; re-resolving every cell's deps against the new lattice
   is what makes neighbor-dependent cells re-evaluate. A corrupt config maps
   to a dedicated `SetCellError::BadLatticeConfig`, not `UnsupportedLattice`.
-- **`.tscl` `FORMAT_VERSION` 1→2.** Seeds ride in `workbook.json`, so no new
+- **`.crbd` `FORMAT_VERSION` 1→2.** Seeds ride in `workbook.json`, so no new
   sidecar (cf. ADR-001). v1 files load with `lattice_config == None` via serde
   default; the bump exists so *older* builds reject v2 files rather than
   silently dropping seed data on a round-trip.
 
 Scope (this sprint): seed *drag* only. Add/delete seeds, bounds editing, and
 the px↔lattice-unit mapping under zoom (the seed-drag clamp assumes 1:1, no
-zoom — C-006) are deferred. The next sprint is the Carbide→Carbide rename,
+zoom — C-006) are deferred. The next sprint is the Tescellate→Carbide rename,
 which re-touches the format layer (`.tscl`→`.crbd`) — a conscious second,
 mechanical format change after this v2 schema bump.
 
@@ -286,7 +286,7 @@ rule), ADR-012 (Sheet-authoritative seed config the marquee enumerates).
 formatting paths through the trait (today they stay one-per-lattice and
 use `primary_cells()` to ignore marquee extras); literal merge of the
 four `draw_*_grid` functions into one parameterised `draw_lattice_panel`.
-The next sprint (v160) is the Carbide→Carbide rename, applied to the
+The next sprint (v160) is the Tescellate→Carbide rename, applied to the
 already-unified renderer for a smaller diff.
 
 ## ADR-014 — Voronoi polish: seed-handle fade + widget pop-out + persisted freeze + Enter-advance history rule (sprint 18)
@@ -318,7 +318,7 @@ clearance. When the widget cell is the editing cell, pop-out is skipped
 
 **F2 — Freeze seeds (persisted on the `Sheet`).** A new
 `VoronoiConfig.frozen: bool` with `#[serde(default)]` rides in
-`workbook.json` alongside the seeds. **No `.tscl` version bump** — the v2
+`workbook.json` alongside the seeds. **No `.crbd` version bump** — the v2
 schema (ADR-012) already accepts new optional fields this way. `frozen`
 is classified as a **UI preference**, not user data: if an older v2
 reader opens a frozen workbook and re-saves without the flag, the worst

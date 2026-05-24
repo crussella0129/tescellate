@@ -14,7 +14,7 @@ Pure follow-up sprint — no new lattice, no new schema work, no new deps.
 
 - **ADR-005 (sprint 2)** — `Widgets<K>` lattice-generic pattern. Sprint 4 instantiates the third coord type (`TriCoord`), closing the explicit follow-up noted in that ADR.
 - **ADR-006 (sprint 2)** — Hex widgets ship Button + Toggle; Slider / ProgressBar deferred because the per-cell footprint is too small. Triangle has the same constraint (56-side equilateral, similar inscribed-rect area), so sprint 4 inherits the same deferral.
-- **ADR-001 (sprint 0)** — `.tscl` `ui.json` sidecar schema. Adding `triangle_widgets` to `UiSnapshot` is the established schema-evolution pattern: new field with `#[serde(default)]` so older snapshots tolerate the addition.
+- **ADR-001 (sprint 0)** — `.crbd` `ui.json` sidecar schema. Adding `triangle_widgets` to `UiSnapshot` is the established schema-evolution pattern: new field with `#[serde(default)]` so older snapshots tolerate the addition.
 
 ## 2. Existing Code Survey
 

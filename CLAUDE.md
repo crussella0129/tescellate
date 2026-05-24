@@ -29,7 +29,7 @@ Formula engines live under `crates/carbide-formula/src/<engine>/`. Each engine i
 
 - **Don't add a third execution mode** (e.g., WASM-based Python, an LLM-based formula engine) without an explicit ask. The four engines in PLAN.md §6.2 are the scope.
 - **Don't replace the JSON-RPC IPC** with a native Node module / FFI binding. The subprocess split is deliberate (see PLAN.md §2).
-- **Don't change the file format** (`.tscl`) shape without bumping `manifest.json` version and adding an upgrade path.
+- **Don't change the file format** (`.crbd`) shape without bumping `manifest.json` version and adding an upgrade path.
 - **Don't merge changes that introduce a new lattice without a `Lattice` impl + parser + renderer + at least one test sheet** — partial lattice support is worse than none.
 
 ## Build commands (placeholder — to be filled in as Phase 0 lands)

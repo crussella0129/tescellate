@@ -23,7 +23,7 @@ Two things this sprint:
   fall through to text on non-rectangular cells. Voronoi inherits the
   same deferral (its polygons vary in size; a slider inside an irregular
   polygon is awkward).
-- **ADR-001 (sprint 0)** — `.tscl` `ui.json` schema evolution: new
+- **ADR-001 (sprint 0)** — `.crbd` `ui.json` schema evolution: new
   `UiSnapshot` field gets `#[serde(default)]`.
 
 ## 2. Existing Code Survey

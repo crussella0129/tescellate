@@ -8,9 +8,9 @@
 
 use crate::excellite::ast::Expr;
 use crate::{EvalCtx, EvalError};
+use carbide_core::CellValue;
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use carbide_core::CellValue;
 
 pub mod aggregate;
 pub mod coerce;

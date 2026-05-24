@@ -4,7 +4,7 @@ Finalized - DO NOT EDIT
 
 ## Schema Tree
 
-- **Sprint Goal:** v145 — wire `.tscl` Save/Open dialogs + localStorage autosave on top of v144's persistence infrastructure.
+- **Sprint Goal:** v145 — wire `.crbd` Save/Open dialogs + localStorage autosave on top of v144's persistence infrastructure.
   - **Component A — Dialog dependencies + keymap**
     - T-101a: Add `rfd`, `base64`, `web-sys` deps to `apps/carbide-ui/Cargo.toml`.
     - T-101b: Add `Command::{Save, SaveAs, Open}` + Ctrl+S/Ctrl+Shift+S/Ctrl+O bindings + NAV_KEYS entries + SHORTCUTS rows.
@@ -52,13 +52,13 @@ Finalized - DO NOT EDIT
 ### T-101e: Save handler.
 - **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-101b, T-101c, T-101d
-- **Success criterion:** Dispatching `Command::Save` (from keymap or ribbon): builds bytes via `engine.save_bytes(&snapshot_to_ui_state(&self.capture_state()))`, opens a save dialog via `rfd::AsyncFileDialog::new().set_file_name("workbook.tscl").save_file()`, writes via `FileHandle::write`. wasm uses `wasm_bindgen_futures::spawn_local`; native uses an inline `pollster::block_on`-free path — `rfd::FileDialog` (sync) instead, behind `#[cfg(not(target_arch = "wasm32"))]`.
+- **Success criterion:** Dispatching `Command::Save` (from keymap or ribbon): builds bytes via `engine.save_bytes(&snapshot_to_ui_state(&self.capture_state()))`, opens a save dialog via `rfd::AsyncFileDialog::new().set_file_name("workbook.crbd").save_file()`, writes via `FileHandle::write`. wasm uses `wasm_bindgen_futures::spawn_local`; native uses an inline `pollster::block_on`-free path — `rfd::FileDialog` (sync) instead, behind `#[cfg(not(target_arch = "wasm32"))]`.
 - **Notes:** Don't add pollster as a dep; keep the wasm vs native split via two arms.
 
 ### T-101f: Open handler.
 - **Touches:** `apps/carbide-ui/src/app.rs`
 - **Depends on:** T-101e
-- **Success criterion:** Dispatching `Command::Open` opens the file picker filtered to `*.tscl`, reads the bytes, and pushes them into `pending_open_bytes`. Sync native arm uses `rfd::FileDialog::pick_file()` + `std::fs::read`; wasm arm uses `AsyncFileDialog::pick_file().read()` inside `spawn_local`.
+- **Success criterion:** Dispatching `Command::Open` opens the file picker filtered to `*.crbd`, reads the bytes, and pushes them into `pending_open_bytes`. Sync native arm uses `rfd::FileDialog::pick_file()` + `std::fs::read`; wasm arm uses `AsyncFileDialog::pick_file().read()` inside `spawn_local`.
 - **Notes:** Lift autosave for 2 seconds after Open to avoid clobbering the load: `self.suppress_autosave_until = now + 2.0`.
 
 ### T-101g: Drop `#[allow(dead_code)]`.

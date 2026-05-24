@@ -2,7 +2,7 @@
 
 ## 1. Sprint Goal
 
-Wire the user-facing surface for `.tscl` persistence on top of the v144
+Wire the user-facing surface for `.crbd` persistence on top of the v144
 infrastructure: **Save / SaveAs / Open** commands (Ctrl+S, Ctrl+Shift+S,
 Ctrl+O) plus a ribbon File group, both fronted by an OS-native file
 dialog on desktop and an HTML file picker / download blob on wasm.
