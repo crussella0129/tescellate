@@ -807,7 +807,10 @@ impl WorkbookEngine {
         // unset). Pattern-match by ref so we don't partially move.
         let (bounds, frozen) = match &existing {
             Some(LatticeConfig::Voronoi(cfg)) => (cfg.bounds, cfg.frozen),
-            _ => (VoronoiConfig::from(&VoronoiLattice::default()).bounds, false),
+            _ => (
+                VoronoiConfig::from(&VoronoiLattice::default()).bounds,
+                false,
+            ),
         };
         let cfg = VoronoiConfig {
             seeds,
@@ -892,6 +895,48 @@ impl WorkbookEngine {
             Some(LatticeConfig::Voronoi(cfg)) => cfg.to_lattice().ok(),
             _ => Some(VoronoiLattice::default()),
         }
+    }
+
+    /// Whether the Voronoi sheet's seeds are frozen (UI-only — locks the
+    /// seed-handle drag + suppresses the proximity fade per ADR-014).
+    /// Returns `false` for non-Voronoi sheets, missing sheets, and Voronoi
+    /// sheets whose `lattice_config` is absent (legacy default).
+    pub fn voronoi_frozen(&self, sheet: SheetId) -> bool {
+        let Some(s) = self.workbook.sheets.get(&sheet) else {
+            return false;
+        };
+        if s.lattice != LatticeKind::Voronoi {
+            return false;
+        }
+        match &s.lattice_config {
+            Some(LatticeConfig::Voronoi(cfg)) => cfg.frozen,
+            _ => false,
+        }
+    }
+
+    /// Toggle the Voronoi sheet's `frozen` flag (ADR-014). No recompute —
+    /// `frozen` is UI-only, doesn't affect geometry or eval. Errors on
+    /// missing sheets and non-Voronoi sheets via `UnsupportedLattice`.
+    pub fn set_voronoi_frozen(&mut self, sheet: SheetId, frozen: bool) -> Result<(), SetCellError> {
+        let s = self
+            .workbook
+            .sheets
+            .get_mut(&sheet)
+            .ok_or(SetCellError::NoSheet(sheet))?;
+        if s.lattice != LatticeKind::Voronoi {
+            return Err(SetCellError::UnsupportedLattice(s.lattice));
+        }
+        match &mut s.lattice_config {
+            Some(LatticeConfig::Voronoi(cfg)) => cfg.frozen = frozen,
+            slot @ None => {
+                // Materialise the default config first so the new flag has
+                // somewhere to live (mirrors how add_sheet seeds Voronoi).
+                let mut cfg = VoronoiConfig::from(&VoronoiLattice::default());
+                cfg.frozen = frozen;
+                *slot = Some(LatticeConfig::Voronoi(cfg));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -2260,6 +2305,53 @@ mod tests {
         let sid = eng.add_sheet("V", LatticeKind::Voronoi);
         eng.workbook.sheets.get_mut(&sid).unwrap().lattice_config = None;
         assert_eq!(eng.voronoi_lattice(sid).unwrap().len(), 8);
+    }
+
+    // --- T-006 (sprint 18, ADR-014): voronoi_frozen / set_voronoi_frozen ---
+
+    #[test]
+    fn voronoi_frozen_default_is_false() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        assert!(!eng.voronoi_frozen(sid));
+    }
+
+    #[test]
+    fn set_voronoi_frozen_writes_field() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        eng.set_voronoi_frozen(sid, true).unwrap();
+        assert!(eng.voronoi_frozen(sid));
+        eng.set_voronoi_frozen(sid, false).unwrap();
+        assert!(!eng.voronoi_frozen(sid));
+    }
+
+    #[test]
+    fn voronoi_frozen_for_square_sheet_is_false() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("S", LatticeKind::Square);
+        assert!(!eng.voronoi_frozen(sid));
+        assert!(matches!(
+            eng.set_voronoi_frozen(sid, true),
+            Err(SetCellError::UnsupportedLattice(_))
+        ));
+    }
+
+    #[test]
+    fn set_voronoi_seeds_preserves_frozen() {
+        let mut eng = WorkbookEngine::new();
+        eng.new_workbook();
+        let sid = eng.add_sheet("V", LatticeKind::Voronoi);
+        eng.set_voronoi_frozen(sid, true).unwrap();
+        eng.set_voronoi_seeds(sid, vec![[0.0, 0.0], [20.0, 0.0], [0.0, 20.0]])
+            .unwrap();
+        assert!(
+            eng.voronoi_frozen(sid),
+            "frozen flag must survive a set_voronoi_seeds call (mirrors bounds preservation)"
+        );
     }
 
     #[test]
