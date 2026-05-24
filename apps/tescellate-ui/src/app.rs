@@ -5100,29 +5100,57 @@ impl TescellateApp {
                 self.voronoi_lattice.bounds.max.y,
             ];
             let radius = 5.0;
+            // First pass: interact to learn which handle (if any) is being
+            // dragged this frame. We need this BEFORE drawing so the
+            // dragged>fade>no-hover priority can be computed (ADR-014).
+            let seeds_screen: Vec<egui::Pos2> = seeds
+                .iter()
+                .map(|s| egui::pos2(origin.x + s[0], origin.y + s[1]))
+                .collect();
+            let handle_responses: Vec<egui::Response> = seeds_screen
+                .iter()
+                .enumerate()
+                .map(|(i, &center)| {
+                    let handle_rect = egui::Rect::from_center_size(
+                        center,
+                        egui::vec2(2.0 * radius, 2.0 * radius),
+                    );
+                    ui.interact(
+                        handle_rect,
+                        ui.id().with(("vor_seed", i)),
+                        egui::Sense::drag(),
+                    )
+                })
+                .collect();
+            let dragging_index = handle_responses.iter().position(|r| r.dragged());
+            let cursor_pos = response.hover_pos();
+            let alphas = seed_handle_alphas(cursor_pos, &seeds_screen, dragging_index);
+
             let mut pending_drag: Option<(usize, [f32; 2])> = None;
-            for (i, s) in seeds.iter().enumerate() {
-                let center = egui::pos2(origin.x + s[0], origin.y + s[1]);
-                let handle_rect =
-                    egui::Rect::from_center_size(center, egui::vec2(2.0 * radius, 2.0 * radius));
-                let resp = ui.interact(
-                    handle_rect,
-                    ui.id().with(("vor_seed", i)),
-                    egui::Sense::drag(),
-                );
-                let dragging = resp.dragged();
-                let fill = if dragging {
-                    egui::Color32::from_rgb(70, 120, 220)
+            for (i, center) in seeds_screen.iter().copied().enumerate() {
+                let alpha = alphas[i];
+                if alpha == 0 {
+                    // Skip rendering entirely when invisible — keeps the
+                    // hit area alive (the ui.interact above already ran)
+                    // but no drawing cost.
                 } else {
-                    egui::Color32::from_rgb(40, 40, 50)
-                };
-                painter.circle(
-                    center,
-                    radius,
-                    fill,
-                    egui::Stroke::new(1.5, egui::Color32::WHITE),
-                );
-                if dragging {
+                    let fill = if Some(i) == dragging_index {
+                        egui::Color32::from_rgba_premultiplied(70, 120, 220, alpha)
+                    } else {
+                        egui::Color32::from_rgba_premultiplied(40, 40, 50, alpha)
+                    };
+                    painter.circle(
+                        center,
+                        radius,
+                        fill,
+                        egui::Stroke::new(
+                            1.5,
+                            egui::Color32::from_rgba_premultiplied(255, 255, 255, alpha),
+                        ),
+                    );
+                }
+                let resp = &handle_responses[i];
+                if resp.dragged() {
                     let d = resp.drag_delta();
                     if d != egui::Vec2::ZERO {
                         pending_drag = Some((i, [d.x, d.y]));
@@ -6191,8 +6219,6 @@ fn synced_voronoi_lattice(engine: &WorkbookEngine, sid: SheetId) -> VoronoiLatti
 /// Voronoi seed-handle proximity fade thresholds (ADR-014, lattice units).
 /// Within `INNER` of the cursor the handle is fully opaque; past `OUTER`
 /// it's invisible; between the two it fades linearly.
-// Wired into the seed-handle pass by T-002.
-#[allow(dead_code)]
 const SEED_FADE_INNER: f32 = 40.0;
 #[allow(dead_code)]
 const SEED_FADE_OUTER: f32 = 80.0;
@@ -6205,8 +6231,6 @@ const SEED_FADE_MAX_ALPHA: u8 = 225;
 /// Piecewise: `[<=INNER] = MAX`, `[>=OUTER] = 0`, linear in between. Pure
 /// (no egui types) so the per-frame per-seed decision is unit-testable
 /// without a render context.
-// Wired into the seed-handle pass by T-002.
-#[allow(dead_code)]
 fn fade_alpha(distance: f32) -> u8 {
     if distance <= SEED_FADE_INNER {
         SEED_FADE_MAX_ALPHA
@@ -6216,6 +6240,38 @@ fn fade_alpha(distance: f32) -> u8 {
         ((SEED_FADE_OUTER - distance) / (SEED_FADE_OUTER - SEED_FADE_INNER)
             * SEED_FADE_MAX_ALPHA as f32) as u8
     }
+}
+
+/// Per-frame per-seed alpha for the Voronoi handle proximity fade
+/// (ADR-014 / C-008 partial). Priority order: **dragged > fade > no-hover.**
+///
+/// - Any seed at `dragging_index` always gets full opacity (the user is
+///   actively interacting with it, mustn't disappear if the pointer leaves
+///   the panel mid-drag).
+/// - Otherwise, with a cursor present, each seed's alpha is
+///   `fade_alpha(distance(seed, cursor))`.
+/// - With no cursor and no drag, every seed is invisible (alpha `0`).
+///
+/// Pure (no egui types beyond `Pos2`) so the per-frame decision is
+/// unit-testable without a render context.
+fn seed_handle_alphas(
+    cursor: Option<egui::Pos2>,
+    seeds_screen: &[egui::Pos2],
+    dragging_index: Option<usize>,
+) -> Vec<u8> {
+    seeds_screen
+        .iter()
+        .enumerate()
+        .map(|(i, seed)| {
+            if Some(i) == dragging_index {
+                SEED_FADE_MAX_ALPHA
+            } else if let Some(c) = cursor {
+                fade_alpha((*seed - c).length())
+            } else {
+                0
+            }
+        })
+        .collect()
 }
 
 fn cells_in_screen_rect(
@@ -6488,6 +6544,60 @@ mod tests {
         // (signed delta etc.) still gets full opacity, not a wraparound.
         assert_eq!(fade_alpha(-5.0), SEED_FADE_MAX_ALPHA);
         assert_eq!(fade_alpha(-1000.0), SEED_FADE_MAX_ALPHA);
+    }
+
+    // --- T-002: seed_handle_alphas (priority order: dragged > fade > no-hover) ---
+
+    #[test]
+    fn seed_handle_alphas_no_hover_returns_all_zero() {
+        let seeds = vec![
+            egui::pos2(0.0, 0.0),
+            egui::pos2(50.0, 0.0),
+            egui::pos2(100.0, 0.0),
+        ];
+        let alphas = seed_handle_alphas(None, &seeds, None);
+        assert_eq!(alphas, vec![0u8, 0, 0]);
+    }
+
+    #[test]
+    fn seed_handle_alphas_dragging_overrides_fade() {
+        // No hover (or hover far away), but seed 2 is being dragged →
+        // that seed is fully opaque regardless. Others stay invisible.
+        let seeds = vec![
+            egui::pos2(0.0, 0.0),
+            egui::pos2(50.0, 0.0),
+            egui::pos2(500.0, 500.0), // far from any hover
+        ];
+        let alphas = seed_handle_alphas(None, &seeds, Some(2));
+        assert_eq!(alphas[0], 0);
+        assert_eq!(alphas[1], 0);
+        assert_eq!(alphas[2], SEED_FADE_MAX_ALPHA);
+    }
+
+    #[test]
+    fn seed_handle_alphas_inner_threshold_full() {
+        // Cursor sitting on seed 1 → seed 1 fully opaque, seed 0 distant
+        // but within outer (50px → in the ramp), seed 2 past outer.
+        let seeds = vec![
+            egui::pos2(0.0, 0.0),
+            egui::pos2(50.0, 0.0),
+            egui::pos2(200.0, 0.0),
+        ];
+        let alphas = seed_handle_alphas(Some(egui::pos2(50.0, 0.0)), &seeds, None);
+        assert_eq!(alphas[1], SEED_FADE_MAX_ALPHA, "seed at cursor is full");
+        assert!(
+            alphas[0] > 0 && alphas[0] < SEED_FADE_MAX_ALPHA,
+            "seed 0 in ramp"
+        );
+        assert_eq!(alphas[2], 0, "seed 2 past outer");
+    }
+
+    #[test]
+    fn seed_handle_alphas_outer_threshold_zero() {
+        // Cursor far from every seed → all alphas zero.
+        let seeds = vec![egui::pos2(0.0, 0.0), egui::pos2(50.0, 0.0)];
+        let alphas = seed_handle_alphas(Some(egui::pos2(1000.0, 1000.0)), &seeds, None);
+        assert_eq!(alphas, vec![0u8, 0]);
     }
 
     #[test]
