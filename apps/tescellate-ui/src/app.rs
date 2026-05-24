@@ -452,6 +452,11 @@ pub struct TescellateApp {
     /// selected cells stay outlined via `selection.extra` until the next
     /// `collapse_to`). ADR-013.
     voronoi_marquee_start: Option<egui::Pos2>,
+    /// Recently-visited Voronoi cells, used by Enter-advance (ADR-014 F3).
+    /// Capped at `N-1` where `N` = current seed count. Cleared on primary
+    /// cell-select click (T-010 C-009) and on workbook reload / seed-count
+    /// change (T-010 C-005 — see `rebind_sheet_ids`).
+    voronoi_visit_history: std::collections::VecDeque<VoronoiCoord>,
     /// Which sheet is on screen.
     active: ActiveSheet,
     /// The square cursor as of the last frame — drives scroll-to-cursor.
@@ -742,6 +747,7 @@ impl TescellateApp {
             triangle_lattice: TriangleLattice::new(TRIANGLE_SIDE),
             voronoi_lattice: VoronoiLattice::default(),
             voronoi_marquee_start: None,
+            voronoi_visit_history: std::collections::VecDeque::new(),
             active: ActiveSheet::Square,
             prev_cursor: (0, 0),
             edit: None,
@@ -2421,7 +2427,21 @@ impl TescellateApp {
             }
             ActiveSheet::Hex => self.move_hex_selection(dir),
             ActiveSheet::Triangle => self.move_triangle_selection(dir),
-            ActiveSheet::Voronoi => {}
+            ActiveSheet::Voronoi => self.voronoi_advance(),
+        }
+    }
+
+    /// Advance the Voronoi cursor to a Delaunay neighbor not in the recent
+    /// visit history, picking by closest centroid (lowest-index tie-break).
+    /// Updates `voronoi_visit_history` (bounded at `N-1`). No-op when no
+    /// candidate qualifies — Enter stops (ADR-014 F3).
+    fn voronoi_advance(&mut self) {
+        let current = self.voronoi.selection.cursor;
+        let sid = self.voronoi.sheet_id;
+        if let Some(next) =
+            voronoi_advance_step(&self.engine, sid, current, &mut self.voronoi_visit_history)
+        {
+            self.voronoi.selection.collapse_to(next);
         }
     }
 
@@ -4932,6 +4952,10 @@ impl TescellateApp {
             if !clicked_is_widget && !formula_consumed_click {
                 self.commit_edit();
                 self.voronoi.selection.collapse_to(coord);
+                // T-010 (C-009): a primary cell-select click restarts the
+                // Enter-advance traversal — clear the visit history so a
+                // fresh Enter sequence can visit cells from here.
+                self.voronoi_visit_history.clear();
                 if doubled {
                     let buffer = self.voronoi_cell_source(coord);
                     self.edit = Some(EditState {
@@ -5379,6 +5403,9 @@ impl TescellateApp {
                         // engine config so dragged/persisted seeds show up
                         // (ADR-012 single source of truth).
                         self.voronoi_lattice = synced_voronoi_lattice(&self.engine, *sid);
+                        // T-010 (C-005): the seed count may have changed —
+                        // clear the visit history to avoid stale OOR refs.
+                        self.voronoi_visit_history.clear();
                     }
                     _ => {}
                 }
@@ -6377,8 +6404,6 @@ fn pop_out_widget_center<F: Fn(Point2) -> Option<VoronoiCoord>>(
 /// Pure (no engine, no egui) so the history-traversal decision is
 /// unit-testable. The caller assembles `(coord, centroid)` pairs from
 /// `Lattice::neighbors(current)` + `Lattice::centroid(neighbor)`.
-// Wired into `voronoi_advance` by T-010.
-#[allow(dead_code)]
 fn pick_next_voronoi(
     current: VoronoiCoord,
     current_centroid: Point2,
@@ -6397,6 +6422,42 @@ fn pick_next_voronoi(
                 .then(a_c.0.cmp(&b_c.0))
         })
         .map(|(c, _)| *c)
+}
+
+/// Apply one Voronoi Enter-advance step (ADR-014 F3). Pure-over-engine
+/// so the history mutation + bounded-queue cap is testable with just a
+/// `WorkbookEngine` (no full `TescellateApp`). Returns the next cursor
+/// `VoronoiCoord` to collapse to, or `None` if Enter should stop.
+/// Mutates `history` in place: on a successful pick, pushes `current`
+/// onto the back and pops the front while length > `N-1`.
+///
+/// Defensive: returns `None` (and leaves history untouched) if `current`
+/// is out of range for the current lattice — e.g. after a workbook reload
+/// to a smaller seed set before `rebind_sheet_ids` clears the history.
+fn voronoi_advance_step(
+    engine: &WorkbookEngine,
+    sheet: SheetId,
+    current: VoronoiCoord,
+    history: &mut std::collections::VecDeque<VoronoiCoord>,
+) -> Option<VoronoiCoord> {
+    let lattice = engine.voronoi_lattice(sheet)?;
+    if (current.0 as usize) >= lattice.len() {
+        return None;
+    }
+    let current_centroid = lattice.centroid(current);
+    let candidates: Vec<(VoronoiCoord, Point2)> = lattice
+        .neighbors(current)
+        .into_iter()
+        .map(|(_dir, c)| (c, lattice.centroid(c)))
+        .collect();
+    let history_vec: Vec<VoronoiCoord> = history.iter().copied().collect();
+    let pick = pick_next_voronoi(current, current_centroid, &candidates, &history_vec)?;
+    let cap = lattice.len().saturating_sub(1);
+    history.push_back(current);
+    while history.len() > cap {
+        history.pop_front();
+    }
+    Some(pick)
 }
 
 fn cells_in_screen_rect(
@@ -6874,6 +6935,87 @@ mod tests {
         let seeds = vec![egui::pos2(0.0, 0.0), egui::pos2(50.0, 0.0)];
         let alphas = seed_handle_alphas(Some(egui::pos2(1000.0, 1000.0)), &seeds, None);
         assert_eq!(alphas, vec![0u8, 0]);
+    }
+
+    // --- T-010 integration: voronoi_advance_step (history cap + drag-aware) ---
+
+    #[test]
+    fn voronoi_advance_history_caps_at_n_minus_1() {
+        // Default 8-seed Voronoi: stepping repeatedly grows history up to
+        // capacity 7, then Enter stops (at most after N visits).
+        let mut engine = WorkbookEngine::new();
+        engine.new_workbook();
+        let sid = engine.add_sheet("V", LatticeKind::Voronoi);
+        let n = engine.voronoi_lattice(sid).unwrap().len();
+        let cap = n.saturating_sub(1);
+        let mut history: std::collections::VecDeque<VoronoiCoord> =
+            std::collections::VecDeque::new();
+        let mut cursor = VoronoiCoord(0);
+        let mut steps = 0;
+        // At most N steps before Enter must stop (visit each cell at most once).
+        for _ in 0..(n + 2) {
+            match voronoi_advance_step(&engine, sid, cursor, &mut history) {
+                Some(next) => {
+                    assert!(
+                        history.len() <= cap,
+                        "history exceeded cap {cap} at step {steps}"
+                    );
+                    cursor = next;
+                    steps += 1;
+                }
+                None => break,
+            }
+        }
+        assert!(steps <= n, "Enter visited more than N={n} cells");
+        // After exhaustion, one more step must be a no-op (already at None).
+        assert_eq!(
+            voronoi_advance_step(&engine, sid, cursor, &mut history),
+            None,
+            "post-exhaustion step must stay None"
+        );
+    }
+
+    #[test]
+    fn voronoi_advance_after_seed_drag_uses_new_centroids() {
+        // C-010: dragging a seed mid-traversal must re-evaluate the
+        // closest-centroid tie-break against the NEW positions.
+        // Initial config:
+        //   V(0)=(0,0), V(1)=(40,0), V(2)=(-40,0), V(3)=(0,40)
+        // All four are connected in the Delaunay graph (V0 interior to the
+        // hull triangle V1-V2-V3); from V(0) all neighbors are at dist 40,
+        // tie-break → V(1).
+        let mut engine = WorkbookEngine::new();
+        engine.new_workbook();
+        let sid = engine.add_sheet("V", LatticeKind::Voronoi);
+        engine
+            .set_voronoi_seeds(
+                sid,
+                vec![[0.0, 0.0], [40.0, 0.0], [-40.0, 0.0], [0.0, 40.0]],
+            )
+            .unwrap();
+        let mut history: std::collections::VecDeque<VoronoiCoord> =
+            std::collections::VecDeque::new();
+        let first = voronoi_advance_step(&engine, sid, VoronoiCoord(0), &mut history);
+        assert_eq!(first, Some(VoronoiCoord(1)));
+
+        // Drag: move V(1) far right (500, 0) and V(2) close to V(1) at
+        // (450, 1). V(0)=(0,0) and V(3)=(0,40) stay on the left. Now V(1)'s
+        // Delaunay neighbors are V(0)/V(2)/V(3) (V(2) is interior to the
+        // triangle V(0)-V(1)-V(3); the 1-px y-offset avoids collinearity).
+        // From V(1)=(500,0): V(0)=(0,0) is in history; V(2)=(450,1) is at
+        // dist ≈50; V(3)=(0,40) is at dist ≈501.6. V(2) wins.
+        engine
+            .set_voronoi_seeds(
+                sid,
+                vec![[0.0, 0.0], [500.0, 0.0], [450.0, 1.0], [0.0, 40.0]],
+            )
+            .unwrap();
+        let second = voronoi_advance_step(&engine, sid, VoronoiCoord(1), &mut history);
+        assert_eq!(
+            second,
+            Some(VoronoiCoord(2)),
+            "post-drag advance must use new centroids; V(2) is now the closest unvisited neighbor of V(1)"
+        );
     }
 
     #[test]
